@@ -230,7 +230,7 @@ contains
     real(8), intent(in), dimension(5,nx,ny,nz), device :: Q
     real(8), intent(in), dimension(nx,ny,nz), device   :: sensor
     real(8), intent(out), device :: E(5,nx-1,ny-2,nz-2)
-    integer i, j, k, it, jt, kt
+    integer i, j, k, it, jt, kt, idx
     real(8), dimension(-1:threadsE%x+3,threadsE%y,threadsE%z), shared :: rho, u, v, w, p
     real(8) fdx
     it = threadIdx%x
@@ -253,11 +253,13 @@ contains
         w(it+1,jt,kt) = Q(4,i+1,j,k)
         p(it+1,jt,kt) = Q(5,i+1,j,k)
       if (i <= nx-3) then ! 6th-order
-        rho(it+2:it+3,jt,kt) = Q(1,i+2:i+3,j,k)
-          u(it+2:it+3,jt,kt) = Q(2,i+2:i+3,j,k)
-          v(it+2:it+3,jt,kt) = Q(3,i+2:i+3,j,k)
-          w(it+2:it+3,jt,kt) = Q(4,i+2:i+3,j,k)
-          p(it+2:it+3,jt,kt) = Q(5,i+2:i+3,j,k)
+        do idx = 2, 3
+          rho(it+idx,jt,kt) = Q(1,i+idx,j,k)
+            u(it+idx,jt,kt) = Q(2,i+idx,j,k)
+            v(it+idx,jt,kt) = Q(3,i+idx,j,k)
+            w(it+idx,jt,kt) = Q(4,i+idx,j,k)
+            p(it+idx,jt,kt) = Q(5,i+idx,j,k)
+        enddo
       elseif (i <= nx-2) then ! 4th-order
         rho(it+2,jt,kt) = Q(1,i+2,j,k)
           u(it+2,jt,kt) = Q(2,i+2,j,k)
@@ -267,11 +269,13 @@ contains
       endif
     elseif (it == 1) then
       if (3 <= i) then ! 6th-order
-        rho(it-2:it-1,jt,kt) = Q(1,i-2:i-1,j,k)
-          u(it-2:it-1,jt,kt) = Q(2,i-2:i-1,j,k)
-          v(it-2:it-1,jt,kt) = Q(3,i-2:i-1,j,k)
-          w(it-2:it-1,jt,kt) = Q(4,i-2:i-1,j,k)
-          p(it-2:it-1,jt,kt) = Q(5,i-2:i-1,j,k)
+        do idx = -2, -1
+          rho(it+idx,jt,kt) = Q(1,i+idx,j,k)
+            u(it+idx,jt,kt) = Q(2,i+idx,j,k)
+            v(it+idx,jt,kt) = Q(3,i+idx,j,k)
+            w(it+idx,jt,kt) = Q(4,i+idx,j,k)
+            p(it+idx,jt,kt) = Q(5,i+idx,j,k)
+        enddo
       elseif (2 <= i) then ! 4th-order
         rho(it-1,jt,kt) = Q(1,i-1,j,k)
           u(it-1,jt,kt) = Q(2,i-1,j,k)
@@ -303,7 +307,7 @@ contains
     real(8), intent(in), dimension(5,nx,ny,nz), device :: Q
     real(8), intent(in), dimension(nx,ny,nz), device   :: sensor
     real(8), intent(out), device :: F(5,nx-2,ny-1,nz-2)
-    integer i, j, k, it, jt, kt
+    integer i, j, k, it, jt, kt, idy
     integer(kind=2) id_slau_wall
     real(8), dimension(-1:threadsF%y+3,threadsF%x,threadsF%z), shared :: rho, u, v, w, p
     real(8) fdy
@@ -327,11 +331,13 @@ contains
         w(jt+1,it,kt) = Q(4,i,j+1,k)
         p(jt+1,it,kt) = Q(5,i,j+1,k)
       if (j <= ny-3) then ! 6th-order
-        rho(jt+2:jt+3,it,kt) = Q(1,i,j+2:j+3,k)
-          u(jt+2:jt+3,it,kt) = Q(2,i,j+2:j+3,k)
-          v(jt+2:jt+3,it,kt) = Q(3,i,j+2:j+3,k)
-          w(jt+2:jt+3,it,kt) = Q(4,i,j+2:j+3,k)
-          p(jt+2:jt+3,it,kt) = Q(5,i,j+2:j+3,k)
+        do idy = 2, 3
+          rho(jt+idy,it,kt) = Q(1,i,j+idy,k)
+            u(jt+idy,it,kt) = Q(2,i,j+idy,k)
+            v(jt+idy,it,kt) = Q(3,i,j+idy,k)
+            w(jt+idy,it,kt) = Q(4,i,j+idy,k)
+            p(jt+idy,it,kt) = Q(5,i,j+idy,k)
+        enddo
       elseif (j <= ny-2) then ! 4th-order
         rho(jt+2,it,kt) = Q(1,i,j+2,k)
           u(jt+2,it,kt) = Q(2,i,j+2,k)
@@ -341,11 +347,13 @@ contains
       endif
     elseif (3 <= j .and. jt == 1) then
       if (3 <= j) then ! 6th-order
-        rho(jt-2:jt-1,it,kt) = Q(1,i,j-2:j-1,k)
-          u(jt-2:jt-1,it,kt) = Q(2,i,j-2:j-1,k)
-          v(jt-2:jt-1,it,kt) = Q(3,i,j-2:j-1,k)
-          w(jt-2:jt-1,it,kt) = Q(4,i,j-2:j-1,k)
-          p(jt-2:jt-1,it,kt) = Q(5,i,j-2:j-1,k)
+        do idy = -2, -1
+          rho(jt+idy,it,kt) = Q(1,i,j+idy,k)
+            u(jt+idy,it,kt) = Q(2,i,j+idy,k)
+            v(jt+idy,it,kt) = Q(3,i,j+idy,k)
+            w(jt+idy,it,kt) = Q(4,i,j+idy,k)
+            p(jt+idy,it,kt) = Q(5,i,j+idy,k)
+        enddo
       elseif (2 <= j) then ! 4th-order
         rho(jt-1,it,kt) = Q(1,i,j-1,k)
           u(jt-1,it,kt) = Q(2,i,j-1,k)
@@ -387,7 +395,7 @@ contains
     real(8), intent(in), dimension(5,nx,ny,nz), device :: Q
     real(8), intent(in), dimension(nx,ny,nz), device   :: sensor
     real(8), intent(out), device :: G(5,nx-2,ny-2,nz-1)
-    integer i, j, k, it, jt, kt
+    integer i, j, k, it, jt, kt, idz
     real(8), dimension(-1:threadsG%z+3,threadsG%y,threadsG%x), shared :: rho, u, v, w, p
     real(8) :: fdz
     it = threadIdx%x
@@ -410,11 +418,13 @@ contains
         w(kt+1,jt,it) = Q(4,i,j,k+1)
         p(kt+1,jt,it) = Q(5,i,j,k+1)
       if (k <= nz-3) then ! 6th-order
-        rho(kt+2:kt+3,jt,it) = Q(1,i,j,k+2:k+3)
-          u(kt+2:kt+3,jt,it) = Q(2,i,j,k+2:k+3)
-          v(kt+2:kt+3,jt,it) = Q(3,i,j,k+2:k+3)
-          w(kt+2:kt+3,jt,it) = Q(4,i,j,k+2:k+3)
-          p(kt+2:kt+3,jt,it) = Q(5,i,j,k+2:k+3)
+        do idz = 2, 3
+          rho(kt+idz,jt,it) = Q(1,i,j,k+idz)
+            u(kt+idz,jt,it) = Q(2,i,j,k+idz)
+            v(kt+idz,jt,it) = Q(3,i,j,k+idz)
+            w(kt+idz,jt,it) = Q(4,i,j,k+idz)
+            p(kt+idz,jt,it) = Q(5,i,j,k+idz)
+        enddo
       elseif (k <= nz-2) then ! 4th-order
         rho(kt+2,jt,it) = Q(1,i,j,k+2)
           u(kt+2,jt,it) = Q(2,i,j,k+2)
@@ -424,11 +434,13 @@ contains
       endif
     elseif (kt == 1) then
       if (3 <= k) then ! 6th-order
-        rho(kt-2:kt-1,jt,it) = Q(1,i,j,k-2:k-1)
-          u(kt-2:kt-1,jt,it) = Q(2,i,j,k-2:k-1)
-          v(kt-2:kt-1,jt,it) = Q(3,i,j,k-2:k-1)
-          w(kt-2:kt-1,jt,it) = Q(4,i,j,k-2:k-1)
-          p(kt-2:kt-1,jt,it) = Q(5,i,j,k-2:k-1)
+        do idz = -2, -1
+          rho(kt+idz,jt,it) = Q(1,i,j,k+idz)
+            u(kt+idz,jt,it) = Q(2,i,j,k+idz)
+            v(kt+idz,jt,it) = Q(3,i,j,k+idz)
+            w(kt+idz,jt,it) = Q(4,i,j,k+idz)
+            p(kt+idz,jt,it) = Q(5,i,j,k+idz)
+        enddo
       elseif (2 <= k) then ! 4th-order
         rho(kt-1,jt,it) = Q(1,i,j,k-1)
           u(kt-1,jt,it) = Q(2,i,j,k-1)

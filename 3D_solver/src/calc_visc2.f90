@@ -5,6 +5,239 @@ module calc_visc2
   use calc_rand
   implicit none
 contains
+  !$dir inline
+  attributes(device) subroutine store_shared_x(nx, ny, nz, i, j, k, it, jt, kt, Q, u, v, w)
+    integer, intent(in), value  :: nx, ny, nz, i, j, k, it, jt, kt
+    real(8), intent(in), device :: Q(5,nx,ny,nz)
+    real(8), intent(inout)      :: u(threadsEv%x+1,0:threadsEv%y+1,0:threadsEv%z+1)
+    real(8), intent(inout)      :: v(threadsEv%x+1,0:threadsEv%y+1,threadsEv%z)
+    real(8), intent(inout)      :: w(threadsEv%x+1,0:threadsEv%z+1,threadsEv%y)
+    ! k-1 ##########################################
+    if (kt == 1) then
+      if (jt == 1) then
+        u(it,jt-1,kt-1) = Q(2,i,j-1,k-1)
+        if (it == blockDim%x) then
+          u(it+1,jt-1,kt-1) = Q(2,i+1,j-1,k-1)
+        endif
+      endif
+      u(it,jt,kt-1) = Q(2,i,j,k-1)
+      w(it,kt-1,jt) = Q(4,i,j,k-1)
+      if (it == blockDim%x) then
+        u(it+1,jt,kt-1) = Q(2,i+1,j,k-1)
+        w(it+1,kt-1,jt) = Q(4,i+1,j,k-1)
+      endif
+      if (jt == blockDim%y) then
+        u(it,jt+1,kt-1) = Q(2,i,j+1,k-1)
+        if (it == blockDim%x) then
+          u(it+1,jt+1,kt-1) = Q(2,i+1,j+1,k-1)
+        endif
+      endif
+    endif
+    ! k ############################################
+    if (jt == 1) then
+      u(it,jt-1,kt) = Q(2,i,j-1,k)
+      v(it,jt-1,kt) = Q(3,i,j-1,k)
+      if (it == blockDim%x) then
+        u(it+1,jt-1,kt) = Q(2,i+1,j-1,k)
+        v(it+1,jt-1,kt) = Q(3,i+1,j-1,k)
+      endif
+    endif
+    u(it,jt,kt) = Q(2,i,j,k)
+    v(it,jt,kt) = Q(3,i,j,k)
+    w(it,kt,jt) = Q(4,i,j,k)
+    if (it == blockDim%x) then
+      u(it+1,jt,kt) = Q(2,i+1,j,k)
+      v(it+1,jt,kt) = Q(3,i+1,j,k)
+      w(it+1,kt,jt) = Q(4,i+1,j,k)
+    endif
+    if (jt == blockDim%y) then
+      u(it,jt+1,kt) = Q(2,i,j+1,k)
+      v(it,jt+1,kt) = Q(3,i,j+1,k)
+      if (it == blockDim%x) then
+        u(it+1,jt+1,kt) = Q(2,i+1,j+1,k)
+        v(it+1,jt+1,kt) = Q(3,i+1,j+1,k)
+      endif
+    endif
+    ! k+1 ##########################################
+    if (kt == blockDim%z) then
+      if (jt == 1) then
+        u(it,jt-1,kt+1) = Q(2,i,j-1,k+1)
+        if (it == blockDim%x) then
+          u(it+1,jt-1,kt+1) = Q(2,i+1,j-1,k+1)
+        endif
+      endif
+      u(it,jt,kt+1) = Q(2,i,j,k+1)
+      w(it,kt+1,jt) = Q(4,i,j,k+1)
+      if (it == blockDim%x) then
+        u(it+1,jt,kt+1) = Q(2,i+1,j,k+1)
+        w(it+1,kt+1,jt) = Q(4,i+1,j,k+1)
+      endif
+      if (jt == blockDim%y) then
+        u(it,jt+1,kt+1) = Q(2,i,j+1,k+1)
+        if (it == blockDim%x) then
+          u(it+1,jt+1,kt+1) = Q(2,i+1,j+1,k+1)
+        endif
+      endif
+    endif
+    call syncthreads()
+  end subroutine store_shared_x
+
+
+  !$dir inline
+  attributes(device) subroutine store_shared_y(nx, ny, nz, i, j, k, it, jt, kt, Q, u, v, w)
+    integer, intent(in), value  :: nx, ny, nz, i, j, k, it, jt, kt
+    real(8), intent(in), device :: Q(5,nx,ny,nz)
+    real(8), intent(inout)      :: u(threadsFv%y+1,0:threadsFv%x+1,threadsFv%z)
+    real(8), intent(inout)      :: v(threadsFv%y+1,0:threadsFv%x+1,0:threadsFv%z+1)
+    real(8), intent(inout)      :: w(threadsFv%y+1,0:threadsFv%z+1,threadsFv%x)
+    ! k-1 ##########################################
+    if (kt == 1) then
+      if (it == 1) then
+        v(jt,it-1,kt-1) = Q(3,i-1,j,k-1)
+      endif
+      v(jt,it,kt-1) = Q(3,i,j,k-1)
+      w(jt,kt-1,it) = Q(4,i,j,k-1)
+      if (it == blockDim%x) then
+        v(jt,it+1,kt-1) = Q(3,i+1,j,k-1)
+      endif
+      if (jt == blockDim%y) then
+        if (it == 1) then
+          v(jt+1,it-1,kt-1) = Q(3,i-1,j+1,k-1)
+        endif
+        v(jt+1,it,kt-1) = Q(3,i,j+1,k-1)
+        w(jt+1,kt-1,it) = Q(4,i,j+1,k-1)
+          if (it == blockDim%x) then
+        v(jt+1,it+1,kt-1) = Q(3,i+1,j+1,k-1)
+        endif
+      endif
+    endif
+    ! k ############################################
+    if (it == 1) then
+      u(jt,it-1,kt) = Q(2,i-1,j,k)
+      v(jt,it-1,kt) = Q(3,i-1,j,k)
+    endif
+    u(jt,it,kt) = Q(2,i,j,k)
+    v(jt,it,kt) = Q(3,i,j,k)
+    w(jt,kt,it) = Q(4,i,j,k)
+    if (it == blockDim%x) then
+      u(jt,it+1,kt) = Q(2,i+1,j,k)
+      v(jt,it+1,kt) = Q(3,i+1,j,k)
+    endif
+    if (jt == blockDim%y) then
+      if (it == 1) then
+        u(jt+1,it-1,kt) = Q(2,i-1,j+1,k)
+        v(jt+1,it-1,kt) = Q(3,i-1,j+1,k)
+      endif
+      u(jt+1,it,kt) = Q(2,i,j+1,k)
+      v(jt+1,it,kt) = Q(3,i,j+1,k)
+      w(jt+1,kt,it) = Q(4,i,j+1,k)
+      if (it == blockDim%x) then
+        u(jt+1,it+1,kt) = Q(2,i+1,j+1,k)
+        v(jt+1,it+1,kt) = Q(3,i+1,j+1,k)
+      endif
+    endif
+    ! k+1 ##########################################
+    if (kt == blockDim%z) then
+      if (it == 1) then
+        v(jt,it-1,kt+1) = Q(3,i-1,j,k+1)
+      endif
+      v(jt,it,kt+1) = Q(3,i,j,k+1)
+      w(jt,kt+1,it) = Q(4,i,j,k+1)
+      if (it == blockDim%x) then
+        v(jt,it+1,kt+1) = Q(3,i+1,j,k+1)
+      endif
+      if (jt == blockDim%y) then
+        if (it == 1) then
+          v(jt+1,it-1,kt+1) = Q(3,i-1,j+1,k+1)
+        endif
+        v(jt+1,it,kt+1) = Q(3,i,j+1,k+1)
+        w(jt+1,kt+1,it) = Q(4,i,j+1,k+1)
+        if (it == blockDim%x) then
+          v(jt+1,it+1,kt+1) = Q(3,i+1,j+1,k+1)
+        endif
+      endif
+    endif
+    call syncthreads()
+  end subroutine store_shared_y
+
+
+  !$dir inline
+  attributes(device) subroutine store_shared_z(nx, ny, nz, i, j, k, it, jt, kt, Q, u, v, w)
+    integer, intent(in), value  :: nx, ny, nz, i, j, k, it, jt, kt
+    real(8), intent(in), device :: Q(5,nx,ny,nz)
+    real(8), intent(inout)      :: u(threadsGv%z+1,0:threadsGv%x+1,threadsGv%y)
+    real(8), intent(inout)      :: v(threadsGv%z+1,0:threadsGv%y+1,threadsGv%x)
+    real(8), intent(inout)      :: w(threadsGv%z+1,0:threadsGv%x+1,0:threadsGv%y+1)
+    ! k ############################################
+    if (jt == 1) then
+      if (it == 1) then
+        w(kt,it-1,jt-1) = Q(4,i-1,j-1,k)
+      endif
+      v(kt,jt-1,it) = Q(3,i,j-1,k)
+      w(kt,it,jt-1) = Q(4,i,j-1,k)
+      if (it == blockDim%x) then
+        w(kt,it+1,jt-1) = Q(4,i+1,j-1,k)
+      endif
+    endif
+    if (it == 1) then
+      u(kt,it-1,jt) = Q(2,i-1,j,k)
+      w(kt,it-1,jt) = Q(4,i-1,j,k)
+    endif
+    u(kt,it,jt) = Q(2,i,j,k)
+    v(kt,jt,it) = Q(3,i,j,k)
+    w(kt,it,jt) = Q(4,i,j,k)
+    if (it == blockDim%x) then
+      u(kt,it+1,jt) = Q(2,i+1,j,k)
+      w(kt,it+1,jt) = Q(4,i+1,j,k)
+    endif
+    if (jt == blockDim%y) then
+      if (it == 1) then
+        w(kt,it-1,jt+1) = Q(4,i-1,j+1,k)
+      endif
+      v(kt,jt+1,it) = Q(3,i,j+1,k)
+      w(kt,it,jt+1) = Q(4,i,j+1,k)
+      if (it == blockDim%x) then
+        w(kt,it+1,jt+1) = Q(4,i+1,j+1,k)
+      endif
+    endif
+    ! k+1 ##########################################
+    if (kt == blockDim%z) then
+      if (jt == 1) then
+        if (it == 1) then
+          w(kt+1,it-1,jt-1) = Q(4,i-1,j-1,k+1)
+        endif
+        v(kt+1,jt-1,it) = Q(3,i,j-1,k+1)
+        w(kt+1,it,jt-1) = Q(4,i,j-1,k+1)
+        if (it == blockDim%x) then
+          w(kt+1,it+1,jt-1) = Q(4,i+1,j-1,k+1)
+        endif
+      endif
+      if (it == 1) then
+        u(kt+1,it-1,jt) = Q(2,i-1,j,k+1)
+        w(kt+1,it-1,jt) = Q(4,i-1,j,k+1)
+      endif
+      u(kt+1,it,jt) = Q(2,i,j,k+1)
+      v(kt+1,jt,it) = Q(3,i,j,k+1)
+      w(kt+1,it,jt) = Q(4,i,j,k+1)
+      if (it == blockDim%x) then
+        u(kt+1,it+1,jt) = Q(2,i+1,j,k+1)
+        w(kt+1,it+1,jt) = Q(4,i+1,j,k+1)
+      endif
+      if (jt == blockDim%y) then
+        if (it == 1) then
+          w(kt+1,it-1,jt+1) = Q(4,i-1,j+1,k+1)
+        endif
+        v(kt+1,jt+1,it) = Q(3,i,j+1,k+1)
+        w(kt+1,it,jt+1) = Q(4,i,j+1,k+1)
+        if (it == blockDim%x) then
+          w(kt+1,it+1,jt+1) = Q(4,i+1,j+1,k+1)
+        endif
+      endif
+    endif 
+    call syncthreads()
+  end subroutine store_shared_z
+
+
   attributes(global) subroutine calc_Ev2(nx, ny, nz, dx, dy, dz, Q, E, seed)
     use calc_sutherland, only : mu6, mu2, mu_23
     integer, intent(in), value     :: nx, ny, nz
@@ -27,15 +260,7 @@ contains
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
     k  = (blockIdx%z-1)*blockDim%z + kt + 1
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
-    u(it,jt-1:jt+1,kt-1:kt+1) = Q(2,i,j-1:j+1,k-1:k+1)
-    v(it,jt-1:jt+1,kt)        = Q(3,i,j-1:j+1,k)
-    w(it,kt-1:kt+1,jt)        = Q(4,i,j,k-1:k+1)
-    if (it == blockDim%x) then
-      u(it+1,jt-1:jt+1,kt-1:kt+1) = Q(2,i+1,j-1:j+1,k-1:k+1)
-      v(it+1,jt-1:jt+1,kt)        = Q(3,i+1,j-1:j+1,k)
-      w(it+1,kt-1:kt+1,jt)        = Q(4,i+1,j,k-1:k+1)
-    endif 
-    call syncthreads()
+    call store_shared_x(nx, ny, nz, i, j, k, it, jt, kt, Q, u, v, w)
 
     block
       real(8), device :: Tx(2)
@@ -212,15 +437,7 @@ contains
     j  = (blockIdx%y-1)*blockDim%y + jt
     k  = (blockIdx%z-1)*blockDim%z + kt + 1
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
-    u(jt,it-1:it+1,kt)        = Q(2,i-1:i+1,j,k)
-    v(jt,it-1:it+1,kt-1:kt+1) = Q(3,i-1:i+1,j,k-1:k+1)
-    w(jt,kt-1:kt+1,it)        = Q(4,i,j,k-1:k+1)
-    if (jt == blockDim%y) then
-      u(jt+1,it-1:it+1,kt)        = Q(2,i-1:i+1,j+1,k)
-      v(jt+1,it-1:it+1,kt-1:kt+1) = Q(3,i-1:i+1,j+1,k-1:k+1)
-      w(jt+1,kt-1:kt+1,it)        = Q(4,i,j+1,k-1:k+1)
-    endif 
-    call syncthreads()
+    call store_shared_y(nx, ny, nz, i, j, k, it, jt, kt, Q, u, v, w)
 
     block
       real(8) mx1, mx2
@@ -397,15 +614,7 @@ contains
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
     k  = (blockIdx%z-1)*blockDim%z + kt
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
-    u(kt,it-1:it+1,jt)        = Q(2,i-1:i+1,j,k)
-    v(kt,jt-1:jt+1,it)        = Q(3,i,j-1:j+1,k)
-    w(kt,it-1:it+1,jt-1:jt+1) = Q(4,i-1:i+1,j-1:j+1,k)
-    if (kt == blockDim%z) then
-      u(kt+1,it-1:it+1,jt)        = Q(2,i-1:i+1,j,k+1)
-      v(kt+1,jt-1:jt+1,it)        = Q(3,i,j-1:j+1,k+1)
-      w(kt+1,it-1:it+1,jt-1:jt+1) = Q(4,i-1:i+1,j-1:j+1,k+1)
-    endif 
-    call syncthreads()
+    call store_shared_z(nx, ny, nz, i, j, k, it, jt, kt, Q, u, v, w)
 
     block
       real(8) mx1, mx2
