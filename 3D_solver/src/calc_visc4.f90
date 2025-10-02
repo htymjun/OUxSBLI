@@ -405,11 +405,7 @@ contains
       end block
     else
       block
-        real(8) m1, m2, my, muy, mvy, mwy, mvz, mwz, mux, mvx
-        m1  = mu(T(i,j,k))
-        m2  = mu(T(i,j+1,k))
-        my  = 0.5d0 * (m1 + m2)
-        kTy = Cp_over_Pr * my * (-T(i,j,k) + T(i,j+1,k)) * dy(j)
+        real(8) my, muy, mvy, mwy, mvz, mwz, mux, mvx
         block
           real(8), device :: mx(2)
           mx(1) = 0.25d0 * (mu(i-1,j,k) + mu(i,  j,k) + mu(i-1,j+1,k) + mu(i,  j+1,k))
@@ -715,11 +711,7 @@ contains
       end block
     else
       block
-        real(8) m1, m2, mz, muz, mvz, mwz, mwx, mux, mvy, mwy
-        m1  = mu(T(i,j,k))
-        m2  = mu(T(i,j,k+1))
-        mz  = 0.5d0 * (m1 + m2)
-        kTz = Cp_over_Pr * mz * (-T(i,j,k) + T(i,j,k+1)) * dz(k)
+        real(8) mz, muz, mvz, mwz, mwx, mux, mvy, mwy
         block
           real(8), device :: mx(2)
           mx(1) = 0.25d0 * (mu(i-1,j,k) + mu(i,  j,k) + mu(i-1,j,k+1) + mu(i,  j,k+1))
