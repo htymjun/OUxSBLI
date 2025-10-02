@@ -1,7 +1,6 @@
 FC = mpif90
 
-OUTPUT_OPTIN = -cpp -cuda -acc -fast -Minfo=accel -Mchkptr -gpu=ptxinfo -L$(LIBCUDA) -lnvhpcwrapnvtx -lcurand -lcufft
-LIBCUDA = /usr/local/cuda/lib64
+OUTPUT_OPTIN = -cpp -cuda -acc -fast -Minfo=accel -Mchkptr -gpu=ptxinfo -lnvhpcwrapnvtx
 
 .SUFFIXES : .f90
 
@@ -23,7 +22,8 @@ OBJ =	mod_globals.o \
       calc_sutherland.o \
       calc_rand.o \
       calc_visc_common.o \
-      calc_visc.o \
+      calc_visc2.o \
+      calc_visc4.o \
       calc_les.o \
       calc_common.o \
       calc_hybrid.o \
@@ -44,7 +44,7 @@ OBJ =	mod_globals.o \
       main.o
 
 a.out: $(OBJ)
-		$(FC) -cuda -acc -fast -Minfo -L$(LIBCUDA) -lnvhpcwrapnvtx -lcurand -lcufft -I./ $^
+		$(FC) -cuda -acc -fast -Minfo -lnvhpcwrapnvtx -I./ $^
 
 $(TARGET): $(OBJ)
 		$(LINK.f) $^ $(LOADLIBES) $(LDLIBS) -o $@
@@ -59,13 +59,14 @@ calc_term.o: calc_common_dim.mod
 calc_keep.o: mod_globals.mod mod_constant.mod calc_common_dim.mod calc_term.mod calc_mat.mod
 calc_sutherland.o: mod_globals.mod mod_constant.mod
 calc_visc_common.o: mod_constant.mod
-calc_visc.o: mod_globals.mod mod_constant.mod calc_sutherland.mod calc_visc_common.mod calc_rand.mod
+calc_visc2.o: mod_globals.mod mod_constant.mod calc_sutherland.mod calc_visc_common.mod calc_rand.mod
+calc_visc4.o: mod_globals.mod mod_constant.mod calc_sutherland.mod calc_visc_common.mod calc_rand.mod
 calc_mat.o: mod_globals.mod calc_common_dim.mod
 calc_slau.o: mod_globals.mod mod_constant.mod calc_common.mod calc_hybrid.mod
 calc_roe.o: mod_globals.mod calc_common.mod calc_common_dim.mod calc_physical_quantities.mod calc_mat.mod
 calc_muscl.o: mod_globals.mod
 calc_flux.o: mod_globals.mod mod_constant.mod calc_keep.mod calc_slau.mod calc_roe.mod calc_hybrid.mod calc_muscl.mod
-calc_flux_base.o: mod_globals.mod calc_physical_quantities.mod calc_hybrid.mod calc_flux.mod calc_visc.mod calc_les.mod set.mod
+calc_flux_base.o: mod_globals.mod calc_physical_quantities.mod calc_hybrid.mod calc_flux.mod calc_visc2.mod calc_visc4.mod calc_les.mod set.mod
 calc_hybrid.o: mod_globals.mod
 calc_steps.o: mod_globals.mod
 calc_rescale.o: mod_globals.mod mod_constant.mod
