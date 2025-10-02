@@ -18,6 +18,7 @@ contains
     i = (blockIdx%x-1)*blockDim%x + threadIdx%x + 1 
     j = (blockIdx%y-1)*blockDim%y + threadIdx%y + 1
     k = (blockIdx%z-1)*blockDim%z + threadIdx%z + 1
+    if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
     dx_tmp = 0.25d0 * (dx(i-1) + dx(i))
     dy_tmp = 0.25d0 * (dy(j-1) + dy(j))
     dz_tmp = 0.25d0 * (dz(k-1) + dz(k))
@@ -59,6 +60,7 @@ contains
     endif
   end subroutine calc_Ducros
 
+
   attributes(device) function Albada(e, rho) result(phi)
     real(8), intent(in), dimension(4), device :: e, rho
     real(8) :: d1, d2, d3, phim, phip, phi, eps = 1.d-16
@@ -69,12 +71,7 @@ contains
     phim = (d2 * d3 + d3**2) / (d2**2 + d3**2 + eps)
     phi  = max(min(1.d0 - min(phim, phip), 1.d0), 0.d0)
   end function Albada
-
-  attributes(device) function sigmoid(x) result(ans)
-    real(8), intent(in), value :: x
-    real(8) :: ans
-    ans = 0.5d0 * (tanh(10.d0 * (x - 0.5d0)) + 1.d0)
-  end function sigmoid
+  
 
   attributes(device) function wiggle_detector(phi) result(ans)
     real(8), intent(in), device :: phi(4)
