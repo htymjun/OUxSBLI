@@ -18,7 +18,7 @@ contains
     real(8), shared :: w(threadsEv%x+1,0:threadsEv%z+1,threadsEv%y)
     integer i, j, k, it, jt, kt
     real(8) :: txx, txy, txz, utxx, vtxy, wtxz, kTx
-    real(8) m1, m2, mx, mux, mvx, mwx, muy, mvy, muz, mwz
+    real(8) mx, mux, mvx, mwx, muy, mvy, muz, mwz
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -26,7 +26,15 @@ contains
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
     k  = (blockIdx%z-1)*blockDim%z + kt + 1
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
-    call store_shared_x(nx, ny, nz, i, j, k, it, jt, kt, Q, u, v, w)
+    u(it,jt-1:jt+1,kt-1:kt+1) = Q(2,i,j-1:j+1,k-1:k+1)
+    v(it,jt-1:jt+1,kt)        = Q(3,i,j-1:j+1,k)
+    w(it,kt-1:kt+1,jt)        = Q(4,i,j,k-1:k+1)
+    if (it == blockDim%x) then
+      u(it+1,jt-1:jt+1,kt-1:kt+1) = Q(2,i+1,j-1:j+1,k-1:k+1)
+      v(it+1,jt-1:jt+1,kt)        = Q(3,i+1,j-1:j+1,k)
+      w(it+1,kt-1:kt+1,jt)        = Q(4,i+1,j,k-1:k+1)
+    endif 
+    call syncthreads()
 
     mx  = 0.5d0 * (mu(i,j,k) + mu(i+1,j,k))
     kTx = Cp_over_Pr * mx * (-T(i,j,k) + T(i+1,j,k)) * dx(i)
@@ -181,7 +189,7 @@ contains
     real(8), shared :: w(threadsFv%y+1,0:threadsFv%z+1,threadsFv%x)
     integer i, j, k, it, jt, kt
     real(8) :: tyx, tyy, tyz, utyx, vtyy, wtyz, kTy
-    real(8) m1, m2, my, muy, mvy, mwy, mvz, mwz, mux, mvx
+    real(8) my, muy, mvy, mwy, mvz, mwz, mux, mvx
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -189,10 +197,16 @@ contains
     j  = (blockIdx%y-1)*blockDim%y + jt
     k  = (blockIdx%z-1)*blockDim%z + kt + 1
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
-    call store_shared_y(nx, ny, nz, i, j, k, it, jt, kt, Q, u, v, w)
+    u(jt,it-1:it+1,kt)        = Q(2,i-1:i+1,j,k)
+    v(jt,it-1:it+1,kt-1:kt+1) = Q(3,i-1:i+1,j,k-1:k+1)
+    w(jt,kt-1:kt+1,it)        = Q(4,i,j,k-1:k+1)
+    if (jt == blockDim%y) then
+      u(jt+1,it-1:it+1,kt)        = Q(2,i-1:i+1,j+1,k)
+      v(jt+1,it-1:it+1,kt-1:kt+1) = Q(3,i-1:i+1,j+1,k-1:k+1)
+      w(jt+1,kt-1:kt+1,it)        = Q(4,i,j+1,k-1:k+1)
+    endif 
+    call syncthreads()
 
-    m1 = mu(T(i,j,k))
-    m2 = mu(T(i,j+1,k))
     block
       real(8) mx1, mx2
       mx1 = 0.25d0 * (mu(i-1,j,k) + mu(i,  j,k) + mu(i-1,j+1,k) + mu(i,  j+1,k))
@@ -346,7 +360,7 @@ contains
     real(8), shared :: w(threadsGv%z+1,0:threadsGv%x+1,0:threadsGv%y+1)
     integer i, j, k, it, jt, kt
     real(8) :: tzx, tzy, tzz, utzx, vtzy, wtzz, kTz
-    real(8) m1, m2, mz, muz, mvz, mwz, mwx, mux, mvy, mwy
+    real(8) mz, muz, mvz, mwz, mwx, mux, mvy, mwy
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -354,10 +368,16 @@ contains
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
     k  = (blockIdx%z-1)*blockDim%z + kt
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
-    call store_shared_z(nx, ny, nz, i, j, k, it, jt, kt, Q, u, v, w)
+    u(kt,it-1:it+1,jt)        = Q(2,i-1:i+1,j,k)
+    v(kt,jt-1:jt+1,it)        = Q(3,i,j-1:j+1,k)
+    w(kt,it-1:it+1,jt-1:jt+1) = Q(4,i-1:i+1,j-1:j+1,k)
+    if (kt == blockDim%z) then
+      u(kt+1,it-1:it+1,jt)        = Q(2,i-1:i+1,j,k+1)
+      v(kt+1,jt-1:jt+1,it)        = Q(3,i,j-1:j+1,k+1)
+      w(kt+1,it-1:it+1,jt-1:jt+1) = Q(4,i-1:i+1,j-1:j+1,k+1)
+    endif 
+    call syncthreads()
 
-    m1 = mu(T(i,j,k))
-    m2 = mu(T(i,j,k+1))
     block
       real(8) mx1, mx2
       mx1 = 0.25d0 * (mu(i-1,j,k) + mu(i,  j,k) + mu(i-1,j,k+1) + mu(i,  j,k+1))

@@ -10,12 +10,8 @@ module calc_flux_base
   use calc_les
   use set
   implicit none
-  interface calc_EFG
-    module procedure calc_EFG_Euler, calc_EFG_visc, calc_EFG_LES
-  end interface calc_EFG
 contains
-  subroutine calc_EFG_Euler(id_visc, nx, ny, nz, dx, dy, dz, Jacobian, QJ, ruvwp, E, F, G, seed)
-    integer(kind=2), intent(in), value   :: id_visc
+  subroutine calc_EFG_Euler(nx, ny, nz, dx, dy, dz, Jacobian, QJ, ruvwp, E, F, G)
     integer, intent(in), value   :: nx, ny, nz
     real(8), intent(in), device  :: dx(nx-1) ! 1 / dx
     real(8), intent(in), device  :: dy(ny-1) ! 1 / dy
@@ -26,20 +22,22 @@ contains
     real(8), intent(out), device :: E(5,nx-1,ny-2,nz-2)
     real(8), intent(out), device :: F(5,nx-2,ny-1,nz-2)
     real(8), intent(out), device :: G(5,nx-2,ny-2,nz-1)
-    integer(8), intent(inout), device, optional :: seed(nx,ny,nz)
-    real(8), dimension(nx,ny,nz), device   :: sensor
+    real(8), dimension(nx,ny,nz), device :: sensor
     integer stat
+    print *, "calc quantities"
     call calc_quantities_3D(nx, ny, nz, Jacobian, QJ, ruvwp)
+    print *, "calc Ducros"
     call calc_Ducros<<<blocks,threads>>>(nx, ny, nz, dx, dy, dz, ruvwp, sensor)
+    print *, "calc conv"
     call calc_E<<<blocksE,threadsE,1>>>(id_accuracy, nx, ny, nz, ruvwp, sensor, E)
     call calc_F<<<blocksF,threadsF,2>>>(id_accuracy, nx, ny, nz, ruvwp, sensor, F)
     call calc_G<<<blocksG,threadsG,3>>>(id_accuracy, nx, ny, nz, ruvwp, sensor, G)
     stat = cudaDeviceSynchronize()
+    print *, "finish calc EFG"
   end subroutine calc_EFG_Euler
 
   
-  subroutine calc_EFG_visc(id_visc, nx, ny, nz, dx, dy, dz, Jacobian, QJ, ruvwp, E, F, G, seed)
-    integer(kind=4), intent(in), value :: id_visc
+  subroutine calc_EFG_NS(nx, ny, nz, dx, dy, dz, Jacobian, QJ, ruvwp, T, mu, E, F, G, seed)
     integer, intent(in), value   :: nx, ny, nz
     real(8), intent(in), device  :: dx(nx-1) ! 1 / dx
     real(8), intent(in), device  :: dy(ny-1) ! 1 / dy
@@ -47,18 +45,23 @@ contains
     real(8), intent(in), device  :: Jacobian(nx,ny)
     real(8), intent(in), device  :: QJ(5,nx,ny,nz) ! Q / Jacobian
     real(8), intent(out), device :: ruvwp(5,nx,ny,nz) ! (rho, u, v, w, p)
+    real(8), intent(out), device :: T(nx,ny,nz), mu(nx,ny,nz)
     real(8), intent(out), device :: E(5,nx-1,ny-2,nz-2)
     real(8), intent(out), device :: F(5,nx-2,ny-1,nz-2)
     real(8), intent(out), device :: G(5,nx-2,ny-2,nz-1)
     integer(8), intent(inout), device, optional :: seed(nx,ny,nz)
-    real(8), dimension(nx,ny,nz), device :: T, mu, sensor
+    real(8), dimension(nx,ny,nz), device :: sensor
     integer stat
+    print *, "calc quantities"
     call calc_quantities_T_3D(nx, ny, nz, Jacobian, QJ, ruvwp, T, mu)
+    print *, "calc Ducros"
     call calc_Ducros<<<blocks,threads>>>(nx, ny, nz, dx, dy, dz, ruvwp, sensor)
+    print *, "calc conv"
     call calc_E<<<blocksE,threadsE,1>>>(id_accuracy, nx, ny, nz, ruvwp, sensor, E)
     call calc_F<<<blocksF,threadsF,2>>>(id_accuracy, nx, ny, nz, ruvwp, sensor, F)
     call calc_G<<<blocksG,threadsG,3>>>(id_accuracy, nx, ny, nz, ruvwp, sensor, G)
     stat = cudaDeviceSynchronize()
+    print *, "calc visc"
     if (present(seed)) then
       if (id_visc == 2) then
         call calc_Ev4<<<blocksEv,threadsEv,1>>>(nx, ny, nz, dx, dy, dz, ruvwp, T, mu, E, seed)
@@ -81,12 +84,12 @@ contains
         call calc_Gv2<<<blocksGv,threadsGv,3>>>(nx, ny, nz, dx, dy, dz, ruvwp, T, mu, G)
       endif
     endif
+    print *, "finish calc EFG"
     stat = cudaDeviceSynchronize()
-  end subroutine calc_EFG_visc
+  end subroutine calc_EFG_NS
 
   
-  subroutine calc_EFG_LES(id_visc, nx, ny, nz, dx, dy, dz, Jacobian, QJ, ruvwp, E, F, G, seed)
-    integer(kind=8), intent(in), value :: id_visc
+  subroutine calc_EFG_LES(nx, ny, nz, dx, dy, dz, Jacobian, QJ, ruvwp, T, mu, mut, qc2, E, F, G)
     integer, intent(in), value   :: nx, ny, nz
     real(8), intent(in), device  :: dx(nx-1) ! 1 / dx
     real(8), intent(in), device  :: dy(ny-1) ! 1 / dy
@@ -94,14 +97,12 @@ contains
     real(8), intent(in), device  :: Jacobian(nx,ny)
     real(8), intent(in), device  :: QJ(5,nx,ny,nz) ! Q / Jacobian
     real(8), intent(out), device :: ruvwp(5,nx,ny,nz) ! (rho, u, v, w, p)
+    real(8), intent(out), device :: T(nx,ny,nz), mu(nx,ny,nz), mut(nx,ny,nz), qc2(nx,ny,nz)
     real(8), intent(out), device :: E(5,nx-1,ny-2,nz-2)
     real(8), intent(out), device :: F(5,nx-2,ny-1,nz-2)
     real(8), intent(out), device :: G(5,nx-2,ny-2,nz-1)
-    integer(8), intent(inout), device, optional :: seed(nx,ny,nz)
-    real(8), dimension(nx,ny,nz), device :: T, mu, sensor, mut, qc2
+    real(8), dimension(nx,ny,nz), device :: sensor
     integer stat
-    mut = 0.d0
-    qc2 = 0.d0
     call calc_quantities_T_3D(nx, ny, nz, Jacobian, QJ, ruvwp, T, mu)
     call calc_Ducros<<<blocks,threads>>>(nx, ny, nz, dx, dy, dz, ruvwp, sensor)
     call calc_E<<<blocksE,threadsE,1>>>(id_accuracy, nx, ny, nz, ruvwp, sensor, E)
