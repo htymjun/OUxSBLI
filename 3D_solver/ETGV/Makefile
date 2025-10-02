@@ -1,6 +1,6 @@
 FC = mpif90
 
-OUTPUT_OPTIN = -cuda -acc -fast -Minfo=accel -lnvhpcwrapnvtx
+OUTPUT_OPTIN = -cuda -acc -fast -Minfo=accel -gpu=ptxinfo, -lnvhpcwrapnvtx
 
 .SUFFIXES : .f90
 
@@ -20,6 +20,8 @@ OBJ =	mod_globals.o \
       calc_mat.o \
       calc_physical_quantities.o \
       calc_sutherland.o \
+      calc_rand.o \
+      calc_visc_common.o \
       calc_visc.o \
       calc_les.o \
       calc_common.o \
@@ -55,7 +57,7 @@ calc_common.o: mod_globals.mod
 calc_term.o: calc_common_dim.mod
 calc_keep.o: mod_globals.mod mod_constant.mod calc_common_dim.mod calc_term.mod calc_mat.mod
 calc_sutherland.o: mod_globals.mod mod_constant.mod
-calc_visc.o: mod_globals.mod mod_constant.mod calc_sutherland.mod
+calc_visc.o: mod_globals.mod mod_constant.mod calc_sutherland.mod calc_visc_common.mod calc_rand.mod
 calc_mat.o: mod_globals.mod calc_common_dim.mod
 calc_slau.o: mod_globals.mod mod_constant.mod calc_common.mod calc_hybrid.mod
 calc_roe.o: mod_globals.mod calc_common.mod calc_common_dim.mod calc_physical_quantities.mod calc_mat.mod

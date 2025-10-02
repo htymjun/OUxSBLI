@@ -5,6 +5,7 @@ module mod_globals
   integer, parameter    :: accuracy  = 2 
   integer, parameter    :: offset    = accuracy / 2
   integer(2), parameter :: id_visc   = 0
+  integer(2), parameter :: id_LL     = 0
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! id_visc       ! kind2 Euler       !
   !               ! kind4 NS          !
@@ -83,20 +84,14 @@ module mod_globals
 
   ! GPU
   ! 4th-order accuracy
-  type(dim3) :: blocksE   = dim3((nx-accuracy+1)/5,(ny-accuracy)/8,(nz-accuracy)/8)
-  type(dim3) :: blocksF   = dim3((nx-accuracy)/8,(ny-accuracy+1)/5,(nz-accuracy)/8)
-  type(dim3) :: blocksG   = dim3((nx-accuracy)/8,(ny-accuracy)/8,(nz-accuracy+1)/5)
-  type(dim3) :: blocksEv  = dim3((nx-accuracy+1)/5,(ny-accuracy)/8,(nz-accuracy)/8)
-  type(dim3) :: blocksFv  = dim3((nx-accuracy)/8,(ny-accuracy+1)/5,(nz-accuracy)/8)
-  type(dim3) :: blocksGv  = dim3((nx-accuracy)/8,(ny-accuracy)/8,(nz-accuracy+1)/5)
-  type(dim3) :: blocks    = dim3((nx-accuracy)/8,(ny-accuracy)/8,(nz-accuracy)/8)
-  type(dim3) :: threadsE  = dim3(5,8,8)
-  type(dim3) :: threadsF  = dim3(8,5,8)
-  type(dim3) :: threadsG  = dim3(8,8,5)
-  type(dim3) :: threadsEv = dim3(5,8,8)
-  type(dim3) :: threadsFv = dim3(8,5,8)
-  type(dim3) :: threadsGv = dim3(8,8,5)
-  type(dim3) :: threads   = dim3(8,8,8)
+  type(dim3), parameter :: threadsE  = dim3(5,8,8)
+  type(dim3), parameter :: threadsF  = dim3(8,5,8)
+  type(dim3), parameter :: threadsG  = dim3(8,8,5)
+  type(dim3), parameter :: threadsEv = dim3(5,8,8)
+  type(dim3), parameter :: threadsFv = dim3(8,5,8)
+  type(dim3), parameter :: threadsGv = dim3(8,8,5)
+  type(dim3), parameter :: threads   = dim3(8,8,8)
+  type(dim3) :: blocksE, blocksF, blocksG, blocksEv, blocksFv, blocksGv, blocks
   ! 6th-order accuracy
   !type(dim3) :: blocksE = dim3((nx-accuracy+1)/23,(ny-accuracy)/4,(nz-accuracy)/4)
   !type(dim3) :: blocksF = dim3((nx-accuracy)/4,(ny-accuracy+1)/23,(nz-accuracy)/4)

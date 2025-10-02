@@ -21,11 +21,11 @@ contains
       if (i < int(0.5 * nx)) then
         Q(i,1) = rho0
         Q(i,2) = 0.d0
-        Q(i,3) = p0
+        Q(i,3) = p0 / (gamma - 1.d0)
       else
         Q(i,1) = rho1
         Q(i,2) = 0.d0
-        Q(i,3) = p1
+        Q(i,3) = p1 / (gamma - 1.d0)
       endif
     enddo
   end subroutine set_init
@@ -35,10 +35,10 @@ contains
     real(8), intent(inout), device :: Q(nx,3)
     Q(1,1)  = rho0!Q(2,1)
     Q(1,2)  = 0.d0
-    Q(1,3)  = p0!Q(2,3)
+    Q(1,3)  = p0 / (gamma - 1.d0)!Q(2,3)
     Q(nx,1) = rho1!Q(nx-1,1)
     Q(nx,2) = 0.d0
-    Q(nx,3) = p1!Q(nx-1,3)
+    Q(nx,3) = p1 / (gamma - 1.d0)!Q(nx-1,3)
   end subroutine set_bc
 end module set
 

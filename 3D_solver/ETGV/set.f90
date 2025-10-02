@@ -48,7 +48,7 @@ contains
     integer, intent(in), value     :: myrank, nx, ny, nz
     real(8), intent(in), device    :: Jacobian(nx,ny)
     real(8), intent(inout), device :: Q(5,nx,ny,nz)
-    real(8), intent(in), device    :: Qre(ny*(nz-6)*5)
+    real(8), intent(in), device, optional :: Qre(ny*(nz-6)*5)
     integer i, j, k, l
     call set_bc_cyclic(id_accuracy, nx, ny, nz, Q)
   end subroutine set_bc

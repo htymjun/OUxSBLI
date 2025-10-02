@@ -2,7 +2,7 @@ module calc_rescale
   use cudafor
   use mpi
   use mod_globals, only : nre1, nre2, rerank, nt, dt, gamma , R, Pr, u0, rho0, p0, M0, blt, start_rescale
-  use mod_constant, only : Cp, gamma_1, over_gamma_1
+  use mod_constant, only : Cp, gamma_1, over_gamma_1, mu0_T0_S, over_T0
 contains
   subroutine calc_mean(step, flag_re, nx, ny, nz, Jacobian, QJ, Qm)
     integer, intent(in)            :: step, flag_re, nx, ny, nz
@@ -177,7 +177,6 @@ contains
     real(8), intent(inout) :: Qre(ny*nz*5) ! Q / J
     integer i, j, jj, k, kh, l, j_offset, k_offset, ierr
     integer, dimension(ny) :: jj_y, jj_e
-    real(8) :: mu0 = 1.716d-5, T0 = 273.2d0, S = 111.d0
     real(8) t, dudy, taure, utre, utin, beta, mu, nu, ady, ade 
     ! mean properties at rescaling plane
     real(8), dimension(ny)    :: Um, Vm, Wm, rhom, Tm, pm
@@ -271,7 +270,7 @@ contains
       enddo;enddo
 
       ! friction velocity
-      mu    = mu0 * ((T0 + S) / (Tm(1) + S)) * (Tm(1) / T0)**1.5
+      mu    = mu0_T0_S / (Tm(1) + 111.d0) * (Tm(1) * over_T0)**1.5
       nu    = mu / rhom(1)
       taure = mu * abs(-Um(1) + Um(2)) / (-y(1) + y(2))
       utre  = sqrt(taure / rhom(1))
@@ -283,7 +282,7 @@ contains
         ypre(j) = y(j) * utre / nu
         etin(j) = y(j) / blt
         etre(j) = y(j) / bltre
-        weight(j) = min(1.d0, 0.5d0 * (1.d0 + tanh(4.d0 * (etin(j) - 0.2d0) / ((1.d0 - 0.4d0) * etin(j) + 0.2d0)) / tanh(4.d0)))
+        weight(j) = min(1.d0, 0.5d0 * (1.d0 + tanh(4.d0 * (etin(j) - 0.2d0) / (0.6d0 * etin(j) + 0.2d0)) / tanh(4.d0)))
       enddo
 
       jj_y(:) = -1
