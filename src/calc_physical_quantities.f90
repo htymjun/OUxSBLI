@@ -1,7 +1,7 @@
 module calc_physical_quantities
   use cudafor
   use mod_globals, only : gamma, R, dim => dimension
-  use mod_constant, only : gamma_1
+  use mod_constant, only : gamma_1, mu0_T0_S_over_T0_2_3
   implicit none
   interface calc_quantities
     module procedure calc_quantities_2D, calc_quantities_3D
@@ -18,6 +18,7 @@ contains
     Vl   = Ql(2:dim+1)
     Vr   = Qr(2:dim+1)
   end subroutine set_q
+
 
   subroutine calc_quantities_2D(nx,ny,Jacobian,QJ,rho,u,v,p)
     integer, intent(in), value   :: nx, ny
@@ -37,47 +38,57 @@ contains
     enddo;enddo
   end subroutine calc_quantities_2D
 
+
   subroutine calc_quantities_3D(nx, ny, nz, Jacobian, QJ, Q)
-    integer, intent(in), value                          :: nx, ny, nz
-    real(8), intent(in), dimension(nx,ny), device       :: Jacobian
-    real(8), intent(in), dimension(5,nx,ny,nz), device  :: QJ ! Q / Jacobian
-    real(8), intent(out), dimension(5,nx,ny,nz), device :: Q
-    integer i, j, k
-    real(8) :: over_Q1
-    !$cuf kernel do(3) <<<*,*>>>
-    do k = 1, nz
-      do j = 1, ny
-        do i = 1, nx
-          over_Q1    = 1.d0 / QJ(1,i,j,k)
-          Q(1,i,j,k) = Jacobian(i,j) * QJ(1,i,j,k)
-          Q(2,i,j,k) = QJ(2,i,j,k) * over_Q1
-          Q(3,i,j,k) = QJ(3,i,j,k) * over_Q1
-          Q(4,i,j,k) = QJ(4,i,j,k) * over_Q1
-          Q(5,i,j,k) = gamma_1 * (Jacobian(i,j) * QJ(5,i,j,k) - 0.5d0 * Q(1,i,j,k) * &
-                      (Q(2,i,j,k)*Q(2,i,j,k) + Q(3,i,j,k)*Q(3,i,j,k) + Q(4,i,j,k)*Q(4,i,j,k)))
-    enddo;enddo;enddo
-  end subroutine calc_quantities_3D
-  
-  subroutine calc_quantities_T_3D(nx, ny, nz, Jacobian, QJ, Q, T)
     integer, intent(in), value   :: nx, ny, nz
     real(8), intent(in), device  :: Jacobian(nx,ny)
     real(8), intent(in), device  :: QJ(5,nx,ny,nz) ! Q / Jacobian
     real(8), intent(out), device :: Q(5,nx,ny,nz)
-    real(8), intent(out), device :: T(nx,ny,nz)
     integer i, j, k
-    real(8) :: over_Q1
+    real(8) :: over_Q1, rho, u, v, w
     !$cuf kernel do(3) <<<*,*>>>
     do k = 1, nz
       do j = 1, ny
         do i = 1, nx
           over_Q1    = 1.d0 / QJ(1,i,j,k)
-          Q(1,i,j,k) = Jacobian(i,j) * QJ(1,i,j,k)
-          Q(2,i,j,k) = QJ(2,i,j,k) * over_Q1
-          Q(3,i,j,k) = QJ(3,i,j,k) * over_Q1
-          Q(4,i,j,k) = QJ(4,i,j,k) * over_Q1
-          Q(5,i,j,k) = gamma_1 * (Jacobian(i,j) * QJ(5,i,j,k) - 0.5d0 * Q(1,i,j,k) * &
-                      (Q(2,i,j,k)*Q(2,i,j,k) + Q(3,i,j,k)*Q(3,i,j,k) + Q(4,i,j,k)*Q(4,i,j,k)))
-          T(i,j,k)   = Q(5,i,j,k) / (R * Q(1,i,j,k))
+          rho        = Jacobian(i,j) * QJ(1,i,j,k)
+          u          = QJ(2,i,j,k) * over_Q1
+          v          = QJ(3,i,j,k) * over_Q1
+          w          = QJ(4,i,j,k) * over_Q1
+          Q(1,i,j,k) = rho
+          Q(2,i,j,k) = u
+          Q(3,i,j,k) = v
+          Q(4,i,j,k) = w
+          Q(5,i,j,k) = gamma_1 * (Jacobian(i,j) * QJ(5,i,j,k) - 0.5d0 * rho * (u*u + v*v + w*w))
+    enddo;enddo;enddo
+  end subroutine calc_quantities_3D
+  
+
+  subroutine calc_quantities_T_3D(nx, ny, nz, Jacobian, QJ, Q, T, mu)
+    integer, intent(in), value   :: nx, ny, nz
+    real(8), intent(in), device  :: Jacobian(nx,ny)
+    real(8), intent(in), device  :: QJ(5,nx,ny,nz) ! Q / Jacobian
+    real(8), intent(out), device :: Q(5,nx,ny,nz), T(nx,ny,nz), mu(nx,ny,nz)
+    integer i, j, k
+    real(8) :: over_Q1, rho, u, v, w, p, temp
+    !$cuf kernel do(3) <<<*,*>>>
+    do k = 1, nz
+      do j = 1, ny
+        do i = 1, nx
+          over_Q1    = 1.d0 / QJ(1,i,j,k)
+          rho        = Jacobian(i,j) * QJ(1,i,j,k)
+          u          = QJ(2,i,j,k) * over_Q1
+          v          = QJ(3,i,j,k) * over_Q1
+          w          = QJ(4,i,j,k) * over_Q1
+          p          = gamma_1 * (Jacobian(i,j) * QJ(5,i,j,k) - 0.5d0 * rho * (u*u + v*v + w*w))
+          Q(1,i,j,k) = rho
+          Q(2,i,j,k) = u
+          Q(3,i,j,k) = v
+          Q(4,i,j,k) = w
+          Q(5,i,j,k) = p
+          temp       = p / (R * rho)
+          T(i,j,k)   = temp
+          mu(i,j,k)  = mu0_T0_S_over_T0_2_3 / (temp + 111.d0) * temp**1.5d0
     enddo;enddo;enddo
   end subroutine calc_quantities_T_3D
 end module calc_physical_quantities

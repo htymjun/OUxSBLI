@@ -1,7 +1,6 @@
 FC = mpif90
 
-OUTPUT_OPTIN = -cpp -cuda -acc -fast -Minfo=accel -Mchkptr -gpu=ptxinfo -L$(LIBCUDA) -lnvhpcwrapnvtx -lcurand -lcufft
-LIBCUDA = /usr/local/cuda/lib64
+OUTPUT_OPTIN = -cpp -cuda -acc -fast -Minfo=accel -Mchkptr -gpu=ptxinfo -lnvhpcwrapnvtx
 
 .SUFFIXES : .f90
 
@@ -45,7 +44,7 @@ OBJ =	mod_globals.o \
       main.o
 
 a.out: $(OBJ)
-		$(FC) -cuda -acc -fast -Minfo -L$(LIBCUDA) -lnvhpcwrapnvtx -lcurand -lcufft -I./ $^
+		$(FC) -cuda -acc -fast -Minfo -lnvhpcwrapnvtx -I./ $^
 
 $(TARGET): $(OBJ)
 		$(LINK.f) $^ $(LOADLIBES) $(LDLIBS) -o $@
