@@ -66,8 +66,10 @@ module mod_globals
   ! id_exchange ! kind2 off !
   !             ! kind4 on  !
   !!!!!!!!!!!!!!!!!!!!!!!!!!!
+  integer(kind=2), parameter :: id_forcing = 0
   integer(kind=2), parameter :: id_exchange = 0
-  ! boundary layer
+
+  integer, parameter :: mygpu1 = 0
   real(8), parameter :: Lx1 = 20.d0 * blt
   real(8), parameter :: Ly1 = 5.d0 * blt
   real(8), parameter :: Lz1 = 2.5d0 * blt
@@ -76,6 +78,7 @@ module mod_globals
   integer, parameter :: nz1 = 129
 
   ! shock + boundary layer
+  integer, parameter :: mygpu2 = 1
   real(8), parameter :: Lx2 = 35.d0 * blt
   real(8), parameter :: Ly2 = 5.d0 * blt
   real(8), parameter :: Lz2 = Lz1
@@ -87,8 +90,14 @@ module mod_globals
   integer, parameter :: nre2 = int(0.9 * nx1)
   integer, parameter :: rerank = 0
 
+  type(dim3), parameter :: threadsE  = dim3(128,1,1)
+  type(dim3), parameter :: threadsF  = dim3(32,8,1)
+  type(dim3), parameter :: threadsG  = dim3(32,1,8)
+  type(dim3), parameter :: threadsEv = dim3(32,2,2)
+  type(dim3), parameter :: threadsFv = dim3(32,8,1)
+  type(dim3), parameter :: threadsGv = dim3(32,1,8)
+  type(dim3), parameter :: threads   = dim3(32,2,2)
   type(dim3) :: blocksE, blocksF, blocksG, blocksEv, blocksFv, blocksGv, blocks
-  type(dim3) :: threadsE, threadsF, threadsG, threadsEv, threadsFv, threadsGv, threads
   
   ! time
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -99,11 +108,11 @@ module mod_globals
   !               ! kind4 ! recal   !
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   integer(kind=2), parameter :: id_RungeKutta = 0
-  integer(kind=4), parameter :: id_recal      = 0
-  integer, parameter         :: step_offset   = 1500
+  integer(kind=2), parameter :: id_recal      = 0
+  integer, parameter         :: step_offset   = 0
   integer, parameter         :: start_rescale = 10
   real(8), parameter :: endT  = 0.5d-3
-  integer, parameter :: np    = 10!500
+  integer, parameter :: np    = 1!500
   real(8), parameter :: R     = 287.03d0
   real(8), parameter :: gamma = 1.4d0
   real(8), parameter :: M0    = 2.5d0
@@ -111,7 +120,7 @@ module mod_globals
   real(8), parameter :: p0    = 14924.d0
   real(8), parameter :: u0    = M0 * sqrt(gamma * R * T0)
   real(8), parameter :: dt    = 3.d-9
-  integer, parameter :: nt    = 50!int(endT / (dble(np) * dt))
+  integer, parameter :: nt    = 2!int(endT / (dble(np) * dt))
 
   ! physical properties
   real(8), parameter :: Pr    = 0.72d0

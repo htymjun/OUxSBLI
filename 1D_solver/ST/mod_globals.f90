@@ -18,8 +18,8 @@ module mod_globals
 
   ! initial condition
   real(8), parameter :: T0   = 300.d0
-  real(8), parameter :: C    = 1.456d-6
-  real(8), parameter :: S    = 110.4d0
+  real(8), parameter :: C    = 1.461d-6
+  real(8), parameter :: S    = 110.3d0
   real(8), parameter :: mu0  = C * T0**1.5 / (T0 + S)
   real(8), parameter :: Re   = 25000.d0
   real(8), parameter :: rho0 = 1.293d0

@@ -25,18 +25,21 @@ set ylabel "{/=12 {/Symbol:Italic r}}"
 set size square
 set mxtics 5
 set mytics 5
+set yrange [0:1.1]
 plot datafile using 1:($2/rho0) with lines lw 1 lc rgb "blue"
 
 set ylabel "{/=12 {/Times-New-Roman:Italic u}}"
 set size square
 set mxtics 5
 set mytics 5
+set yrange [0:1]
 plot datafile using 1:($3/u0) with lines lw 1 lc rgb "blue"
 
 set ylabel "{/=12 {/Times-New-Roman:Italic P}}"
 set size square
 set mxtics 5
 set mytics 5
+set yrange [0:1.1]
 plot datafile using 1:($4/p0) with lines lw 1 lc rgb "blue"
 
 unset multiplot

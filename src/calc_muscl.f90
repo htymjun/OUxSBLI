@@ -101,7 +101,7 @@ contains
 
   attributes(device) function MUSCL4thTVD(id_tvd, sensor, a2, a3, d) result(alr)
     integer(kind=4), intent(in), value :: id_tvd
-    real(8), intent(in), value         :: sensor,a2, a3
+    real(8), intent(in), value         :: sensor, a2, a3
     real(8), intent(in), device        :: d(5)
     real(8) delta2, alr(2)
     delta2 = d(3) - d33(d(2), d(3), d(4)) * one_sixth

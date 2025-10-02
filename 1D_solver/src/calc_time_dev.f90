@@ -1,7 +1,7 @@
 module calc_time_dev
   use cudafor
   use mpi
-  use mod_globals, only : gamma, Pr, R_gas, nt, np, dx, dtdx, blocks, threads
+  use mod_globals, only : gamma, Pr, R_gas, nt, np, dt, dx, dtdx, blocks, threads
   use set
   use print
   implicit none
@@ -23,8 +23,8 @@ contains
   
   attributes(device) function Sutherland(T) result(mu)
     real(8), intent(in), value :: T
-    real(8) :: mu, mu0 = 1.716d-5, T0 = 273.2d0, S = 111.d0
-    mu = mu0 * ((T0 + S) / (T + S)) * (T / T0) ** 1.5d0
+    real(8) :: mu, C = 1.461d-6, S = 110.3d0
+    mu = C * T**1.5d0 / (T + S)
   end function Sutherland
 
   
@@ -47,9 +47,34 @@ contains
   end subroutine calc_Ev
 
 
-  subroutine calc_R(nx, Q, R)
+  attributes(global) subroutine calc_Ev_LL(nx, rho, u, p, Z, Ev)
+    integer, intent(in), value   :: nx
+    real(8), intent(in), device  :: rho(nx), u(nx), p(nx)
+    real(8), intent(in), device  :: Z(2,nx)            
+    real(8), intent(out), device :: Ev(nx-1,3)
+    real(8) :: mu, Cp = gamma * R_gas / (gamma - 1.d0)
+    real(8) :: kb = 1.380650d-23
+    real(8), device :: T(2)
+    real(8) txx, utxx, kappa, kTx, s, q
+    integer i
+    i = (blockIdx%x - 1) * blockDim%x + threadIdx%x
+    T(:)  = p(i:i+1) / (R_gas * rho(i:i+1))
+    mu    = 0.5d0 * (Sutherland(T(1)) + Sutherland(T(2)))
+    txx   = 4.d0 * mu * (-u(i) + u(i+1)) / (3.d0 * dx)
+    utxx  = 0.5d0 * (u(i) + u(i+1)) * txx
+    kappa = Cp * mu / Pr
+    kTx   = kappa * (-T(1) + T(2)) / dx
+    s     = sqrt(4.d0 * kb * mu * (T(1) + T(2)) / (3.d0 * dt * dx)) * 0.5d0 * (Z(1,i) + Z(1,i+1))
+    q     = sqrt(kb * kappa * (T(1)**2 + T(2)**2) / (dt * dx)) * 0.5d0 * (Z(2,i) + Z(2,i+1))
+    Ev(i,2) = txx + sqrt(2.d0) * s
+    Ev(i,3) = utxx + kTx + sqrt(2.d0) * (q + 0.5d0 * (u(i) + u(i+1)) * s)
+  end subroutine calc_Ev_LL
+
+
+  subroutine calc_R(nx, Q, Z, R)
     integer, intent(in), value     :: nx
     real(8), intent(in), device    :: Q(nx,3)
+    real(8), intent(inout), device :: Z(2,nx)
     real(8), intent(out), device   :: R(nx-2,3)
     real(8), dimension(nx), device :: rho, u, p
     integer stat, i, j
@@ -61,7 +86,11 @@ contains
       p(i)   = (gamma - 1.d0) * (Q(i,3) - 0.5d0 * rho(i) * u(i)**2)
     enddo
     call calc_E<<<blocks,threads,0>>>(nx, rho, u, p, E)
-    call calc_Ev<<<blocks,threads,1>>>(nx, rho, u, p, Ev)
+    if (kind(id_LL) == 2) then
+      call calc_Ev<<<blocks,threads,1>>>(nx, rho, u, p, Ev)
+    else
+      call calc_Ev_LL<<<blocks,threads,1>>>(nx, rho, u, p, Z, Ev)
+    endif
     stat = cudaDeviceSynchronize() 
     !$cuf kernel do(2)<<<*,*>>>
     do j = 1, 3
@@ -119,7 +148,7 @@ contains
     real(8), intent(inout) :: Q_cpu(nx,3)
     integer t1, t2, ndevices, ilen, ierr, stat, ireq, istat(MPI_STATUS_SIZE)
     type(cudaDeviceProp)         :: prop
-    real(8), allocatable, device :: Q(:,:), Q2(:,:), R(:,:)
+    real(8), allocatable, device :: Q(:,:), Q2(:,:), Z(:,:), R(:,:)
 
     if (myrank == 0) then
       stat = cudaGetDeviceCount(ndevices)
@@ -129,7 +158,7 @@ contains
       ilen = verify(prop%name, ' ', .true.)
       print '(1x, a, a, i1, a)', prop%name(1:ilen), " (GPU", myrank, ") is available"
 
-      allocate(Q(nx,3), Q2(nx,3), R(nx-2,3))
+      allocate(Q(nx,3), Q2(nx,3), Z(2,nx), R(nx-2,3))
 
       call print_1d(0, nx, real(x), real(Q_cpu))
       Q = Q_cpu
@@ -138,15 +167,15 @@ contains
     do t2 = 1, np
       if (myrank == 0) then
         do t1 = 1, nt
-          call calc_R(nx, Q, R)
+          call calc_R(nx, Q, Z, R)
           call calc_step1(nx, Q, R, Q2)
           call set_bc(nx, Q2)
 
-          call calc_R(nx, Q2, R)
+          call calc_R(nx, Q2, Z, R)
           call calc_step2(nx, Q, R, Q2)
           call set_bc(nx, Q2)
 
-          call calc_R(nx, Q2, R)
+          call calc_R(nx, Q2, Z, R)
           call calc_step3(nx, Q2, R, Q)
           call set_bc(nx, Q)
         enddo
@@ -163,7 +192,7 @@ contains
     enddo
     
     if (myrank == 0) then
-      deallocate(Q, Q2, R)
+      deallocate(Q, Q2, Z, R)
     endif
   end subroutine RungeKutta
 end module calc_time_dev

@@ -1,7 +1,6 @@
 module calc_slau
   use mod_globals, only : dim => dimension, gamma
   use mod_constant, only : over_gamma_1
-  use calc_hybrid
   implicit none
   interface SLAU
     module procedure SLAU1, HRSLAU2
@@ -19,6 +18,7 @@ contains
     enddo
   end function vecsum
 
+
   !$dir inline
   attributes(device) function q2(V) result(ans)
     real(8), intent(in) :: V(2,dim)
@@ -30,6 +30,7 @@ contains
         ans = ans + V(i,j)**2
     enddo;enddo
   end function q2
+
 
   !$dir inline
   attributes(device) subroutine SLAU_common(id, rho, p, V, c, over_c, Mp, Mm, bp, bm, dp, Vtp, Vtm)
@@ -62,6 +63,7 @@ contains
     dp = -p(1) + p(2)
   end subroutine SLAU_common
 
+
   !$dir inline
   attributes(device) function phil(rho, V, p) result(ans)
     real(8), intent(in) :: rho(2), V(2,dim), p(2)
@@ -70,6 +72,7 @@ contains
     ans(2:dim+1) = V(1,:)
     ans(dim+2)   = (p(1) * over_gamma_1 + 0.5d0 * rho(1) * vecsum(1, V(:,:)) + p(1)) / rho(1)
   end function phil
+
 
   !$dir inline
   attributes(device) function phir(rho, V, p) result(ans)
@@ -80,13 +83,14 @@ contains
     ans(dim+2)   = (p(2) * over_gamma_1 + 0.5d0 * rho(2) * vecsum(2, V(:,:)) + p(2)) / rho(2)
   end function phir
 
-  attributes(device) function SLAU1(id_slau, id, rho, p, V, Norm, HR, sensor) result(F)
-    integer(kind=2), intent(in), value    :: id_slau
-    integer, intent(in), value            :: id
-    real(8), intent(in), dimension(2)     :: rho, p
-    real(8), intent(in), dimension(2,dim) :: V
-    real(8), intent(in), dimension(dim+2) :: Norm
-    real(8), intent(in), value, optional  :: HR, sensor
+
+  attributes(device) function SLAU1(id_slau, id, rho, p, V, Norm, HR) result(F)
+    integer(kind=2), intent(in), value :: id_slau
+    integer, intent(in), value         :: id
+    real(8), intent(in)                :: rho(2), p(2)
+    real(8), intent(in)                :: V(2,dim)
+    real(8), intent(in)                :: Norm(dim+2)
+    real(8), intent(in), value         :: HR
     real(8) c, over_c, Mp, Mm, M, x
     real(8) Vtp, Vtm, dp, bp, bm, mass
     real(8), dimension(dim+2) :: F
@@ -101,14 +105,14 @@ contains
     end block
   end function SLAU1
 
-  attributes(device) function HRSLAU2(id_slau, id, rho, p, V, Norm, HR, sensor) result(F)
-    integer(kind=4), intent(in), value    :: id_slau
-    integer, intent(in), value            :: id
-    real(8), intent(in), dimension(2)     :: rho, p
-    real(8), intent(in), dimension(2,dim) :: V
-    real(8), intent(in), dimension(dim+2) :: Norm
-    real(8), intent(in), value            :: HR
-    real(8), intent(in), value, optional  :: sensor
+
+  attributes(device) function HRSLAU2(id_slau, id, rho, p, V, Norm, HR) result(F)
+    integer(kind=4), intent(in), value :: id_slau
+    integer, intent(in), value         :: id
+    real(8), intent(in)                :: rho(2), p(2)
+    real(8), intent(in)                :: V(2,dim)
+    real(8), intent(in)                :: Norm(dim+2)
+    real(8), intent(in), value         :: HR
     real(8) c, over_c, Mp, Mm
     real(8) Vtp, Vtm, dp, bp, bm, mass, V2
     real(8), dimension(dim+2) :: F

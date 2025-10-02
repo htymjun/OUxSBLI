@@ -5,13 +5,12 @@ module calc_visc2
   use calc_rand
   implicit none
 contains
-  attributes(global) subroutine calc_Ev2(nx, ny, nz, dx, dy, dz, Q, E, seed)
-    use calc_sutherland, only : mu6, mu2, mu_23
+  attributes(global) subroutine calc_Ev2(nx, ny, nz, dx, dy, dz, Q, T, mu, E, seed)
     integer, intent(in), value     :: nx, ny, nz
     real(8), intent(in), device    :: dx(nx-1) ! 1 / dx
     real(8), intent(in), device    :: dy(ny-1) ! 1 / dy
     real(8), intent(in), device    :: dz(nz-1) ! 1 / dz
-    real(8), intent(in), device    :: Q(5,nx,ny,nz)
+    real(8), intent(in), device    :: Q(5,nx,ny,nz), T(nx,ny,nz), mu(nx,ny,nz)
     real(8), intent(inout), device :: E(5,nx-1,ny-2,nz-2)
     integer(8), intent(inout), device, optional :: seed(nx,ny,nz)
     real(8), shared :: u(threadsEv%x+1,0:threadsEv%y+1,0:threadsEv%z+1)
@@ -37,17 +36,12 @@ contains
     endif 
     call syncthreads()
 
-    block
-      real(8), device :: Tx(2)
-      Tx(:) = Q(5,i:i+1,j,k) / (R * Q(1,i:i+1,j,k))
-      mx    = mu2(Tx(:))
-      kTx   = Cp_over_Pr * mx * (-Tx(1) + Tx(2)) * dx(i)
-    end block
+    mx  = 0.5d0 * (mu(i,j,k) + mu(i+1,j,k))
+    kTx = Cp_over_Pr * mx * (-T(i,j,k) + T(i+1,j,k)) * dx(i)
     block
       real(8) my1, my2
-      real(8), device :: Ty(2,3)
-      Ty(:,:) = Q(5,i:i+1,j-1:j+1,k) / (R * Q(1,i:i+1,j-1:j+1,k))
-      call mu_23(Ty(:,:), my1, my2)
+      my1 = 0.25d0 * (mu(i,j-1,k) + mu(i,j,  k) + mu(i+1,j-1,k) + mu(i+1,j,  k))
+      my2 = 0.25d0 * (mu(i,j,  k) + mu(i,j+1,k) + mu(i+1,j,  k) + mu(i+1,j+1,k))
       !muy = 0.25d0 * (my1 * (-u(it,jt-1,kt) + u(it,jt,kt) - u(it+1,jt-1,kt) + u(it+1,jt,kt)) &
       !              + my2 * (-u(it,jt,kt) + u(it,jt+1,kt) - u(it+1,jt,kt) + u(it+1,jt+1,kt))) * dy(j)
       !mvy = 0.25d0 * (my1 * (-v(it,jt-1,kt) + v(it,jt,kt) - v(it+1,jt-1,kt) + v(it+1,jt,kt)) &
@@ -59,9 +53,8 @@ contains
     end block
     block
       real(8) mz1, mz2
-      real(8), device :: Tz(2,3)
-      Tz(:,:) = Q(5,i:i+1,j,k-1:k+1) / (R * Q(1,i:i+1,j,k-1:k+1))
-      call mu_23(Tz(:,:), mz1, mz2)
+      mz1 = 0.25d0 * (mu(i,j,k-1) + mu(i,j,k  ) + mu(i+1,j,k-1) + mu(i+1,j,k  ))
+      mz2 = 0.25d0 * (mu(i,j,k  ) + mu(i,j,k+1) + mu(i+1,j,k  ) + mu(i+1,j,k+1))
       !muz = 0.25d0 * (mz1 * (-u(it,jt,kt-1) + u(it,jt,kt) - u(it+1,jt,kt-1) + u(it+1,jt,kt)) &
       !              + mz2 * (-u(it,jt,kt) + u(it,jt,kt+1) - u(it+1,jt,kt) + u(it+1,jt,kt+1))) * dz(k)
       !mwz = 0.25d0 * (mz1 * (-w(it,kt-1,jt) + w(it,kt,jt) - w(it+1,kt-1,jt) + w(it+1,kt,jt)) &
@@ -74,19 +67,17 @@ contains
     mux = mx * (-u(it,jt,kt) + u(it+1,jt,kt)) * dx(i)
     mvx = mx * (-v(it,jt,kt) + v(it+1,jt,kt)) * dx(i)
     mwx = mx * (-w(it,kt,jt) + w(it+1,kt,jt)) * dx(i)
-    txx  = 2.d0 * (2.d0 * mux - mvy - mwz) * one_third
-    txy  = muy + mvx
-    txz  = mwx + muz
+    txx = 2.d0 * (2.d0 * mux - mvy - mwz) * one_third
+    txy = muy + mvx
+    txz = mwx + muz
     if (present(seed)) then
       block
-        real(8) std_t, std_q, over_V, Zq, T1, T2
+        real(8) std_t, std_q, over_V, Zq
         real(8), device    :: rand(4), Z(6), Zx(6)
         real(8), parameter :: kb_over_dt = 1.380649d-23 / dt
-        T1  = Q(5,i,j,k)   / (R * Q(1,i,j,k))
-        T2  = Q(5,i+1,j,k) / (R * Q(1,i+1,j,k))
         over_V = dx(i) * dy(j) * dz(k)
-        std_t  = sqrt(kb_over_dt * over_V * mx * (T1 + T2))
-        std_q  = sqrt(kb_over_dt * over_V * mx * Cp_over_Pr * (T1**2 + T2**2))
+        std_t  = sqrt(kb_over_dt * over_V * mx * (T(i,j,k) + T(i+1,j,k)))
+        std_q  = sqrt(kb_over_dt * over_V * mx * Cp_over_Pr * (T(i,j,k)*T(i,j,k) + T(i+1,j,k)*T(i+1,j,k)))
         Z   = Z_tilde(seed(i,j,k))
         Zx  = Z_tilde(seed(i+1,j,k))
         Z   = 0.5d0 * (Z + Zx)
@@ -107,13 +98,12 @@ contains
   end subroutine calc_Ev2
  
 
-  attributes(global) subroutine calc_Ev_LES2(nx, ny, nz, dx, dy, dz, Q, mut, qc2, E)
-    use calc_sutherland, only : mu6, mu2, mu23
+  attributes(global) subroutine calc_Ev_LES2(nx, ny, nz, dx, dy, dz, Q, T, mu, mut, qc2, E)
     integer, intent(in), value     :: nx, ny, nz
     real(8), intent(in), device    :: dx(nx-1) ! 1 / dx
     real(8), intent(in), device    :: dy(ny-1) ! 1 / dy
     real(8), intent(in), device    :: dz(nz-1) ! 1 / dz
-    real(8), intent(in), device    :: Q(5,nx,ny,nz)
+    real(8), intent(in), device    :: Q(5,nx,ny,nz), T(nx,ny,nz), mu(nx,ny,nz)
     real(8), intent(in), device    :: mut(nx,ny,nz), qc2(nx,ny,nz)
     real(8), intent(inout), device :: E(5,nx-1,ny-2,nz-2)
     integer i, j, k
@@ -130,16 +120,12 @@ contains
               0.25d0 * (mut(i,j,k) + mut(i,j+1,k) + mut(i+1,j,k) + mut(i+1,j+1,k))/)
     mz(:) = (/0.25d0 * (mut(i,j,k-1) + mut(i,j,k) + mut(i+1,j,k-1) + mut(i+1,j,k)), &
               0.25d0 * (mut(i,j,k) + mut(i,j,k+1) + mut(i+1,j,k) + mut(i+1,j,k+1))/)
+    mx  = 0.5d0 * (mu(i,j,k) + mu(i+1,j,k))
+    kTx = Cp_over_Pr * mx * (-T(i,j,k) + T(i+1,j,k)) * dx(i)
     block
-      real(8), device :: Tx(2)
-      Tx(:) = Q(5,i:i+1,j,k) / (R * Q(1,i:i+1,j,k))
-      mx    = mu2(Tx(:))
-      kTx   = Cp_over_Pr * mx * (-Tx(1) + Tx(2)) * dx(i)
-    end block
-    block
-      real(8), device :: Ty(2,3)
-      Ty(:,:) = Q(5,i:i+1,j-1:j+1,k) / (R * Q(1,i:i+1,j-1:j+1,k))
-      my(:)   = mu23(Ty(:,:))
+      real(8), device :: my(2)
+      my(1)  = 0.25d0 * (mu(i,j-1,k) + mu(i,j,  k) + mu(i+1,j-1,k) + mu(i+1,j,  k))
+      my(2)  = 0.25d0 * (mu(i,j,  k) + mu(i,j+1,k) + mu(i+1,j,  k) + mu(i+1,j+1,k))
       muy    = 0.25d0 * (my(1)    * (-Q(2,i,j-1,k) + Q(2,i,j,k) - Q(2,i+1,j-1,k) + Q(2,i+1,j,k)) &
                        + my(2)    * (-Q(2,i,j,k) + Q(2,i,j+1,k) - Q(2,i+1,j,k) + Q(2,i+1,j+1,k))) * dy(j)
       muysgs = 0.25d0 * (mysgs(1) * (-Q(2,i,j-1,k) + Q(2,i,j,k) - Q(2,i+1,j-1,k) + Q(2,i+1,j,k)) &
@@ -150,9 +136,9 @@ contains
                        + mysgs(2) * (-Q(3,i,j,k) + Q(3,i,j+1,k) - Q(3,i+1,j,k) + Q(3,i+1,j+1,k))) * dy(j)
     end block
     block
-      real(8), device :: Tz(2,3)
-      Tz(:,:) = Q(5,i:i+1,j,k-1:k+1) / (R * Q(1,i:i+1,j,k-1:k+1))
-      mz(:)   = mu23(Tz(:,:))
+      real(8), device :: mz(2)
+      mz(1)  = 0.25d0 * (mu(i,j,k-1) + mu(i,j,k  ) + mu(i+1,j,k-1) + mu(i+1,j,k  ))
+      mz(2)  = 0.25d0 * (mu(i,j,k  ) + mu(i,j,k+1) + mu(i+1,j,k  ) + mu(i+1,j,k+1))
       muz    = 0.25d0 * (mz(1)    * (-Q(2,i,j,k-1) + Q(2,i,j,k) - Q(2,i+1,j,k-1) + Q(2,i+1,j,k)) &
                        + mz(2)    * (-Q(2,i,j,k) + Q(2,i,j,k+1) - Q(2,i+1,j,k) + Q(2,i+1,j,k+1))) * dz(k)
       muzsgs = 0.25d0 * (mzsgs(1) * (-Q(2,i,j,k-1) + Q(2,i,j,k) - Q(2,i+1,j,k-1) + Q(2,i+1,j,k)) &
@@ -174,9 +160,9 @@ contains
     utxx = 0.5d0 * (Q(2,i,j,k) + Q(2,i+1,j,k)) * txx
     vtxy = 0.5d0 * (Q(3,i,j,k) + Q(3,i+1,j,k)) * txy
     wtxz = 0.5d0 * (Q(4,i,j,k) + Q(4,i+1,j,k)) * txz
-    txx = txx + 2.d0 * (2.d0 * muxsgs - mvysgs - mwzsgs) * one_third
-    txy = txy + muysgs + mvxsgs
-    txz = txz + mwxsgs + muzsgs
+    txx  = txx + 2.d0 * (2.d0 * muxsgs - mvysgs - mwzsgs) * one_third
+    txy  = txy + muysgs + mvxsgs
+    txz  = txz + mwxsgs + muzsgs
     block
       real(8), device :: H(2)
       H(:) = (gamma * Q(5,i:i+1,j,k) / (Q(1,i:i+1,j,k) * gamma_1)) &
@@ -190,13 +176,12 @@ contains
   end subroutine calc_Ev_LES2
  
 
-  attributes(global) subroutine calc_Fv2(nx, ny, nz, dy, dx, dz, Q, F, seed)
-    use calc_sutherland, only : mu6, mu2, mu_23, mu_32
+  attributes(global) subroutine calc_Fv2(nx, ny, nz, dy, dx, dz, Q, T, mu, F, seed)
     integer, intent(in), value     :: nx, ny, nz
     real(8), intent(in), device    :: dy(ny-1) ! 1 / dy
     real(8), intent(in), device    :: dx(nx-1) ! 1 / dx
     real(8), intent(in), device    :: dz(nz-1) ! 1 / dz
-    real(8), intent(in), device    :: Q(5,nx,ny,nz)
+    real(8), intent(in), device    :: Q(5,nx,ny,nz), T(nx,ny,nz), mu(nx,ny,nz)
     real(8), intent(inout), device :: F(5,nx-2,ny-1,nz-2)
     integer(8), intent(inout), device, optional :: seed(nx,ny,nz)
     real(8), shared :: u(threadsFv%y+1,0:threadsFv%x+1,threadsFv%z)
@@ -224,9 +209,8 @@ contains
 
     block
       real(8) mx1, mx2
-      real(8), device :: Tx(3,2)
-      Tx(:,:) = Q(5,i-1:i+1,j:j+1,k) / (R * Q(1,i-1:i+1,j:j+1,k))
-      call mu_23(Tx(:,:), mx1, mx2)
+      mx1 = 0.25d0 * (mu(i-1,j,k) + mu(i,  j,k) + mu(i-1,j+1,k) + mu(i,  j+1,k))
+      mx2 = 0.25d0 * (mu(i,  j,k) + mu(i+1,j,k) + mu(i,  j+1,k) + mu(i+1,j+1,k))
       !mux = 0.25d0 * (mx1 * (-u(jt,it-1,kt) + u(jt,it,kt) - u(jt+1,it-1,kt) + u(jt+1,it,kt)) &
       !              + mx2 * (-u(jt,it,kt) + u(jt,it+1,kt) - u(jt+1,it,kt) + u(jt+1,it+1,kt))) * dx(i)
       !mvx = 0.25d0 * (mx1 * (-v(jt,it-1,kt) + v(jt,it,kt) - v(jt+1,it-1,kt) + v(jt+1,it,kt)) &
@@ -236,17 +220,12 @@ contains
       mvx = 0.25d0 * (mx1 * (-v(jt,it-1,kt) - v(jt+1,it-1,kt)) + (mx1 - mx2) * (v(jt,it,kt) + v(jt+1,it,kt)) &
                     + mx2 * ( v(jt,it+1,kt) + v(jt+1,it+1,kt))) * dx(i)
     end block
-    block
-      real(8), device :: Ty(2)
-      Ty(:) = Q(5,i,j:j+1,k) / (R * Q(1,i,j:j+1,k))
-      my    = mu2(Ty(:))
-      kTy   = Cp_over_Pr * my * (-Ty(1) + Ty(2)) * dy(j)
-    end block
+    my  = 0.5d0 * (mu(i,j,k) + mu(i,j+1,k))
+    kTy = Cp_over_Pr * my * (-T(i,j,k) + T(i,j+1,k)) * dy(j)
     block
       real(8) mz1, mz2
-      real(8), device :: Tz(2,3)
-      Tz(:,:) = Q(5,i,j:j+1,k-1:k+1) / (R * Q(1,i,j:j+1,k-1:k+1))
-      call mu_32(Tz(:,:), mz1, mz2)
+      mz1 = 0.25d0 * (mu(i,j,k-1) + mu(i,j,k  ) + mu(i,j+1,k-1) + mu(i,j+1,k  ))
+      mz2 = 0.25d0 * (mu(i,j,k  ) + mu(i,j,k+1) + mu(i,j+1,k  ) + mu(i,j+1,k+1))
       !mvz = 0.25d0 * (mz1 * (-v(jt,it,kt-1) + v(jt,it,kt) - v(jt+1,it,kt-1) + v(jt+1,it,kt)) &
       !              + mz2 * (-v(jt,it,kt) + v(jt,it,kt+1) - v(jt+1,it,kt) + v(jt+1,it,kt+1))) * dz(k)
       !mwz = 0.25d0 * (mz1 * (-w(jt,kt-1,it) + w(jt,kt,it) - w(jt+1,kt-1,it) + w(jt+1,kt,it)) &
@@ -259,19 +238,17 @@ contains
     muy = my * (-u(jt,it,kt) + u(jt+1,it,kt)) * dy(j)
     mvy = my * (-v(jt,it,kt) + v(jt+1,it,kt)) * dy(j)
     mwy = my * (-w(jt,kt,it) + w(jt+1,kt,it)) * dy(j)
-    tyx  = muy + mvx
-    tyy  = 2.d0 * (2.d0 * mvy - mwz - mux) * one_third
-    tyz  = mvz + mwy
+    tyx = muy + mvx
+    tyy = 2.d0 * (2.d0 * mvy - mwz - mux) * one_third
+    tyz = mvz + mwy
     if (present(seed)) then
       block
-        real(8) std_t, std_q, over_V, Zq, T1, T2
+        real(8) std_t, std_q, over_V, Zq
         real(8), device    :: rand(4), Z(6), Zy(6)
         real(8), parameter :: kb_over_dt = 1.380649d-23 / dt
-        T1  = Q(5,i,j,k) / (R * Q(1,i,j,k))
-        T2  = Q(5,i,j+1,k) / (R * Q(1,i,j+1,k))
         over_V = dx(i) * dy(j) * dz(k)
-        std_t  = sqrt(kb_over_dt * over_V * my * (T1 + T2))
-        std_q  = sqrt(kb_over_dt * over_V * my * Cp_over_Pr * (T1**2 + T2**2))
+        std_t  = sqrt(kb_over_dt * over_V * my * (T(i,j,k) + T(i,j+1,k)))
+        std_q  = sqrt(kb_over_dt * over_V * my * Cp_over_Pr * (T(i,j,k)*T(i,j,k) + T(i,j+1,k)*T(i,j+1,k)))
         Z   = Z_tilde(seed(i,j,k))
         Zy  = Z_tilde(seed(i,j+1,k))
         Z   = 0.5d0 * (Z + Zy)
@@ -292,13 +269,12 @@ contains
   end subroutine calc_Fv2
  
 
-  attributes(global) subroutine calc_Fv_LES2(nx, ny, nz, dy, dx, dz, Q, mut, qc2, F)
-    use calc_sutherland, only : mu6, mu2, mu23, mu32
+  attributes(global) subroutine calc_Fv_LES2(nx, ny, nz, dy, dx, dz, Q, T, mu, mut, qc2, F)
     integer, intent(in), value     :: nx, ny, nz
     real(8), intent(in), device    :: dy(ny-1) ! 1 / dy
     real(8), intent(in), device    :: dx(nx-1) ! 1 / dx
     real(8), intent(in), device    :: dz(nz-1) ! 1 / dz
-    real(8), intent(in), device    :: Q(5,nx,ny,nz)
+    real(8), intent(in), device    :: Q(5,nx,ny,nz), T(nx,ny,nz), mu(nx,ny,nz)
     real(8), intent(in), device    :: mut(nx,ny,nz), qc2(nx,ny,nz)
     real(8), intent(inout), device :: F(5,nx-2,ny-1,nz-2)
     integer i, j, k
@@ -316,9 +292,9 @@ contains
     mx(:)  = (/0.25d0 * (mut(i-1,j,k) + mut(i,j,k) + mut(i-1,j+1,k) + mut(i,j+1,k)), &
                0.25d0 * (mut(i,j,k) + mut(i+1,j,k) + mut(i,j+1,k) + mut(i+1,j+1,k))/)
     block
-      real(8), device :: Tx(3,2)
-      Tx(:,:) = Q(5,i-1:i+1,j:j+1,k) / (R * Q(1,i-1:i+1,j:j+1,k))
-      mx(:)   = mu23(Tx(:,:))
+      real(8), device :: mx(2)
+      mx(1)  = 0.25d0 * (mu(i-1,j,k) + mu(i,  j,k) + mu(i-1,j+1,k) + mu(i,  j+1,k))
+      mx(2)  = 0.25d0 * (mu(i,  j,k) + mu(i+1,j,k) + mu(i,  j+1,k) + mu(i+1,j+1,k))
       mux    = 0.25d0 * (mx(1)    * (-Q(2,i-1,j,k) + Q(2,i,j,k) - Q(2,i-1,j+1,k) + Q(2,i,j+1,k)) &
                        + mx(2)    * (-Q(2,i,j,k) + Q(2,i+1,j,k) - Q(2,i,j+1,k) + Q(2,i+1,j+1,k))) * dx(i)
       muxsgs = 0.25d0 * (mxsgs(1) * (-Q(2,i-1,j,k) + Q(2,i,j,k) - Q(2,i-1,j+1,k) + Q(2,i,j+1,k)) &
@@ -328,16 +304,12 @@ contains
       mvxsgs = 0.25d0 * (mxsgs(1) * (-Q(3,i-1,j,k) + Q(3,i,j,k) - Q(3,i-1,j+1,k) + Q(3,i,j+1,k)) &
                        + mxsgs(2) * (-Q(3,i,j,k) + Q(3,i+1,j,k) - Q(3,i,j+1,k) + Q(3,i+1,j+1,k))) * dx(i)
     end block
+    my  = 0.5d0 * (mu(i,j,k) + mu(i,j+1,k))
+    kTy = Cp_over_Pr * my * (-T(i,j,k) + T(i,j+1,k)) * dy(j)
     block
-      real(8), device :: Ty(2)
-      Ty(:) = Q(5,i,j:j+1,k) / (R * Q(1,i,j:j+1,k))
-      my    = mu2(Ty(:))
-      kTy   = Cp_over_Pr * my * (-Ty(1) + Ty(2)) * dy(j)
-    end block
-    block
-      real(8), device :: Tz(2,3)
-      Tz(:,:) = Q(5,i,j:j+1,k-1:k+1) / (R * Q(1,i,j:j+1,k-1:k+1))
-      mz(:)   = mu32(Tz(:,:))
+      real(8), device :: mz(2)
+      mz(1)  = 0.25d0 * (mu(i,j,k-1) + mu(i,j,k  ) + mu(i,j+1,k-1) + mu(i,j+1,k  ))
+      mz(2)  = 0.25d0 * (mu(i,j,k  ) + mu(i,j,k+1) + mu(i,j+1,k  ) + mu(i,j+1,k+1))
       mvz    = 0.25d0 * (mz(1)    * (-Q(3,i,j,k-1) + Q(3,i,j,k) - Q(3,i,j+1,k-1) + Q(3,i,j+1,k)) &
                        + mz(2)    * (-Q(3,i,j,k) + Q(3,i,j,k+1) - Q(3,i,j+1,k) + Q(3,i,j+1,k+1))) * dz(k)
       mvzsgs = 0.25d0 * (mzsgs(1) * (-Q(3,i,j,k-1) + Q(3,i,j,k) - Q(3,i,j+1,k-1) + Q(3,i,j+1,k)) &
@@ -375,13 +347,12 @@ contains
   end subroutine calc_Fv_LES2
  
 
-  attributes(global) subroutine calc_Gv2(nx, ny, nz, dx, dy, dz, Q, G, seed)
-    use calc_sutherland, only : mu6, mu2, mu_32
+  attributes(global) subroutine calc_Gv2(nx, ny, nz, dx, dy, dz, Q, T, mu, G, seed)
     integer, intent(in), value     :: nx, ny, nz
     real(8), intent(in), device    :: dx(nx-1) ! 1 / dx
     real(8), intent(in), device    :: dy(ny-1) ! 1 / dy
     real(8), intent(in), device    :: dz(nz-1) ! 1 / dz
-    real(8), intent(in), device    :: Q(5,nx,ny,nz)
+    real(8), intent(in), device    :: Q(5,nx,ny,nz), T(nx,ny,nz), mu(nx,ny,nz)
     real(8), intent(inout), device :: G(5,nx-2,ny-2,nz-1)
     integer(8), intent(inout), device, optional :: seed(nx,ny,nz)
     real(8), shared :: u(threadsGv%z+1,0:threadsGv%x+1,threadsGv%y)
@@ -409,9 +380,8 @@ contains
 
     block
       real(8) mx1, mx2
-      real(8), device :: Tx(3,2)
-      Tx(:,:) = Q(5,i-1:i+1,j,k:k+1) / (R * Q(1,i-1:i+1,j,k:k+1))
-      call mu_32(Tx(:,:), mx1, mx2)
+      mx1 = 0.25d0 * (mu(i-1,j,k) + mu(i,  j,k) + mu(i-1,j,k+1) + mu(i,  j,k+1))
+      mx2 = 0.25d0 * (mu(i,  j,k) + mu(i+1,j,k) + mu(i,  j,k+1) + mu(i+1,j,k+1))
       !mux = 0.25d0 * (mx1 * (-u(kt,it-1,jt) + u(kt,it,jt) - u(kt+1,it-1,jt) + u(kt+1,it,jt)) &
       !              + mx2 * (-u(kt,it,jt) + u(kt,it+1,jt) - u(kt+1,it,jt) + u(kt+1,it+1,jt))) * dx(i)
       !mwx = 0.25d0 * (mx1 * (-w(kt,jt,it-1) + w(kt,jt,it) - w(kt+1,jt,it-1) + w(kt+1,jt,it)) &
@@ -423,9 +393,8 @@ contains
     end block
     block
       real(8) my1, my2
-      real(8), device :: Ty(3,2)
-      Ty(:,:) = Q(5,i,j-1:j+1,k:k+1) / (R * Q(1,i,j-1:j+1,k:k+1))
-      call mu_32(Ty(:,:), my1, my2)
+      my1 = 0.25d0 * (mu(i,j-1,k) + mu(i,j,  k) + mu(i,j-1,k+1) + mu(i,j,  k+1))
+      my2 = 0.25d0 * (mu(i,j,  k) + mu(i,j+1,k) + mu(i,j,  k+1) + mu(i,j+1,k+1))
       !mvy = 0.25d0 * (my1 * (-v(kt,jt-1,it) + v(kt,jt,it) - v(kt+1,jt-1,it) + v(kt+1,jt,it)) &
       !              + my2 * (-v(kt,jt,it) + v(kt,jt+1,it) - v(kt+1,jt,it) + v(kt+1,jt+1,it))) * dy(j)
       !mwy    = 0.25d0 * (my1    * (-Q(4,i,j-1,k) + Q(4,i,j,k) - Q(4,i,j-1,k+1) + Q(4,i,j,k+1)) &
@@ -435,28 +404,22 @@ contains
       mwy = 0.25d0 * (my1 * (-w(kt,it,jt-1) - w(kt+1,it,jt-1)) + (my1 - my2) * (w(kt,it,jt) + w(kt+1,it,jt)) &
                     + my2 * ( w(kt,it,jt+1) + w(kt+1,it,jt+1))) * dy(j)
     end block
-    block
-      real(8), device :: Tz(2)
-      Tz(:)   = Q(5,i,j,k:k+1) / (R * Q(1,i,j,k:k+1))
-      mz      = mu2(Tz(:))
-      kTz     = Cp_over_Pr * mz * (-Tz(1) + Tz(2)) * dz(k)
-    end block
+    mz  = 0.5d0 * (mu(i,j,k) + mu(i,j,k+1))
+    kTz = Cp_over_Pr * mz * (-T(i,j,k) + T(i,j,k+1)) * dz(k)
     muz = mz * (-u(kt,it,jt) + u(kt+1,it,jt)) * dz(k)
     mvz = mz * (-v(kt,jt,it) + v(kt+1,jt,it)) * dz(k)
     mwz = mz * (-w(kt,it,jt) + w(kt+1,it,jt)) * dz(k)
-    tzx  = mwx + muz
-    tzy  = mvz + mwy
-    tzz  = 2.d0 * (2.d0 * mwz - mux - mvy) * one_third
+    tzx = mwx + muz
+    tzy = mvz + mwy
+    tzz = 2.d0 * (2.d0 * mwz - mux - mvy) * one_third
     if (present(seed)) then
       block
-        real(8) std_t, std_q, over_V, Zq, T1, T2
+        real(8) std_t, std_q, over_V, Zq
         real(8), device    :: rand(4), Z(6), Zz(6)
         real(8), parameter :: kb_over_dt = 1.380649d-23 / dt
-        T1  = Q(5,i,j,k) / (R * Q(1,i,j,k))
-        T2  = Q(5,i,j,k+1) / (R * Q(1,i,j,k+1))
         over_V = dx(i) * dy(j) * dz(k)
-        std_t  = sqrt(kb_over_dt * over_V * mz * (T1 + T2))
-        std_q  = sqrt(kb_over_dt * over_V * mz * Cp_over_Pr * (T1**2 + T2**2))
+        std_t  = sqrt(kb_over_dt * over_V * mz * (T(i,j,k) + T(i,j,k+1)))
+        std_q  = sqrt(kb_over_dt * over_V * mz * Cp_over_Pr * (T(i,j,k)*T(i,j,k) + T(i,j,k+1)*T(i,j,k+1)))
         Z   = Z_tilde(seed(i,j,k))
         Zz  = Z_tilde(seed(i,j,k+1))
         Z   = 0.5d0 * (Z + Zz)
@@ -477,13 +440,12 @@ contains
   end subroutine calc_Gv2
 
 
-  attributes(global) subroutine calc_Gv_LES2(nx, ny, nz, dx, dy, dz, Q, mut, qc2, G)
-    use calc_sutherland, only : mu6, mu2, mu32
+  attributes(global) subroutine calc_Gv_LES2(nx, ny, nz, dx, dy, dz, Q, T, mu, mut, qc2, G)
     integer, intent(in), value     :: nx, ny, nz
     real(8), intent(in), device    :: dx(nx-1) ! 1 / dx
     real(8), intent(in), device    :: dy(ny-1) ! 1 / dy
     real(8), intent(in), device    :: dz(nz-1) ! 1 / dz
-    real(8), intent(in), device    :: Q(5,nx,ny,nz)
+    real(8), intent(in), device    :: Q(5,nx,ny,nz), T(nx,ny,nz), mu(nx,ny,nz)
     real(8), intent(in), device    :: mut(nx,ny,nz), qc2(nx,ny,nz)
     real(8), intent(inout), device :: G(5,nx-2,ny-2,nz-1)
     integer i, j, k
@@ -501,9 +463,9 @@ contains
     my(:) = (/0.25d0 * (mut(i,j-1,k) + mut(i,j,k) + mut(i,j-1,k+1) + mut(i,j,k+1)), &
               0.25d0 * (mut(i,j,k) + mut(i,j+1,k) + mut(i,j,k+1) + mut(i,j+1,k+1))/)
     block
-      real(8), device :: Tx(3,2)
-      Tx(:,:) = Q(5,i-1:i+1,j,k:k+1) / (R * Q(1,i-1:i+1,j,k:k+1))
-      mx(:)   = mu32(Tx(:,:))
+      real(8), device :: mx(2)
+      mx(1)  = 0.25d0 * (mu(i-1,j,k) + mu(i,  j,k) + mu(i-1,j,k+1) + mu(i,  j,k+1))
+      mx(2)  = 0.25d0 * (mu(i,  j,k) + mu(i+1,j,k) + mu(i,  j,k+1) + mu(i+1,j,k+1))
       mux    = 0.25d0 * (mx(1)    * (-Q(2,i-1,j,k) + Q(2,i,j,k) - Q(2,i-1,j,k+1) + Q(2,i,j,k+1)) &
                        + mx(2)    * (-Q(2,i,j,k) + Q(2,i+1,j,k) - Q(2,i,j,k+1) + Q(2,i+1,j,k+1))) * dx(i)
       muxsgs = 0.25d0 * (mxsgs(1) * (-Q(2,i-1,j,k) + Q(2,i,j,k) - Q(2,i-1,j,k+1) + Q(2,i,j,k+1)) &
@@ -514,9 +476,9 @@ contains
                        + mxsgs(2) * (-Q(4,i,j,k) + Q(4,i+1,j,k) - Q(4,i,j,k+1) + Q(4,i+1,j,k+1))) * dx(i)
     end block
     block
-      real(8), device :: Ty(3,2)
-      Ty(:,:) = Q(5,i,j-1:j+1,k:k+1) / (R * Q(1,i,j-1:j+1,k:k+1))
-      my(:)   = mu32(Ty(:,:))
+      real(8), device :: my(2)
+      my(1)  = 0.25d0 * (mu(i,j-1,k) + mu(i,j,  k) + mu(i,j-1,k+1) + mu(i,j,  k+1))
+      my(2)  = 0.25d0 * (mu(i,j,  k) + mu(i,j+1,k) + mu(i,j,  k+1) + mu(i,j+1,k+1))
       mvy    = 0.25d0 * (my(1)    * (-Q(3,i,j-1,k) + Q(3,i,j,k) - Q(3,i,j-1,k+1) + Q(3,i,j,k+1)) &
                        + my(2)    * (-Q(3,i,j,k) + Q(3,i,j+1,k) - Q(3,i,j,k+1) + Q(3,i,j+1,k+1))) * dy(j)
       mvysgs = 0.25d0 * (mysgs(1) * (-Q(3,i,j-1,k) + Q(3,i,j,k) - Q(3,i,j-1,k+1) + Q(3,i,j,k+1)) &
@@ -526,12 +488,8 @@ contains
       mwysgs = 0.25d0 * (mysgs(1) * (-Q(4,i,j-1,k) + Q(4,i,j,k) - Q(4,i,j-1,k+1) + Q(4,i,j,k+1)) &
                        + mysgs(2) * (-Q(4,i,j,k) + Q(4,i,j+1,k) - Q(4,i,j,k+1) + Q(4,i,j+1,k+1))) * dy(j)
     end block
-    block
-      real(8), device :: Tz(2)
-      Tz(:)   = Q(5,i,j,k:k+1) / (R * Q(1,i,j,k:k+1))
-      mz      = mu2(Tz(:))
-      kTz     = Cp_over_Pr * mz * (-Tz(1) + Tz(2)) * dz(k)
-    end block
+    mz     = 0.5d0 * (mu(i,j,k) + mu(i,j,k+1))
+    kTz    = Cp_over_Pr * mz * (-T(i,j,k) + T(i,j,k+1)) * dz(k)
     muz    = mz    * (-Q(2,i,j,k) + Q(2,i,j,k+1)) * dz(k)
     muzsgs = mzsgs * (-Q(2,i,j,k) + Q(2,i,j,k+1)) * dz(k)
     mvz    = mz    * (-Q(3,i,j,k) + Q(3,i,j,k+1)) * dz(k)
@@ -541,9 +499,9 @@ contains
     tzx    = mwx + muz
     tzy    = mvz + mwy
     tzz    = 2.d0 * (2.d0 * mwz - mux - mvy) * one_third
-    utzx = 0.5d0 * (Q(2,i,j,k) + Q(2,i,j,k+1)) * tzx
-    vtzy = 0.5d0 * (Q(3,i,j,k) + Q(3,i,j,k+1)) * tzy
-    wtzz = 0.5d0 * (Q(4,i,j,k) + Q(4,i,j,k+1)) * tzz
+    utzx   = 0.5d0 * (Q(2,i,j,k) + Q(2,i,j,k+1)) * tzx
+    vtzy   = 0.5d0 * (Q(3,i,j,k) + Q(3,i,j,k+1)) * tzy
+    wtzz   = 0.5d0 * (Q(4,i,j,k) + Q(4,i,j,k+1)) * tzz
     tzx    = tzx + mwx + muz
     tzy    = tzy + mvz + mwy
     tzz    = tzz + 2.d0 * (2.d0 * mwz - mux - mvy) * one_third

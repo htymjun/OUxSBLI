@@ -70,7 +70,7 @@ contains
     real(8) wiggle, rho2(2), p2(2), V2(2,3), F(5)
     wiggle = wiggle_detector(p(2:5))
     call calc_6points(sensor, rho, u, v, w, p, rho2, p2, V2)
-    F = SLAU(id_slau, id, rho2, p2, V2, Normal, wiggle, sensor)
+    F = SLAU(id_slau, id, rho2, p2, V2, Normal, wiggle)
   end function flux_SLAU6
 
   attributes(device) function flux_SLAU4(id_scheme, id, rho, u, v, w, uu, p, Normal, sensor) result(F)
@@ -83,7 +83,7 @@ contains
     real(8) wiggle, rho2(2), p2(2), V2(2,3), F(5)
     wiggle = wiggle_detector(p)
     call calc_4points(sensor, rho, u, v, w, p, rho2, p2, V2)
-    F = SLAU(id_slau, id, rho2, p2, V2, Normal, wiggle, sensor)
+    F = SLAU(id_slau, id, rho2, p2, V2, Normal, wiggle)
   end function flux_SLAU4
 
   attributes(device) function flux_SLAU2(id_scheme, id, rho, u, v, w, uu, p, Normal, sensor) result(F)
@@ -97,7 +97,7 @@ contains
     V2(:,1) = u
     V2(:,2) = v
     V2(:,3) = w
-    F = SLAU(id_slau, id, rho, p, V2, Normal, 1.d0, sensor)
+    F = SLAU(id_slau, id, rho, p, V2, Normal, 1.d0)
   end function flux_SLAU2
 
   attributes(device) function flux_Roe6(id_scheme, id, rho, u, v, w, uu, p, Normal, sensor) result(F)
@@ -171,7 +171,7 @@ contains
     V2(:,2) = v
     V2(:,3) = w
     F = (1.d0 - sensor) * KEEP2(rho, u, v, w, uu, p, Normal) &
-        + sensor * SLAU(id_slau, id, rho, p, V2, Normal, 1.d0, sensor)
+        + sensor * SLAU(id_slau, id, rho, p, V2, Normal, 1.d0)
   end function flux_Weighted2
 
   attributes(device) function flux_Threshold6(id_scheme, id, rho, u, v, w, uu, p, Normal, sensor) result(F)
@@ -218,7 +218,7 @@ contains
     if (sensor < threshold) then
       F = KEEP2(rho, u, v, w, uu, p, Normal)
     else
-      F = SLAU(id_slau, id, rho, p, V2, Normal, 1.d0, sensor)
+      F = SLAU(id_slau, id, rho, p, V2, Normal, 1.d0)
     endif
   end function flux_Threshold2
 
