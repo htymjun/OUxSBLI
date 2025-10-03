@@ -2,7 +2,7 @@ module calc_time_dev
   use cudafor
   use mpi
   use nvtx
-  use mod_globals, only : accuracy, id_accuracy, id_rescale, id_exchange, nt, np, nre2, rerank, blocks, threads
+  use mod_globals, only : id_rescale, id_exchange, nt, np, nre2, rerank
   use calc_flux_base
   use calc_steps
   use calc_rescale
@@ -26,14 +26,15 @@ contains
   end subroutine check_gpu
 
 
-  subroutine allocate_device_mem(myrank, nx, ny, nz, ruvwp, E, F, G, dx, dy, dz, xix, etay, zetaz, Jacobian, T, mu, mut, qc2)
-    integer, intent(in)                         :: myrank, nx, ny, nz
-    real(8), intent(inout), allocatable, device :: ruvwp(:,:,:,:), E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
-    real(8), intent(inout), allocatable, device :: dx(:), dy(:), dz(:), xix(:), etay(:), zetaz(:), Jacobian(:,:)
-    real(8), intent(inout), allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
+  subroutine allocate_device_mem(myrank, nx, ny, nz, dx, dy, dz, xix, etay, zetaz, Jacobian, ruvwp, T, mu, mut, qc2, E, F, G)
+    use mod_globals, only : id_visc
+    integer, intent(in)                       :: myrank, nx, ny, nz
+    real(8), intent(out), allocatable, device :: dx(:), dy(:), dz(:), xix(:), etay(:), zetaz(:), Jacobian(:,:)
+    real(8), intent(out), allocatable, device :: ruvwp(:,:,:,:), T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
+    real(8), intent(out), allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
     integer ierr
-    allocate(ruvwp(5,nx,ny,nz), E(5,nx-1,ny-2,nz-2), F(5,nx-2,ny-1,nz-2), G(5,nx-2,ny-2,nz-1))
-    allocate(dx(nx-1), dy(ny-1), dz(nz-1), xix(nx-1), etay(ny-1), zetaz(nz-1), Jacobian(nx,ny))
+    allocate(ruvwp(5,nx,ny,nz), E(5,nx-1,ny-2,nz-2), F(5,nx-2,ny-1,nz-2), G(5,nx-2,ny-2,nz-1), stat=ierr)
+    allocate(dx(nx-1), dy(ny-1), dz(nz-1), xix(nx-1), etay(ny-1), zetaz(nz-1), Jacobian(nx,ny), stat=ierr)
     if (kind(id_visc) == 2) then
       allocate(T(1,1,1), mu(1,1,1), mut(1,1,1), qc2(1,1,1), stat=ierr)
     elseif (kind(id_visc) == 4) then
@@ -51,6 +52,7 @@ contains
 
   subroutine pre_calc(nx, ny, nz, myrank, nranks, x, dx_cpu, y, dy_cpu, z, dz_cpu, Jacobian_cpu, Q, overlap, &
                       dx, dy, dz, xix, etay, zetaz, Jacobian, QJ, ke0, entropy0)
+    use mod_globals, only : id_accuracy
     integer, intent(in)    :: nx, ny, nz, myrank, nranks
     real(8), intent(in)    :: x(nx), dx_cpu(nx-1), y(ny), dy_cpu(ny-1), z(nz), dz_cpu(nz-1), Jacobian_cpu(nx,ny)
     real(8), intent(inout) :: Q(5,nx,ny,nz)
@@ -69,12 +71,12 @@ contains
             Q(l,i,j,k) = Q(l,i,j,k) / Jacobian_cpu(i,j)
     enddo;enddo;enddo;enddo
     ! copy on GPU
-    dx = dx_cpu
-    dy = dy_cpu
-    dz = dz_cpu
     xix_cpu   = 1.d0 / dx_cpu
     etay_cpu  = 1.d0 / dy_cpu
     zetaz_cpu = 1.d0 / dz_cpu
+    dx       = dx_cpu
+    dy       = dy_cpu
+    dz       = dz_cpu
     xix      = xix_cpu
     etay     = etay_cpu
     zetaz    = zetaz_cpu
@@ -147,8 +149,8 @@ contains
     print *, "rank", myrank, " has found ", ndevices, " GPU devices"
     if (mod(myrank,2) == 0) then
       call check_gpu(mygpu)
+      call allocate_device_mem(myrank, nx, ny, nz, dx, dy, dz, xix, etay, zetaz, Jacobian, ruvwp, T, mu, mut, qc2, E, F, G)
       allocate(QJ(5,nx,ny,nz), QJ2(5,nx,ny,nz), stat=ierr)
-      call allocate_device_mem(myrank, nx, ny, nz, ruvwp, E, F, G, dx, dy, dz, xix, etay, zetaz, Jacobian, T, mu, mut, qc2)
       call pre_calc(nx, ny, nz, myrank, nranks, x, dx_cpu, y, dy_cpu, z, dz_cpu, Jacobian_cpu, Q, overlap, &
                     dx, dy, dz, xix, etay, zetaz, Jacobian, QJ, ke0, entropy0)
       if (kind(id_LL) == 4) then
@@ -181,7 +183,7 @@ contains
           !print *, "myrank is ", myrank, " calc EFG"
           call nvtxEndRange
           call nvtxStartRange("calc step", 2)
-          call calc_step1<<<blocks,threads>>>(nx, ny, nz, 1.d0, dx, dy, dz, E, F, G, QJ, QJ2)
+          call calc_step1(nx, ny, nz, 1.d0, dx, dy, dz, E, F, G, QJ, QJ2)
           !print *, "myrank is ", myrank, " calc step"
           call nvtxEndRange
           if (ndevices >= 2 .and. kind(id_exchange) == 4) then
@@ -213,7 +215,7 @@ contains
           else
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, QJ2, ruvwp, T, mu, mut, qc2, E, F, G)
           endif
-          call calc_step2_3<<<blocks,threads>>>(nx, ny, nz, 0.75d0, 0.25d0, 0.25d0, 1.d0, dx, dy, dz, E, F, G, QJ, QJ2)
+          call calc_step2_3(nx, ny, nz, 0.75d0, 0.25d0, 0.25d0, 1.d0, dx, dy, dz, E, F, G, QJ, QJ2)
           if (ndevices >= 2 .and. kind(id_exchange) == 4) then
             call exchange(id_rescale, myrank, nranks, overlap, nx, ny, nz, QJ2)
           endif
@@ -236,7 +238,7 @@ contains
           else
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, QJ2, ruvwp, T, mu, mut, qc2, E, F, G)
           endif
-          call calc_step2_3<<<blocks,threads>>>(nx, ny, nz, 2.d0, 1.d0, 2.d0, 3.d0, dx, dy, dz, E, F, G, QJ2, QJ)
+          call calc_step2_3(nx, ny, nz, 2.d0, 1.d0, 2.d0, 3.d0, dx, dy, dz, E, F, G, QJ2, QJ)
           if (ndevices >= 2 .and. kind(id_exchange) == 4) then
             call exchange(id_rescale, myrank, nranks, overlap, nx, ny, nz, QJ)
           endif
@@ -258,7 +260,7 @@ contains
     enddo
 
     if (mod(myrank,2) == 0) then
-      deallocate(ruvwp, T, mu, mut, qc2, QJ, QJ2, E, F, G, xix, etay, zetaz, Jacobian)
+      deallocate(ruvwp, T, mu, mut, qc2, QJ, QJ2, E, F, G, dx, dy, dz, xix, etay, zetaz, Jacobian)
       if (kind(id_LL) == 4) then
         deallocate(seed)
       endif
@@ -305,8 +307,8 @@ contains
     endif
     if (mod(myrank,2) == 0) then
       call check_gpu(mygpu)
+      call allocate_device_mem(myrank, nx, ny, nz, dx, dy, dz, xix, etay, zetaz, Jacobian, ruvwp, T, mu, mut, qc2, E, F, G)
       allocate(QJ(5,nx,ny,nz), QJs(5,nx,ny,nz), Rs(5,nx-2,ny-2,nz-2))
-      call allocate_device_mem(myrank, nx, ny, nz, ruvwp, E, F, G, dx, dy, dz, xix, etay, zetaz, Jacobian, T, mu, mut, qc2)
       call pre_calc(nx, ny, nz, myrank, nranks, x, dx_cpu, y, dy_cpu, z, dz_cpu, Jacobian_cpu, Q, overlap, &
                     dx, dy, dz, xix, etay, zetaz, Jacobian, QJ, ke0, entropy0)
       Rs = 0.d0
@@ -334,7 +336,7 @@ contains
           else
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, QJ, ruvwp, T, mu, mut, qc2, E, F, G)
           endif
-          call calc_step<<<blocks,threads>>>(nx, ny, nz, 0.5d0, 1.d0, dx, dy, dz, E, F, G, QJ, QJs, Rs) ! QJs = Q2
+          call calc_step(nx, ny, nz, 0.5d0, 1.d0, dx, dy, dz, E, F, G, QJ, QJs, Rs) ! QJs = Q2
           if (ndevices >= 2) then
             call exchange(id_rescale, myrank, nranks, overlap, nx, ny, nz, QJs)
           endif
@@ -357,7 +359,7 @@ contains
           else
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, QJs, ruvwp, T, mu, mut, qc2, E, F, G)
           endif
-          call calc_step<<<blocks,threads>>>(nx, ny, nz, 0.5d0, 2.d0, dx, dy, dz, E, F, G, QJ, QJs, Rs) ! QJs = Q3
+          call calc_step(nx, ny, nz, 0.5d0, 2.d0, dx, dy, dz, E, F, G, QJ, QJs, Rs) ! QJs = Q3
           if (ndevices >= 2) then
             call exchange(id_rescale, myrank, nranks, overlap, nx, ny, nz, QJs)
           endif
@@ -380,7 +382,7 @@ contains
           else
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, QJs, ruvwp, T, mu, mut, qc2, E, F, G)
           endif
-          call calc_step<<<blocks,threads>>>(nx, ny, nz, 1.0d0, 2.d0, dx, dy, dz, E, F, G, QJ, QJs, Rs) ! QJs = Q4
+          call calc_step(nx, ny, nz, 1.0d0, 2.d0, dx, dy, dz, E, F, G, QJ, QJs, Rs) ! QJs = Q4
           if (ndevices >= 2) then
             call exchange(id_rescale, myrank, nranks, overlap, nx, ny, nz, QJs)
           endif
@@ -403,7 +405,7 @@ contains
           else
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, QJs, ruvwp, T, mu, mut, qc2, E, F, G)
           endif
-          call calc_step4<<<blocks,threads>>>(nx, ny, nz, dx, dy, dz, E, F, G, Rs, QJ)
+          call calc_step4(nx, ny, nz, dx, dy, dz, E, F, G, Rs, QJ)
           if (ndevices >= 2) then
             call exchange(id_rescale, myrank, nranks, overlap, nx, ny, nz, QJ)
           endif
@@ -425,7 +427,7 @@ contains
     enddo
 
     if (mod(myrank,2) == 0) then
-      deallocate(ruvwp, T, mu, mut, qc2, QJ, QJs, Rs, E, F, G, xix, etay, zetaz, Jacobian)
+      deallocate(ruvwp, T, mu, mut, qc2, QJ, QJs, Rs, E, F, G, dx, dy, dz, xix, etay, zetaz, Jacobian)
       if (kind(id_LL) == 4) then
         deallocate(seed)
       endif
@@ -474,10 +476,9 @@ contains
     endif
     if (mod(myrank,2) == 0) then
       call check_gpu(mygpu)
+      call allocate_device_mem(myrank, nx, ny, nz, dx, dy, dz, xix, etay, zetaz, Jacobian, ruvwp, T, mu, mut, qc2, E, F, G)
       allocate(QJ(5,nx,ny,nz), QJs(5,nx,ny,nz), R1(5,nx-2,ny-2,nz-2), R2(5,nx-2,ny-2,nz-2))
       allocate(R1_new(5,nx-2,ny-2,nz-2), R2_new(5,nx-2,ny-2,nz-2))
-      call allocate_device_mem(myrank, nx, ny, nz, ruvwp, E, F, G, dx, dy, dz, xix, etay, zetaz, Jacobian, T, mu, mut, qc2)
-      print *, "myrank is ", myrank, " memory allocation has completed"
       call pre_calc(nx, ny, nz, myrank, nranks, x, dx_cpu, y, dy_cpu, z, dz_cpu, Jacobian_cpu, Q, overlap, &
                     dx, dy, dz, xix, etay, zetaz, Jacobian, QJ, ke0, entropy0)
       if (kind(id_LL) == 4) then
@@ -508,27 +509,27 @@ contains
         if (mod(myrank,2) == 0) then
           ! calc R1
           call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, QJ, ruvwp, T, mu, mut, qc2, E, F, G)
-          call calc_step1<<<blocks,threads>>>(nx, ny, nz, c1, dx, dy, dz, E, F, G, QJ, QJs)
+          call calc_step1(nx, ny, nz, c1, dx, dy, dz, E, F, G, QJ, QJs)
           call set_bc(myrank, nx, ny, nz, Jacobian, QJs)
           call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, QJs, ruvwp, T, mu, mut, qc2, E, F, G)
-          call calc_R<<<blocks,threads>>>(nx, ny, nz, dx, dy, dz, E, F, G, R1)
+          call calc_R(nx, ny, nz, dx, dy, dz, E, F, G, R1)
           ! calc R2
           call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, QJ, ruvwp, T, mu, mut, qc2, E, F, G)
-          call calc_step1<<<blocks,threads>>>(nx, ny, nz, c2, dx, dy, dz, E, F, G, QJ, QJs)
+          call calc_step1(nx, ny, nz, c2, dx, dy, dz, E, F, G, QJ, QJs)
           call set_bc(myrank, nx, ny, nz, Jacobian, QJs)
           call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, QJs, ruvwp, T, mu, mut, qc2, E, F, G)
-          call calc_R<<<blocks,threads>>>(nx, ny, nz, dx, dy, dz, E, F, G, R2)
+          call calc_R(nx, ny, nz, dx, dy, dz, E, F, G, R2)
           do itr = 1, max_itr
             ! calc R1
-            call calc_Gauss_step<<<blocks,threads>>>(nx, ny, nz, a11, a12, R1, R2, QJ, QJs)
+            call calc_Gauss_step(nx, ny, nz, a11, a12, R1, R2, QJ, QJs)
             call set_bc(myrank, nx, ny, nz, Jacobian, QJs)
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, QJs, ruvwp, T, mu, mut, qc2, E, F, G)
-            call calc_R<<<blocks,threads>>>(nx, ny, nz, dx, dy, dz, E, F, G, R1_new)
+            call calc_R(nx, ny, nz, dx, dy, dz, E, F, G, R1_new)
             ! calc R2
-            call calc_Gauss_step<<<blocks,threads>>>(nx, ny, nz, a21, a22, R1, R2, QJ, QJs)
+            call calc_Gauss_step(nx, ny, nz, a21, a22, R1, R2, QJ, QJs)
             call set_bc(myrank, nx, ny, nz, Jacobian, QJs)
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, QJs, ruvwp, T, mu, mut, qc2, E, F, G)
-            call calc_R<<<blocks,threads>>>(nx, ny, nz, dx, dy, dz, E, F, G, R2_new)
+            call calc_R(nx, ny, nz, dx, dy, dz, E, F, G, R2_new)
             call calc_error(nx, ny, nz, R1, R2, R1_new, R2_new, err)
             if (err < tol) exit
             R1 = R1_new
@@ -539,7 +540,7 @@ contains
           else
             print *, "Didn't Converged error=", err
           endif
-          call calc_Gauss_step_Q<<<blocks,threads>>>(nx, ny, nz, b1, b2, R1, R2, QJ)
+          call calc_Gauss_step_Q(nx, ny, nz, b1, b2, R1, R2, QJ)
           call set_bc(myrank, nx, ny, nz, Jacobian, QJ, Qre)
         endif
       enddo
@@ -551,7 +552,7 @@ contains
     enddo
 
     if (mod(myrank,2) == 0) then
-      deallocate(ruvwp, T, mu, mut, qc2, QJ, QJs, R1, R2, R1_new, R2_new, E, F, G, xix, etay, zetaz, Jacobian)
+      deallocate(ruvwp, T, mu, mut, qc2, QJ, QJs, R1, R2, R1_new, R2_new, E, F, G, dx, dy, dz, xix, etay, zetaz, Jacobian)
       if (kind(id_LL) == 4) then
         deallocate(seed)
       endif

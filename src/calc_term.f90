@@ -1,7 +1,5 @@
 module calc_term
-  use mod_globals, only : dimension
   use mod_constant, only : one_third, one_twelfth, one_sixty
-  use calc_common_dim
   implicit none
 contains
   !KEEP 4th!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!

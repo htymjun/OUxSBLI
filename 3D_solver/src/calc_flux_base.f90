@@ -1,7 +1,6 @@
 module calc_flux_base
-  use mod_globals, only : id_2, id_tvd, &
-  & blocks, threads, blocksE, blocksF, blocksG, threadsE, threadsF, threadsG, &
-  & blocksEv, blocksFv, blocksGv, threadsEv, threadsFv, threadsGv
+  use mod_globals, only : blocksE,  blocksF,  blocksG,  threadsE,  threadsF,  threadsG, blocks, threads, &
+                          blocksEv, blocksFv, blocksGv, threadsEv, threadsFv, threadsGv, id_accuracy
   use calc_physical_quantities
   use calc_hybrid
   use calc_flux
@@ -31,12 +30,14 @@ contains
     real(8), dimension(nx,ny,nz), device   :: sensor
     integer stat
     call calc_quantities_3D(nx, ny, nz, Jacobian, QJ, ruvwp)
-    if (kind(id_tvd) == 8)
+    if (kind(id_tvd) == 8) then
       call calc_Ducros<<<blocks,threads>>>(nx, ny, nz, dx, dy, dz, ruvwp, sensor)
+    else
+      sensor = 0.d0
     endif
-    call calc_E<<<blocksE,threadsE,1>>>(id_2, nx, ny, nz, ruvwp, sensor, E)
-    call calc_F<<<blocksF,threadsF,2>>>(id_2, nx, ny, nz, ruvwp, sensor, F)
-    call calc_G<<<blocksG,threadsG,3>>>(id_2, nx, ny, nz, ruvwp, sensor, G)
+    call calc_E<<<blocksE,threadsE,1>>>(id_accuracy, nx, ny, nz, ruvwp, sensor, E)
+    call calc_F<<<blocksF,threadsF,2>>>(id_accuracy, nx, ny, nz, ruvwp, sensor, F)
+    call calc_G<<<blocksG,threadsG,3>>>(id_accuracy, nx, ny, nz, ruvwp, sensor, G)
     stat = cudaDeviceSynchronize()
   end subroutine calc_EFG_Euler
 
@@ -55,15 +56,17 @@ contains
     real(8), intent(out), device :: F(5,nx-2,ny-1,nz-2)
     real(8), intent(out), device :: G(5,nx-2,ny-2,nz-1)
     integer(8), intent(inout), device, optional :: seed(nx,ny,nz)
-    real(8), dimension(nx,ny,nz), device   :: sensor
+    real(8), dimension(nx,ny,nz), device :: sensor
     integer stat
     call calc_quantities_T_3D(nx, ny, nz, Jacobian, QJ, ruvwp, T, mu)
-    if (kind(id_tvd) == 8)
+    if (kind(id_tvd) == 8) then
       call calc_Ducros<<<blocks,threads>>>(nx, ny, nz, dx, dy, dz, ruvwp, sensor)
+    else
+      sensor = 0.d0
     endif
-    call calc_E<<<blocksE,threadsE,1>>>(id_2, nx, ny, nz, ruvwp, sensor, E)
-    call calc_F<<<blocksF,threadsF,2>>>(id_2, nx, ny, nz, ruvwp, sensor, F)
-    call calc_G<<<blocksG,threadsG,3>>>(id_2, nx, ny, nz, ruvwp, sensor, G)
+    call calc_E<<<blocksE,threadsE,1>>>(id_accuracy, nx, ny, nz, ruvwp, sensor, E)
+    call calc_F<<<blocksF,threadsF,2>>>(id_accuracy, nx, ny, nz, ruvwp, sensor, F)
+    call calc_G<<<blocksG,threadsG,3>>>(id_accuracy, nx, ny, nz, ruvwp, sensor, G)
     stat = cudaDeviceSynchronize()
     if (present(seed)) then
       if (id_visc == 2) then
@@ -105,17 +108,19 @@ contains
     real(8), intent(out), device :: F(5,nx-2,ny-1,nz-2)
     real(8), intent(out), device :: G(5,nx-2,ny-2,nz-1)
     integer(8), intent(inout), device, optional :: seed(nx,ny,nz)
-    real(8), dimension(nx,ny,nz), device   :: sensor
+    real(8), dimension(nx,ny,nz), device :: sensor
     integer stat
     mut = 0.d0
     qc2 = 0.d0
     call calc_quantities_T_3D(nx, ny, nz, Jacobian, QJ, ruvwp, T, mu)
-    if (kind(id_tvd) == 8)
+    if (kind(id_tvd) == 8) then
       call calc_Ducros<<<blocks,threads>>>(nx, ny, nz, dx, dy, dz, ruvwp, sensor)
+    else
+      sensor = 0.d0
     endif
-    call calc_E<<<blocksE,threadsE,1>>>(id_2, nx, ny, nz, ruvwp, sensor, E)
-    call calc_F<<<blocksF,threadsF,2>>>(id_2, nx, ny, nz, ruvwp, sensor, F)
-    call calc_G<<<blocksG,threadsG,3>>>(id_2, nx, ny, nz, ruvwp, sensor, G)
+    call calc_E<<<blocksE,threadsE,1>>>(id_accuracy, nx, ny, nz, ruvwp, sensor, E)
+    call calc_F<<<blocksF,threadsF,2>>>(id_accuracy, nx, ny, nz, ruvwp, sensor, F)
+    call calc_G<<<blocksG,threadsG,3>>>(id_accuracy, nx, ny, nz, ruvwp, sensor, G)
     call calc_mut<<<blocks,threads>>>(nx, ny, nz, dx, dy, dz, ruvwp, mut, qc2)
     stat = cudaDeviceSynchronize()
     call set_bc_mut(nx, ny, nz, mut, qc2)
