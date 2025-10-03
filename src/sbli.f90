@@ -68,6 +68,7 @@ program main
         read(10) Q
         print *, "myrank is ", myrank, "simulation has been restarted. access is stream"
       endif
+      close(10)
     elseif (kind(id_recal) == 2) then
       print *, "myrank is ", myrank, "set initial condition"
       call set_init(myrank, nx, ny, nz, x, y, z, Q)
