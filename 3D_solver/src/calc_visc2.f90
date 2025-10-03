@@ -488,8 +488,8 @@ contains
       mwysgs = 0.25d0 * (mysgs(1) * (-Q(4,i,j-1,k) + Q(4,i,j,k) - Q(4,i,j-1,k+1) + Q(4,i,j,k+1)) &
                        + mysgs(2) * (-Q(4,i,j,k) + Q(4,i,j+1,k) - Q(4,i,j,k+1) + Q(4,i,j+1,k+1))) * dy(j)
     end block
-    mz     = 0.5d0 * (mu(i,j,k) + mu(i,j,k+1))
-    kTz    = Cp_over_Pr * mz * (-T(i,j,k) + T(i,j,k+1)) * dz(k)
+    mz  = 0.5d0 * (mu(i,j,k) + mu(i,j,k+1))
+    kTz = Cp_over_Pr * mz * (-T(i,j,k) + T(i,j,k+1)) * dz(k)
     muz    = mz    * (-Q(2,i,j,k) + Q(2,i,j,k+1)) * dz(k)
     muzsgs = mzsgs * (-Q(2,i,j,k) + Q(2,i,j,k+1)) * dz(k)
     mvz    = mz    * (-Q(3,i,j,k) + Q(3,i,j,k+1)) * dz(k)
@@ -499,9 +499,9 @@ contains
     tzx    = mwx + muz
     tzy    = mvz + mwy
     tzz    = 2.d0 * (2.d0 * mwz - mux - mvy) * one_third
-    utzx   = 0.5d0 * (Q(2,i,j,k) + Q(2,i,j,k+1)) * tzx
-    vtzy   = 0.5d0 * (Q(3,i,j,k) + Q(3,i,j,k+1)) * tzy
-    wtzz   = 0.5d0 * (Q(4,i,j,k) + Q(4,i,j,k+1)) * tzz
+    utzx = 0.5d0 * (Q(2,i,j,k) + Q(2,i,j,k+1)) * tzx
+    vtzy = 0.5d0 * (Q(3,i,j,k) + Q(3,i,j,k+1)) * tzy
+    wtzz = 0.5d0 * (Q(4,i,j,k) + Q(4,i,j,k+1)) * tzz
     tzx    = tzx + mwx + muz
     tzy    = tzy + mvz + mwy
     tzz    = tzz + 2.d0 * (2.d0 * mwz - mux - mvy) * one_third
