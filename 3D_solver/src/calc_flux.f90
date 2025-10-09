@@ -2,19 +2,20 @@ module calc_flux
   use mod_globals, only : id_scheme, id_sensor, id_muscl, gamma, threshold, threadsE, threadsF, threadsG
   use calc_keep
   use calc_slau
+  use calc_roe
   use calc_hybrid
   use calc_muscl
   implicit none
   interface flux6
-    module procedure flux_KEEP6, flux_SLAU6, flux_Weighted6, flux_Threshold6
+    module procedure flux_KEEP6, flux_Roe6, flux_SLAU6, flux_Weighted6, flux_Threshold6
   end interface flux6
 
   interface flux4
-    module procedure flux_KEEP4, flux_SLAU4, flux_Weighted4, flux_Threshold4
+    module procedure flux_KEEP4, flux_Roe4, flux_SLAU4, flux_Weighted4, flux_Threshold4
   end interface flux4
 
   interface flux2
-    module procedure flux_KEEP2, flux_SLAU2, flux_Weighted2, flux_Threshold2
+    module procedure flux_KEEP2, flux_Roe2, flux_SLAU2, flux_Weighted2, flux_Threshold2
   end interface flux2
 
   interface calc_E
@@ -98,6 +99,125 @@ contains
     V2(:,3) = w
     F = SLAU(id_slau, id, rho, p, V2, Normal, 1.d0)
   end function flux_SLAU2
+
+  attributes(device) function flux_Roe6(id_scheme, id, rho, u, v, w, uu, p, Normal, sensor) result(F)
+    use mod_constant, only : Normal_x
+    integer(kind=4), intent(in), value :: id_scheme
+    integer, intent(in), value         :: id
+    real(8), intent(in), contiguous    :: rho(6), u(6), v(6), w(6), uu(6), p(6)
+    real(8), intent(in), contiguous    :: Normal(5)
+    real(8), intent(in), value         :: sensor
+    real(8) rho2(2), p2(2), V2(2,3), F(5), Vtmp(2), Ftmp
+    call calc_6points(sensor, rho, u, v, w, p, rho2, p2, V2)
+    select case(id)
+    case(1)
+      continue
+    case(2)
+      Vtmp(:) = V2(:,1)
+      V2(:,1) = V2(:,2) ! v
+      V2(:,2) = V2(:,3) ! w
+      V2(:,3) = Vtmp    ! u
+    case(3)
+      Vtmp(:) = V2(:,1) 
+      V2(:,1) = V2(:,3) ! w
+      V2(:,3) = V2(:,2) ! v
+      V2(:,2) = Vtmp    ! u
+    end select
+    F = Roe(rho2, V2, p2, Normal_x)
+    select case(id)
+    case(1)
+      continue
+    case(2)
+      Ftmp = F(2)
+      F(2) = F(4) ! w
+      F(4) = F(3) ! v
+      F(3) = Ftmp ! u
+    case(3)
+      Ftmp = F(2)
+      F(2) = F(3)! v
+      F(3) = F(4)! w
+      F(4) = Ftmp! u
+    end select
+  end function flux_Roe6
+
+  attributes(device) function flux_Roe4(id_scheme, id, rho, u, v, w, uu, p, Normal, sensor) result(F)
+    use mod_constant, only : Normal_x
+    integer(kind=4), intent(in), value :: id_scheme
+    integer, intent(in), value         :: id
+    real(8), intent(in), contiguous    :: rho(4), u(4), v(4), w(4), uu(4), p(4)
+    real(8), intent(in), contiguous    :: Normal(5)
+    real(8), intent(in), value         :: sensor
+    real(8) rho2(2), p2(2), V2(2,3), F(5), Vtmp(2), Ftmp
+    call calc_4points(sensor, rho, u, v, w, p, rho2, p2, V2)
+    select case(id)
+    case(1)
+      continue
+    case(2)
+      Vtmp(:) = V2(:,1)
+      V2(:,1) = V2(:,2) ! v
+      V2(:,2) = V2(:,3) ! w
+      V2(:,3) = Vtmp    ! u
+    case(3)
+      Vtmp(:) = V2(:,1) 
+      V2(:,1) = V2(:,3) ! w
+      V2(:,3) = V2(:,2) ! v
+      V2(:,2) = Vtmp    ! u
+    end select
+    F = Roe(rho2, V2, p2, Normal_x)
+    select case(id)
+    case(1)
+      continue
+    case(2)
+      Ftmp = F(2)
+      F(2) = F(4) ! w
+      F(4) = F(3) ! v
+      F(3) = Ftmp ! u
+    case(3)
+      Ftmp = F(2)
+      F(2) = F(3)! v
+      F(3) = F(4)! w
+      F(4) = Ftmp! u
+    end select
+  end function flux_Roe4
+
+  attributes(device) function flux_Roe2(id_scheme, id, rho, u, v, w, uu, p, Normal, sensor) result(F)
+    use mod_constant, only : Normal_x
+    integer(kind=4), intent(in), value :: id_scheme
+    integer, intent(in), value         :: id
+    real(8), intent(in), contiguous    :: rho(2), u(2), v(2), w(2), uu(2), p(2)
+    real(8), intent(in), contiguous    :: Normal(5)
+    real(8), intent(in), value         :: sensor
+    real(8) V2(2,3), F(5), Ftmp
+    select case(id)
+    case(1)
+      V2(:,1) = u
+      V2(:,2) = v
+      V2(:,3) = w
+    case(2)
+      V2(:,1) = v
+      V2(:,2) = w
+      V2(:,2) = u
+    case(3)
+      V2(:,1) = w
+      V2(:,2) = v
+      V2(:,2) = u
+    end select
+    F = Roe(rho, V2, p, Normal_x)
+    select case(id)
+    case(1)
+      continue
+    case(2)
+      Ftmp = F(2)
+      F(2) = F(4) ! w
+      F(4) = F(3) ! v
+      F(3) = Ftmp ! u
+    case(3)
+      Ftmp = F(2)
+      F(2) = F(3)! v
+      F(3) = F(4)! w
+      F(4) = Ftmp! u
+    end select
+  end function flux_Roe2
 
   attributes(device) function flux_Weighted6(id_scheme, id, rho, u, v, w, uu, p, Normal, sensor) result(F)
     real(4), intent(in), value      :: id_scheme
@@ -594,7 +714,7 @@ contains
     real(8), intent(in), dimension(nx,ny,nz), device   :: sensor
     real(8), intent(out), device :: E(5,nx-1,ny-2,nz-2)
     integer i, j, k, it, jt, kt
-    real(8), dimension(0:threadsE%x+2,threadsE%y,threadsE%z), shared :: rho, u, v, w, p
+    real(8), dimension(2), device :: rho, u, v, w, p
     real(8) fdx
     it = threadIdx%x
     jt = threadIdx%y
@@ -604,23 +724,12 @@ contains
     k  = (blockIdx%z-1)*blockDim%z + kt + 1
     fdx = 0.5d0 * (sensor(i,j,k) + sensor(i+1,j,k))
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
-    rho(it,jt,kt) = Q(1,i,j,k)
-      u(it,jt,kt) = Q(2,i,j,k)
-      v(it,jt,kt) = Q(3,i,j,k)
-      w(it,jt,kt) = Q(4,i,j,k)
-      p(it,jt,kt) = Q(5,i,j,k)
-    if (it == blockDim%x) then
-      rho(it+1,jt,kt) = Q(1,i+1,j,k)
-        u(it+1,jt,kt) = Q(2,i+1,j,k)
-        v(it+1,jt,kt) = Q(3,i+1,j,k)
-        w(it+1,jt,kt) = Q(4,i+1,j,k)
-        p(it+1,jt,kt) = Q(5,i+1,j,k)
-    endif
-    call syncthreads()
-    associate(uu => u)
-    E(:,i,j-1,k-1) = flux2(id_scheme,1,rho(it:it+1,jt,kt),u(it:it+1,jt,kt),&
-                           v(it:it+1,jt,kt),w(it:it+1,jt,kt),uu(it:it+1,jt,kt),p(it:it+1,jt,kt),Normal_x,fdx)
-    end associate
+    rho = Q(1,i:i+1,j,k)
+    u   = Q(2,i:i+1,j,k)
+    v   = Q(3,i:i+1,j,k)
+    w   = Q(4,i:i+1,j,k)
+    p   = Q(5,i:i+1,j,k)
+    E(:,i,j-1,k-1) = flux2(id_scheme, 1, rho, u, v, w, u, p, Normal_x, fdx)
   end subroutine calc_E2
 
   attributes(global) subroutine calc_F2(id_accuracy, nx, ny, nz, Q, sensor, F)
@@ -632,33 +741,22 @@ contains
     real(8), intent(in), dimension(nx,ny,nz), device   :: sensor
     real(8), intent(out), device :: F(5,nx-2,ny-1,nz-2)
     integer i, j, k, it, jt, kt
-    real(8), dimension(0:threadsF%y+2,threadsF%x,threadsF%z), shared :: rho, u, v, w, p
+    real(8), dimension(2), device :: rho, u, v, w, p
     real(8) fdy
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
-    i = (blockIdx%x-1)*blockDim%x + it + 1
-    j = (blockIdx%y-1)*blockDim%y + jt
-    k = (blockIdx%z-1)*blockDim%z + kt + 1
+    i  = (blockIdx%x-1)*blockDim%x + it + 1
+    j  = (blockIdx%y-1)*blockDim%y + jt
+    k  = (blockIdx%z-1)*blockDim%z + kt + 1
     fdy = 0.5d0 * (sensor(i,j,k) + sensor(i,j+1,k))
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
-    rho(jt,it,kt) = Q(1,i,j,k)
-      u(jt,it,kt) = Q(2,i,j,k)
-      v(jt,it,kt) = Q(3,i,j,k)
-      w(jt,it,kt) = Q(4,i,j,k)
-      p(jt,it,kt) = Q(5,i,j,k)
-    if (jt == blockDim%y) then
-      rho(jt+1,it,kt) = Q(1,i,j+1,k)
-        u(jt+1,it,kt) = Q(2,i,j+1,k)
-        v(jt+1,it,kt) = Q(3,i,j+1,k)
-        w(jt+1,it,kt) = Q(4,i,j+1,k)
-        p(jt+1,it,kt) = Q(5,i,j+1,k)
-    endif
-    call syncthreads()
-    associate(vv => v)
-    F(:,i-1,j,k-1) = flux2(id_scheme,2,rho(jt:jt+1,it,kt),u(jt:jt+1,it,kt),&
-                           v(jt:jt+1,it,kt),w(jt:jt+1,it,kt),vv(jt:jt+1,it,kt),p(jt:jt+1,it,kt),Normal_y,fdy)
-    end associate
+    rho = Q(1,i,j:j+1,k)
+    u   = Q(2,i,j:j+1,k)
+    v   = Q(3,i,j:j+1,k)
+    w   = Q(4,i,j:j+1,k)
+    p   = Q(5,i,j:j+1,k)
+    F(:,i-1,j,k-1) = flux2(id_scheme, 2, rho, u, v, w, v, p, Normal_y, fdy)
   end subroutine calc_F2
   
   attributes(global) subroutine calc_G2(id_accuracy, nx, ny, nz, Q, sensor, G)
@@ -670,33 +768,22 @@ contains
     real(8), intent(in), dimension(nx,ny,nz), device   :: sensor
     real(8), intent(out), device :: G(5,nx-2,ny-2,nz-1)
     integer i, j, k, it, jt, kt
-    real(8), dimension(0:threadsG%z+2,threadsG%y,threadsG%x), shared :: rho, u, v, w, p
+    real(8), dimension(2), device :: rho, u, v, w, p
     real(8) :: fdz
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
-    i = (blockIdx%x-1)*blockDim%x + it + 1
-    j = (blockIdx%y-1)*blockDim%y + jt + 1
-    k = (blockIdx%z-1)*blockDim%z + kt
+    i  = (blockIdx%x-1)*blockDim%x + it + 1
+    j  = (blockIdx%y-1)*blockDim%y + jt + 1
+    k  = (blockIdx%z-1)*blockDim%z + kt
     fdz = 0.5d0 * (sensor(i,j,k) + sensor(i,j,k+1))
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
-    rho(kt,jt,it) = Q(1,i,j,k)
-      u(kt,jt,it) = Q(2,i,j,k)
-      v(kt,jt,it) = Q(3,i,j,k)
-      w(kt,jt,it) = Q(4,i,j,k)
-      p(kt,jt,it) = Q(5,i,j,k)
-    if (kt == blockDim%z) then
-      rho(kt+1,jt,it) = Q(1,i,j,k+1)
-        u(kt+1,jt,it) = Q(2,i,j,k+1)
-        v(kt+1,jt,it) = Q(3,i,j,k+1)
-        w(kt+1,jt,it) = Q(4,i,j,k+1)
-        p(kt+1,jt,it) = Q(5,i,j,k+1)
-    endif
-    call syncthreads()
-    associate(ww => w)
-    G(:,i-1,j-1,k) = flux2(id_scheme,3,rho(kt:kt+1,jt,it),u(kt:kt+1,jt,it), &
-                           v(kt:kt+1,jt,it),w(kt:kt+1,jt,it),ww(kt:kt+1,jt,it),p(kt:kt+1,jt,it),Normal_z,fdz)
-    end associate
+    rho = Q(1,i,j,k:k+1)
+    u   = Q(2,i,j,k:k+1)
+    v   = Q(3,i,j,k:k+1)
+    w   = Q(4,i,j,k:k+1)
+    p   = Q(5,i,j,k:k+1)
+    G(:,i-1,j-1,k) = flux2(id_scheme, 3, rho, u, v, w, w, p, Normal_z, fdz)
   end subroutine calc_G2
 end module calc_flux
 

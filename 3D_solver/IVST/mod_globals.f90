@@ -81,20 +81,14 @@ module mod_globals
   integer, parameter :: rerank = 0
 
   ! GPU
-  type(dim3) :: blocksE   = dim3((nx-accuracy+1)/128,(ny-accuracy)/1,(nz-accuracy)/1)
-  type(dim3) :: blocksF   = dim3((nx-accuracy)/127,(ny-accuracy+1)/1,(nz-accuracy)/1)
-  type(dim3) :: blocksG   = dim3((nx-accuracy)/127,(ny-accuracy)/1,(nz-accuracy+1)/1)
-  type(dim3) :: blocksEv  = dim3((nx-accuracy+1)/128,(ny-accuracy)/1,(nz-accuracy)/1)
-  type(dim3) :: blocksFv  = dim3((nx-accuracy)/127,(ny-accuracy+1)/1,(nz-accuracy)/1)
-  type(dim3) :: blocksGv  = dim3((nx-accuracy)/127,(ny-accuracy)/1,(nz-accuracy+1)/1)
-  type(dim3) :: blocks    = dim3((nx-accuracy)/127,(ny-accuracy)/1,(nz-accuracy)/1)
-  type(dim3) :: threadsE  = dim3(128,1,1)
-  type(dim3) :: threadsF  = dim3(127,1,1)
-  type(dim3) :: threadsG  = dim3(127,1,1)
-  type(dim3) :: threadsEv = dim3(128,1,1)
-  type(dim3) :: threadsFv = dim3(127,1,1)
-  type(dim3) :: threadsGv = dim3(127,1,1)
-  type(dim3) :: threads   = dim3(127,1,1)
+  type(dim3), parameter :: threadsE  = dim3(128,1,1)
+  type(dim3), parameter :: threadsF  = dim3(127,1,1)
+  type(dim3), parameter :: threadsG  = dim3(127,1,1)
+  type(dim3), parameter :: threadsEv = dim3(128,1,1)
+  type(dim3), parameter :: threadsFv = dim3(127,1,1)
+  type(dim3), parameter :: threadsGv = dim3(127,1,1)
+  type(dim3), parameter :: threads   = dim3(127,1,1)
+  type(dim3) :: blocksE, blocksF, blocksG, blocksEv, blocksFv, blocksGv, blocks
 
   ! time
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!

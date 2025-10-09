@@ -55,7 +55,7 @@ contains
     integer, intent(in), value     :: myrank, nx, ny, nz
     real(8), intent(in), device    :: Jacobian(ny)
     real(8), intent(inout), device :: Q(5,nx,ny,nz) ! Q / J
-    real(8), intent(in), device    :: Qre(ny*(nz-6)*5)
+    real(8), intent(in), device, optional :: Qre(ny*(nz-6)*5)
     integer :: i, j, k, l, jc = 4, kc = 4
     real(8), device :: Qc(5,nx)
   
