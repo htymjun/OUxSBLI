@@ -1,5 +1,5 @@
 module calc_term
-  use mod_constant, only : one_third, one_twelfth, one_sixty
+  use mod_constant, only : four_third, one_thirty, one_sixth
   implicit none
 contains
   !KEEP 4th!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -161,7 +161,7 @@ contains
   attributes(device) function Flux4(ph) result(ans)
     real(8), intent(in), dimension(3), device :: ph
     real(8) :: ans
-    ans = 2.d0 * ((2.d0 * one_third) * ph(1) - (ph(2) + ph(3)) * one_twelfth)
+    ans = four_third * ph(1) - (ph(2) + ph(3)) * one_sixth
   end function Flux4
 
   !KEEP 6th!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -170,8 +170,7 @@ contains
   attributes(device) function Flux6(ph) result(ans)
     real(8), intent(in), dimension(6), device :: ph
     real(8) :: ans
-    ans = 2.d0 * (0.75d0 * ph(1) - 3.d0 * (ph(2) + ph(3)) * 0.05d0 &
-          + (ph(4) + ph(5) + ph(6)) * one_sixty)
+    ans = 1.5d0 * ph(1) - 0.3d0 * (ph(2) + ph(3)) + (ph(4) + ph(5) + ph(6)) * one_thirty
   end function Flux6
 end module
 
