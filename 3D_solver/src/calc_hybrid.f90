@@ -1,6 +1,5 @@
 module calc_hybrid
   use cudafor
-  use mod_globals, only : accuracy, offset, gamma
   implicit none
 contains
   attributes(global) subroutine calc_Ducros(nx, ny, nz, dx, dy, dz, Q, fd)
