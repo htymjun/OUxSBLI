@@ -2,17 +2,6 @@ module calc_term
   use mod_constant, only : four_third, one_thirty, one_sixth
   implicit none
 contains
-  !KEEP 4th!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-  !$dir inline
-  attributes(device) function Phi4(a) result(ans)
-    real(8), intent(in), device :: a(4)
-    real(8) ans(3)
-    ans(1) = 0.5d0 * (a(2) + a(3))
-    ans(2) = 0.5d0 * (a(2) + a(4))
-    ans(3) = 0.5d0 * (a(1) + a(3))
-  end function Phi4
-
   !KEEP 6th!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
   !$dir inline
@@ -26,17 +15,6 @@ contains
     ans(5) = 0.5d0 * (a(2) + a(5))
     ans(6) = 0.5d0 * (a(1) + a(4))
   end function Phi6
-
-  !KEEP 4th!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-  !$dir inline
-  attributes(device) function RhoPhi4(rho, u) result(ans)
-    real(8), intent(in), dimension(4), device :: rho, u
-    real(8) ans(3)
-    ans(1) = 0.25d0 * (rho(2) + rho(3)) * (u(2) + u(3))
-    ans(2) = 0.25d0 * (rho(2) + rho(4)) * (u(2) + u(4))
-    ans(3) = 0.25d0 * (rho(1) + rho(3)) * (u(1) + u(3))
-  end function RhoPhi4
 
   !KEEP 6th!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   
@@ -52,18 +30,6 @@ contains
     ans(6) = 0.25d0 * (rho(1) + rho(4)) * (u(1) + u(4))
   end function RhoPhi6
 
-  !KEEP 4th!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-  !$dir inline
-  attributes(device) function RhoPhiU4(rhou, ph) result(ans)
-    real(8), intent(in), dimension(3), device :: rhou
-    real(8), intent(in), dimension(4), device :: ph
-    real(8) ans(3)
-    ans(1) = rhou(1) * 0.5d0 * (ph(2) + ph(3))
-    ans(2) = rhou(2) * 0.5d0 * (ph(2) + ph(4))
-    ans(3) = rhou(3) * 0.5d0 * (ph(1) + ph(3))
-  end function RhoPhiU4
-
   !KEEP 6th!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
   !$dir inline
@@ -78,17 +44,6 @@ contains
     ans(6) = rhou(6) * 0.5d0 * (ph(1) + ph(4))
   end function RhoPhiU6
 
-  !KEEP 4th!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-  !$dir inline
-  attributes(device) function RhoPhiP_Rho4(rhou, p, rho) result(ans)
-    real(8), intent(in), dimension(3), device :: rhou
-    real(8), intent(in), dimension(4), device :: p, rho
-    real(8) ans(3)
-    ans(1) = rhou(1) * 0.5d0 * (p(2) / rho(2) + p(3) / rho(3))
-    ans(2) = rhou(2) * 0.5d0 * (p(2) / rho(2) + p(4) / rho(4))
-    ans(3) = rhou(3) * 0.5d0 * (p(1) / rho(1) + p(3) / rho(3))
-  end function RhoPhiP_Rho4
 
   !KEEP 6th!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -104,17 +59,6 @@ contains
     ans(6) = rhou(6) * 0.5d0 * (p(1) / rho(1) + p(4) / rho(4))
   end function RhoPhiP_Rho6
 
-  !KEEP 4th!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-  !$dir inline
-  attributes(device) function RhoUPhiPhi4(rhou, u, v, w) result(ans)
-    real(8), intent(in), dimension(3), device :: rhou
-    real(8), intent(in), dimension(4), device :: u, v, w
-    real(8) ans(3)
-    ans(1) = rhou(1) * 0.5d0 * (u(2) * u(3) + v(2) * v(3) + w(2) * w(3))
-    ans(2) = rhou(2) * 0.5d0 * (u(2) * u(4) + v(2) * v(4) + w(2) * w(4))
-    ans(3) = rhou(3) * 0.5d0 * (u(1) * u(3) + v(1) * v(3) + w(1) * w(3))
-  end function RhoUPhiPhi4
 
   !KEEP 6th!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -130,17 +74,6 @@ contains
     ans(6) = rhou(6) * 0.5d0 * (u(1) * u(4) + v(1) * v(4) + w(1) * w(4))
   end function RhoUPhiPhi6
 
-  !KEEP 4th!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-  !$dir inline
-  attributes(device) function PhiPsi4(ph, psi) result(ans)
-    real(8), intent(in), dimension(4), device :: ph, psi
-    real(8) ans(3)
-    ans(1) = 0.5d0 * (ph(2) * psi(3) + ph(3) * psi(2))
-    ans(2) = 0.5d0 * (ph(2) * psi(4) + ph(4) * psi(2))
-    ans(3) = 0.5d0 * (ph(1) * psi(3) + ph(3) * psi(1))
-  end function PhiPsi4
-
   !KEEP 6th!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
   !$dir inline
@@ -154,15 +87,6 @@ contains
     ans(5) = 0.5d0 * (ph(2) * psi(5) + ph(5) * psi(2))
     ans(6) = 0.5d0 * (ph(1) * psi(4) + ph(4) * psi(1))
   end function PhiPsi6
-
-  !KEEP 4th!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-  !$dir inline
-  attributes(device) function Flux4(ph) result(ans)
-    real(8), intent(in), dimension(3), device :: ph
-    real(8) :: ans
-    ans = four_third * ph(1) - (ph(2) + ph(3)) * one_sixth
-  end function Flux4
 
   !KEEP 6th!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   

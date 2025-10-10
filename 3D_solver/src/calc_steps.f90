@@ -1,7 +1,7 @@
 module calc_steps
   use cudafor
   use mod_globals, only : dt
-  use mod_constant, only : one_sixth
+  use mod_constant, only : one_sixth, one_third
   implicit none
 contains
   subroutine calc_R(nx, ny, nz, dx, dy, dz, E, F, G, R)
@@ -93,9 +93,8 @@ contains
   end subroutine calc_step
   
     
-  subroutine calc_step2_3(nx, ny, nz, coef1, coef2, coef3, coef4, dx, dy, dz, E, F, G, Qin, Qout)
+  subroutine calc_step2(nx, ny, nz, dx, dy, dz, E, F, G, Qin, Qout)
     integer, intent(in), value                               :: nx, ny, nz
-    real(8), intent(in), value                               :: coef1, coef2, coef3, coef4
     real(8), intent(in), dimension(nx-1), device             :: dx
     real(8), intent(in), dimension(ny-1), device             :: dy
     real(8), intent(in), dimension(nz-1), device             :: dz
@@ -118,9 +117,38 @@ contains
             &  (dydz * (-E(l,i,j,k) + E(l,i+1,j,k)) &
             & + dzdx * (-F(l,i,j,k) + F(l,i,j+1,k)) &
             & + dxdy * (-G(l,i,j,k) + G(l,i,j,k+1)))
-            Qout(l,i+1,j+1,k+1) = (coef1 * Qin(l,i+1,j+1,k+1) + coef2 * Qout(l,i+1,j+1,k+1) - coef3 * R) / coef4
+            Qout(l,i+1,j+1,k+1) = 0.25d0 * (3.d0 * Qin(l,i+1,j+1,k+1) + Qout(l,i+1,j+1,k+1) - R)
     enddo;enddo;enddo;enddo
-  end subroutine calc_step2_3
+  end subroutine calc_step2
+  
+
+  subroutine calc_step3(nx, ny, nz, dx, dy, dz, E, F, G, Qin, Qout)
+    integer, intent(in), value                               :: nx, ny, nz
+    real(8), intent(in), dimension(nx-1), device             :: dx
+    real(8), intent(in), dimension(ny-1), device             :: dy
+    real(8), intent(in), dimension(nz-1), device             :: dz
+    real(8), intent(in), dimension(5,nx-1,ny-2,nz-2), device :: E
+    real(8), intent(in), dimension(5,nx-2,ny-1,nz-2), device :: F
+    real(8), intent(in), dimension(5,nx-2,ny-2,nz-1), device :: G
+    real(8), intent(in), dimension(5,nx,ny,nz), device       :: Qin
+    real(8), intent(inout), dimension(5,nx,ny,nz), device    :: Qout
+    real(8) R, dydz, dzdx, dxdy
+    integer i, j, k, l
+    !$cuf kernel do(3) <<<*,*>>>
+    do k = 1, nz-2
+      do j = 1, ny-2
+        do i = 1, nx-2
+          dydz = dy(j) * dz(k)
+          dzdx = dz(k) * dx(i)
+          dxdy = dx(i) * dy(j)
+          do l = 1, 5
+            R = dt * &
+            &  (dydz * (-E(l,i,j,k) + E(l,i+1,j,k)) &
+            & + dzdx * (-F(l,i,j,k) + F(l,i,j+1,k)) &
+            & + dxdy * (-G(l,i,j,k) + G(l,i,j,k+1)))
+            Qout(l,i+1,j+1,k+1) = (2.d0 * Qin(l,i+1,j+1,k+1) + Qout(l,i+1,j+1,k+1) - 2.d0 * R) * one_third
+    enddo;enddo;enddo;enddo
+  end subroutine calc_step3
   
     
   subroutine calc_step4(nx, ny, nz, dx, dy, dz, E, F, G, Rs, Q)
