@@ -36,7 +36,7 @@ contains
     allocate(ruvwp(5,nx,ny,nz), E(5,nx-1,ny-2,nz-2), F(5,nx-2,ny-1,nz-2), G(5,nx-2,ny-2,nz-1), stat=ierr)
     allocate(dx(nx-1), dy(ny-1), dz(nz-1), xix(nx-1), etay(ny-1), zetaz(nz-1), Jacobian(nx,ny), stat=ierr)
     if (kind(id_visc) == 2) then
-      allocate(T(1,1,1), mu(1,1,1), mut(1,1,1), qc2(1,1,1), stat=ierr)
+      allocate(T(nx,ny,nz), mu(1,1,1), mut(1,1,1), qc2(1,1,1), stat=ierr)
     elseif (kind(id_visc) == 4) then
       allocate(T(nx,ny,nz), mu(nx,ny,nz), mut(1,1,1), qc2(1,1,1), stat=ierr)
     elseif (kind(id_visc) == 8) then
@@ -215,7 +215,7 @@ contains
           else
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, QJ2, ruvwp, T, mu, mut, qc2, E, F, G)
           endif
-          call calc_step2_3(nx, ny, nz, 0.75d0, 0.25d0, 0.25d0, 1.d0, dx, dy, dz, E, F, G, QJ, QJ2)
+          call calc_step2(nx, ny, nz, dx, dy, dz, E, F, G, QJ, QJ2)
           if (ndevices >= 2 .and. kind(id_exchange) == 4) then
             call exchange(id_rescale, myrank, nranks, overlap, nx, ny, nz, QJ2)
           endif
@@ -238,7 +238,7 @@ contains
           else
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, QJ2, ruvwp, T, mu, mut, qc2, E, F, G)
           endif
-          call calc_step2_3(nx, ny, nz, 2.d0, 1.d0, 2.d0, 3.d0, dx, dy, dz, E, F, G, QJ2, QJ)
+          call calc_step3(nx, ny, nz, dx, dy, dz, E, F, G, QJ2, QJ)
           if (ndevices >= 2 .and. kind(id_exchange) == 4) then
             call exchange(id_rescale, myrank, nranks, overlap, nx, ny, nz, QJ)
           endif
