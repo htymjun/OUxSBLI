@@ -33,7 +33,7 @@ contains
     real(8), intent(out), allocatable, device :: ruvwp(:,:,:,:), T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
     real(8), intent(out), allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
     integer ierr
-    allocate(ruvwp(5,nx,ny,nz), E(5,nx-1,ny-2,nz-2), F(5,nx-2,ny-1,nz-2), G(5,nx-2,ny-2,nz-1), stat=ierr)
+    allocate(ruvwp(5,nx,ny,nz), E(5,nx-1,ny-2,nz-2), F(5,ny-1,nx-2,nz-2), G(5,nz-1,ny-2,nx-2), stat=ierr)
     allocate(dx(nx-1), dy(ny-1), dz(nz-1), xix(nx-1), etay(ny-1), zetaz(nz-1), Jacobian(nx,ny), stat=ierr)
     if (kind(id_visc) == 2) then
       allocate(T(nx,ny,nz), mu(1,1,1), mut(1,1,1), qc2(1,1,1), stat=ierr)
