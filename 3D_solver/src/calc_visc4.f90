@@ -317,7 +317,7 @@ contains
     real(8), intent(in), device    :: dx(nx-1) ! 1 / dx
     real(8), intent(in), device    :: dz(nz-1) ! 1 / dz
     real(8), intent(in), device    :: Q(5,nx,ny,nz), T(nx,ny,nz), mu(nx,ny,nz)
-    real(8), intent(inout), device :: F(5,nx-2,ny-1,nz-2)
+    real(8), intent(inout), device :: F(5,ny-1,nx-2,nz-2)
     integer(8), intent(inout), device, optional :: seed(nx,ny,nz)
     integer i, j, k
     real(8) :: tyx, tyy, tyz, utyx, vtyy, wtyz, kTy
@@ -437,10 +437,10 @@ contains
         wtyz = 0.5d0 * (Q(4,i,j,k) + Q(4,i,j+1,k)) * tyz
       end block
     endif
-    F(2,i-1,j,k-1) = F(2,i-1,j,k-1) - tyx
-    F(3,i-1,j,k-1) = F(3,i-1,j,k-1) - tyy
-    F(4,i-1,j,k-1) = F(4,i-1,j,k-1) - tyz
-    F(5,i-1,j,k-1) = F(5,i-1,j,k-1) - (utyx + vtyy + wtyz + kTy)
+    F(2,j,i-1,k-1) = F(2,j,i-1,k-1) - tyx
+    F(3,j,i-1,k-1) = F(3,j,i-1,k-1) - tyy
+    F(4,j,i-1,k-1) = F(4,j,i-1,k-1) - tyz
+    F(5,j,i-1,k-1) = F(5,j,i-1,k-1) - (utyx + vtyy + wtyz + kTy)
   end subroutine calc_Fv4
  
 
@@ -451,7 +451,7 @@ contains
     real(8), intent(in), device    :: dz(nz-1) ! 1 / dz
     real(8), intent(in), device    :: Q(5,nx,ny,nz), T(nx,ny,nz), mu(nx,ny,nz)
     real(8), intent(in), device    :: mut(nx,ny,nz), qc2(nx,ny,nz)
-    real(8), intent(inout), device :: F(5,nx-2,ny-1,nz-2)
+    real(8), intent(inout), device :: F(5,ny-1,nx-2,nz-2)
     integer i, j, k
     real(8) :: tyx, tyy, tyz, utyx, vtyy, wtyz, kTy, Hsgs
     i = (blockIdx%x-1)*blockDim%x + threadIdx%x + 1
@@ -610,10 +610,10 @@ contains
         end block
       end block
     endif
-    F(2,i-1,j,k-1) = F(2,i-1,j,k-1) - tyx
-    F(3,i-1,j,k-1) = F(3,i-1,j,k-1) - tyy
-    F(4,i-1,j,k-1) = F(4,i-1,j,k-1) - tyz
-    F(5,i-1,j,k-1) = F(5,i-1,j,k-1) - (utyx + vtyy + wtyz + kTy + Hsgs)
+    F(2,j,i-1,k-1) = F(2,j,i-1,k-1) - tyx
+    F(3,j,i-1,k-1) = F(3,j,i-1,k-1) - tyy
+    F(4,j,i-1,k-1) = F(4,j,i-1,k-1) - tyz
+    F(5,j,i-1,k-1) = F(5,j,i-1,k-1) - (utyx + vtyy + wtyz + kTy + Hsgs)
   end subroutine calc_Fv_LES4
  
 
@@ -623,7 +623,7 @@ contains
     real(8), intent(in), device    :: dy(ny-1) ! 1 / dy
     real(8), intent(in), device    :: dz(nz-1) ! 1 / dz
     real(8), intent(in), device    :: Q(5,nx,ny,nz), T(nx,ny,nz), mu(nx,ny,nz)
-    real(8), intent(inout), device :: G(5,nx-2,ny-2,nz-1)
+    real(8), intent(inout), device :: G(5,nz-1,ny-2,nx-2)
     integer(8), intent(inout), device, optional :: seed(nx,ny,nz)
     integer i, j, k
     real(8) :: tzx, tzy, tzz, utzx, vtzy, wtzz, kTz
@@ -743,10 +743,10 @@ contains
         wtzz = 0.5d0 * (Q(4,i,j,k) + Q(4,i,j,k+1)) * tzz
       end block
     endif
-    G(2,i-1,j-1,k) = G(2,i-1,j-1,k) - tzx
-    G(3,i-1,j-1,k) = G(3,i-1,j-1,k) - tzy
-    G(4,i-1,j-1,k) = G(4,i-1,j-1,k) - tzz
-    G(5,i-1,j-1,k) = G(5,i-1,j-1,k) - (utzx + vtzy + wtzz + kTz)
+    G(2,k,j-1,i-1) = G(2,k,j-1,i-1) - tzx
+    G(3,k,j-1,i-1) = G(3,k,j-1,i-1) - tzy
+    G(4,k,j-1,i-1) = G(4,k,j-1,i-1) - tzz
+    G(5,k,j-1,i-1) = G(5,k,j-1,i-1) - (utzx + vtzy + wtzz + kTz)
   end subroutine calc_Gv4
 
 
@@ -757,7 +757,7 @@ contains
     real(8), intent(in), device    :: dz(nz-1) ! 1 / dz
     real(8), intent(in), device    :: Q(5,nx,ny,nz), T(nx,ny,nz), mu(nx,ny,nz)
     real(8), intent(in), device    :: mut(nx,ny,nz), qc2(nx,ny,nz)
-    real(8), intent(inout), device :: G(5,nx-2,ny-2,nz-1)
+    real(8), intent(inout), device :: G(5,nz-1,ny-2,nx-2)
     integer i, j, k
     real(8) :: tzx, tzy, tzz, utzx, vtzy, wtzz, kTz, Hsgs
     i = (blockIdx%x-1)*blockDim%x + threadIdx%x + 1
@@ -916,10 +916,10 @@ contains
         end block
       end block
     endif
-    G(2,i-1,j-1,k) = G(2,i-1,j-1,k) - tzx
-    G(3,i-1,j-1,k) = G(3,i-1,j-1,k) - tzy
-    G(4,i-1,j-1,k) = G(4,i-1,j-1,k) - tzz
-    G(5,i-1,j-1,k) = G(5,i-1,j-1,k) - (utzx + vtzy + wtzz + kTz + Hsgs)
+    G(2,k,j-1,i-1) = G(2,k,j-1,i-1) - tzx
+    G(3,k,j-1,i-1) = G(3,k,j-1,i-1) - tzy
+    G(4,k,j-1,i-1) = G(4,k,j-1,i-1) - tzz
+    G(5,k,j-1,i-1) = G(5,k,j-1,i-1) - (utzx + vtzy + wtzz + kTz + Hsgs)
   end subroutine calc_Gv_LES4
 end module calc_visc4
 
