@@ -26,6 +26,7 @@ OBJ =	mod_globals.o \
       calc_slau.o \
       calc_term.o \
       calc_keep.o \
+      calc_roe.o \
       calc_muscl.o \
       calc_flux.o \
       calc_flux_base.o \
@@ -52,12 +53,13 @@ set.o: mod_globals.mod mod_constant.mod set_bc_common.mod set_init_common.mod se
 calc_physical_quantities.o: mod_globals.mod mod_constant.mod
 calc_term.o: mod_globals.mod mod_constant.mod
 calc_keep.o: mod_globals.mod mod_constant.mod calc_term.mod
+calc_roe.o: mod_constant.mod 
 calc_visc_common.o: mod_constant.mod
 calc_visc2.o: mod_globals.mod mod_constant.mod calc_visc_common.mod calc_rand.mod
 calc_visc4.o: mod_globals.mod mod_constant.mod calc_visc_common.mod calc_rand.mod
 calc_slau.o: mod_globals.mod mod_constant.mod calc_hybrid.mod
 calc_muscl.o: mod_globals.mod
-calc_flux.o: mod_globals.mod mod_constant.mod calc_keep.mod calc_slau.mod calc_hybrid.mod calc_muscl.mod
+calc_flux.o: mod_globals.mod mod_constant.mod calc_keep.mod calc_slau.mod calc_roe.mod calc_hybrid.mod calc_muscl.mod
 calc_flux_base.o: mod_globals.mod calc_physical_quantities.mod calc_hybrid.mod calc_flux.mod calc_visc2.mod calc_visc4.mod calc_les.mod set.mod
 calc_hybrid.o: mod_globals.mod
 calc_steps.o: mod_globals.mod

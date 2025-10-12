@@ -10,8 +10,8 @@ contains
     real(8), intent(in), dimension(ny-1), device             :: dy
     real(8), intent(in), dimension(nz-1), device             :: dz
     real(8), intent(in), dimension(5,nx-1,ny-2,nz-2), device :: E
-    real(8), intent(in), dimension(5,nx-2,ny-1,nz-2), device :: F
-    real(8), intent(in), dimension(5,nx-2,ny-2,nz-1), device :: G
+    real(8), intent(in), dimension(5,ny-1,nx-2,nz-2), device :: F
+    real(8), intent(in), dimension(5,nz-1,ny-2,nx-2), device :: G
     real(8), intent(out), dimension(5,nx-2,ny-2,nz-2),device :: R
     real(8) dydz, dzdx, dxdy
     integer i, j, k, l
@@ -25,8 +25,8 @@ contains
           do l = 1, 5
             R(l,i,j,k) = dt * &
             &  (dydz * (-E(l,i,j,k) + E(l,i+1,j,k)) &
-            & + dzdx * (-F(l,i,j,k) + F(l,i,j+1,k)) &
-            & + dxdy * (-G(l,i,j,k) + G(l,i,j,k+1)))
+            & + dzdx * (-F(l,j,i,k) + F(l,j+1,i,k)) &
+            & + dxdy * (-G(l,k,j,i) + G(l,k+1,j,i)))
     enddo;enddo;enddo;enddo
   end subroutine calc_R
 
@@ -38,8 +38,8 @@ contains
     real(8), intent(in), dimension(ny-1), device             :: dy
     real(8), intent(in), dimension(nz-1), device             :: dz
     real(8), intent(in), dimension(5,nx-1,ny-2,nz-2), device :: E
-    real(8), intent(in), dimension(5,nx-2,ny-1,nz-2), device :: F
-    real(8), intent(in), dimension(5,nx-2,ny-2,nz-1), device :: G
+    real(8), intent(in), dimension(5,ny-1,nx-2,nz-2), device :: F
+    real(8), intent(in), dimension(5,nz-1,ny-2,nx-2), device :: G
     real(8), intent(in), dimension(5,nx,ny,nz), device       :: Q
     real(8), intent(out), dimension(5,nx,ny,nz), device      :: Q2
     real(8) R, dydz, dzdx, dxdy
@@ -54,8 +54,8 @@ contains
           do l = 1, 5
             R = dt * &
             &  (dydz * (-E(l,i,j,k) + E(l,i+1,j,k)) &
-            & + dzdx * (-F(l,i,j,k) + F(l,i,j+1,k)) &
-            & + dxdy * (-G(l,i,j,k) + G(l,i,j,k+1)))
+            & + dzdx * (-F(l,j,i,k) + F(l,j+1,i,k)) &
+            & + dxdy * (-G(l,k,j,i) + G(l,k+1,j,i)))
             Q2(l,i+1,j+1,k+1) = Q(l,i+1,j+1,k+1) - coef * R
     enddo;enddo;enddo;enddo
   end subroutine calc_step1
@@ -68,8 +68,8 @@ contains
     real(8), intent(in), dimension(ny-1), device                :: dy
     real(8), intent(in), dimension(nz-1), device                :: dz
     real(8), intent(in), dimension(5,nx-1,ny-2,nz-2), device    :: E
-    real(8), intent(in), dimension(5,nx-2,ny-1,nz-2), device    :: F
-    real(8), intent(in), dimension(5,nx-2,ny-2,nz-1), device    :: G
+    real(8), intent(in), dimension(5,ny-1,nx-2,nz-2), device    :: F
+    real(8), intent(in), dimension(5,nz-1,ny-2,nx-2), device    :: G
     real(8), intent(in), dimension(5,nx,ny,nz), device          :: Q
     real(8), intent(out), dimension(5,nx,ny,nz), device         :: Q2
     real(8), intent(inout), dimension(5,nx-2,ny-2,nz-2), device :: Rs
@@ -85,8 +85,8 @@ contains
           do l = 1, 5
             R = dt * &
             &  (dydz * (-E(l,i,j,k) + E(l,i+1,j,k)) &
-            & + dzdx * (-F(l,i,j,k) + F(l,i,j+1,k)) &
-            & + dxdy * (-G(l,i,j,k) + G(l,i,j,k+1)))
+            & + dzdx * (-F(l,j,i,k) + F(l,j+1,i,k)) &
+            & + dxdy * (-G(l,k,j,i) + G(l,k+1,j,i)))
             Q2(l,i+1,j+1,k+1) = Q(l,i+1,j+1,k+1) - coef1 * R
             Rs(l,i,j,k) = Rs(l,i,j,k) + coef2 * R
     enddo;enddo;enddo;enddo
@@ -99,8 +99,8 @@ contains
     real(8), intent(in), dimension(ny-1), device             :: dy
     real(8), intent(in), dimension(nz-1), device             :: dz
     real(8), intent(in), dimension(5,nx-1,ny-2,nz-2), device :: E
-    real(8), intent(in), dimension(5,nx-2,ny-1,nz-2), device :: F
-    real(8), intent(in), dimension(5,nx-2,ny-2,nz-1), device :: G
+    real(8), intent(in), dimension(5,ny-1,nx-2,nz-2), device :: F
+    real(8), intent(in), dimension(5,nz-1,ny-2,nx-2), device :: G
     real(8), intent(in), dimension(5,nx,ny,nz), device       :: Qin
     real(8), intent(inout), dimension(5,nx,ny,nz), device    :: Qout
     real(8) R, dydz, dzdx, dxdy
@@ -115,8 +115,8 @@ contains
           do l = 1, 5
             R = dt * &
             &  (dydz * (-E(l,i,j,k) + E(l,i+1,j,k)) &
-            & + dzdx * (-F(l,i,j,k) + F(l,i,j+1,k)) &
-            & + dxdy * (-G(l,i,j,k) + G(l,i,j,k+1)))
+            & + dzdx * (-F(l,j,i,k) + F(l,j+1,i,k)) &
+            & + dxdy * (-G(l,k,j,i) + G(l,k+1,j,i)))
             Qout(l,i+1,j+1,k+1) = 0.25d0 * (3.d0 * Qin(l,i+1,j+1,k+1) + Qout(l,i+1,j+1,k+1) - R)
     enddo;enddo;enddo;enddo
   end subroutine calc_step2
@@ -128,8 +128,8 @@ contains
     real(8), intent(in), dimension(ny-1), device             :: dy
     real(8), intent(in), dimension(nz-1), device             :: dz
     real(8), intent(in), dimension(5,nx-1,ny-2,nz-2), device :: E
-    real(8), intent(in), dimension(5,nx-2,ny-1,nz-2), device :: F
-    real(8), intent(in), dimension(5,nx-2,ny-2,nz-1), device :: G
+    real(8), intent(in), dimension(5,ny-1,nx-2,nz-2), device :: F
+    real(8), intent(in), dimension(5,nz-1,ny-2,nx-2), device :: G
     real(8), intent(in), dimension(5,nx,ny,nz), device       :: Qin
     real(8), intent(inout), dimension(5,nx,ny,nz), device    :: Qout
     real(8) R, dydz, dzdx, dxdy
@@ -144,8 +144,8 @@ contains
           do l = 1, 5
             R = dt * &
             &  (dydz * (-E(l,i,j,k) + E(l,i+1,j,k)) &
-            & + dzdx * (-F(l,i,j,k) + F(l,i,j+1,k)) &
-            & + dxdy * (-G(l,i,j,k) + G(l,i,j,k+1)))
+            & + dzdx * (-F(l,j,i,k) + F(l,j+1,i,k)) &
+            & + dxdy * (-G(l,k,j,i) + G(l,k+1,j,i)))
             Qout(l,i+1,j+1,k+1) = (2.d0 * Qin(l,i+1,j+1,k+1) + Qout(l,i+1,j+1,k+1) - 2.d0 * R) * one_third
     enddo;enddo;enddo;enddo
   end subroutine calc_step3
@@ -157,8 +157,8 @@ contains
     real(8), intent(in), dimension(ny-1), device                :: dy
     real(8), intent(in), dimension(nz-1), device                :: dz
     real(8), intent(in), dimension(5,nx-1,ny-2,nz-2), device    :: E
-    real(8), intent(in), dimension(5,nx-2,ny-1,nz-2), device    :: F
-    real(8), intent(in), dimension(5,nx-2,ny-2,nz-1), device    :: G
+    real(8), intent(in), dimension(5,ny-1,nx-2,nz-2), device    :: F
+    real(8), intent(in), dimension(5,nz-1,ny-2,nx-2), device    :: G
     real(8), intent(inout), dimension(5,nx-2,ny-2,nz-2), device :: Rs
     real(8), intent(inout), dimension(5,nx,ny,nz), device       :: Q
     real(8) R, dydz, dzdx, dxdy
@@ -173,8 +173,8 @@ contains
           do l = 1, 5
             R = dt * &
             &  (dydz * (-E(l,i,j,k) + E(l,i+1,j,k)) &
-            & + dzdx * (-F(l,i,j,k) + F(l,i,j+1,k)) &
-            & + dxdy * (-G(l,i,j,k) + G(l,i,j,k+1)))
+            & + dzdx * (-F(l,j,i,k) + F(l,j+1,i,k)) &
+            & + dxdy * (-G(l,k,j,i) + G(l,k+1,j,i)))
             Rs(l,i,j,k) = Rs(l,i,j,k) + R
             Q(l,i+1,j+1,k+1) = Q(l,i+1,j+1,k+1) - Rs(l,i,j,k) * one_sixth
             Rs(l,i,j,k) = 0.d0

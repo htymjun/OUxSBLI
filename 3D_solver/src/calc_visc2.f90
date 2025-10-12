@@ -182,7 +182,7 @@ contains
     real(8), intent(in), device    :: dx(nx-1) ! 1 / dx
     real(8), intent(in), device    :: dz(nz-1) ! 1 / dz
     real(8), intent(in), device    :: Q(5,nx,ny,nz), T(nx,ny,nz), mu(nx,ny,nz)
-    real(8), intent(inout), device :: F(5,nx-2,ny-1,nz-2)
+    real(8), intent(inout), device :: F(5,ny-1,nx-2,nz-2)
     integer(8), intent(inout), device, optional :: seed(nx,ny,nz)
     real(8), shared :: u(threadsFv%y+1,0:threadsFv%x+1,threadsFv%z)
     real(8), shared :: v(threadsFv%y+1,0:threadsFv%x+1,0:threadsFv%z+1)
@@ -262,10 +262,10 @@ contains
     utyx = 0.5d0 * (u(jt,it,kt) + u(jt+1,it,kt)) * tyx
     vtyy = 0.5d0 * (v(jt,it,kt) + v(jt+1,it,kt)) * tyy
     wtyz = 0.5d0 * (w(jt,kt,it) + w(jt+1,kt,it)) * tyz
-    F(2,i-1,j,k-1) = F(2,i-1,j,k-1) - tyx
-    F(3,i-1,j,k-1) = F(3,i-1,j,k-1) - tyy
-    F(4,i-1,j,k-1) = F(4,i-1,j,k-1) - tyz
-    F(5,i-1,j,k-1) = F(5,i-1,j,k-1) - (utyx + vtyy + wtyz + kTy)
+    F(2,j,i-1,k-1) = F(2,j,i-1,k-1) - tyx
+    F(3,j,i-1,k-1) = F(3,j,i-1,k-1) - tyy
+    F(4,j,i-1,k-1) = F(4,j,i-1,k-1) - tyz
+    F(5,j,i-1,k-1) = F(5,j,i-1,k-1) - (utyx + vtyy + wtyz + kTy)
   end subroutine calc_Fv2
  
 
@@ -276,7 +276,7 @@ contains
     real(8), intent(in), device    :: dz(nz-1) ! 1 / dz
     real(8), intent(in), device    :: Q(5,nx,ny,nz), T(nx,ny,nz), mu(nx,ny,nz)
     real(8), intent(in), device    :: mut(nx,ny,nz), qc2(nx,ny,nz)
-    real(8), intent(inout), device :: F(5,nx-2,ny-1,nz-2)
+    real(8), intent(inout), device :: F(5,ny-1,nx-2,nz-2)
     integer i, j, k
     real(8) :: tyx, tyy, tyz, utyx, vtyy, wtyz, kTy, Hsgs
     real(8), dimension(2), device :: u2, v2, w2, mz, mzsgs, mx, mxsgs
@@ -340,10 +340,10 @@ contains
              + 0.5d0 * (u2(:)**2 + v2(:)**2 + w2(:)**2) + qc2(i,j:j+1,k)
       Hsgs = -my * (-H(1) + H(2)) * dy(j) / Prt
     end block
-    F(2,i-1,j,k-1) = F(2,i-1,j,k-1) - tyx
-    F(3,i-1,j,k-1) = F(3,i-1,j,k-1) - tyy
-    F(4,i-1,j,k-1) = F(4,i-1,j,k-1) - tyz
-    F(5,i-1,j,k-1) = F(5,i-1,j,k-1) - (utyx + vtyy + wtyz + kTy + Hsgs)
+    F(2,j,i-1,k-1) = F(2,j,i-1,k-1) - tyx
+    F(3,j,i-1,k-1) = F(3,j,i-1,k-1) - tyy
+    F(4,j,i-1,k-1) = F(4,j,i-1,k-1) - tyz
+    F(5,j,i-1,k-1) = F(5,j,i-1,k-1) - (utyx + vtyy + wtyz + kTy + Hsgs)
   end subroutine calc_Fv_LES2
  
 
@@ -353,7 +353,7 @@ contains
     real(8), intent(in), device    :: dy(ny-1) ! 1 / dy
     real(8), intent(in), device    :: dz(nz-1) ! 1 / dz
     real(8), intent(in), device    :: Q(5,nx,ny,nz), T(nx,ny,nz), mu(nx,ny,nz)
-    real(8), intent(inout), device :: G(5,nx-2,ny-2,nz-1)
+    real(8), intent(inout), device :: G(5,nz-1,ny-2,nx-2)
     integer(8), intent(inout), device, optional :: seed(nx,ny,nz)
     real(8), shared :: u(threadsGv%z+1,0:threadsGv%x+1,threadsGv%y)
     real(8), shared :: v(threadsGv%z+1,0:threadsGv%y+1,threadsGv%x)
@@ -433,10 +433,10 @@ contains
     utzx = 0.5d0 * (u(kt,it,jt) + u(kt+1,it,jt)) * tzx
     vtzy = 0.5d0 * (v(kt,jt,it) + v(kt+1,jt,it)) * tzy
     wtzz = 0.5d0 * (w(kt,it,jt) + w(kt+1,it,jt)) * tzz
-    G(2,i-1,j-1,k) = G(2,i-1,j-1,k) - tzx
-    G(3,i-1,j-1,k) = G(3,i-1,j-1,k) - tzy
-    G(4,i-1,j-1,k) = G(4,i-1,j-1,k) - tzz
-    G(5,i-1,j-1,k) = G(5,i-1,j-1,k) - (utzx + vtzy + wtzz + kTz)
+    G(2,k,j-1,i-1) = G(2,k,j-1,i-1) - tzx
+    G(3,k,j-1,i-1) = G(3,k,j-1,i-1) - tzy
+    G(4,k,j-1,i-1) = G(4,k,j-1,i-1) - tzz
+    G(5,k,j-1,i-1) = G(5,k,j-1,i-1) - (utzx + vtzy + wtzz + kTz)
   end subroutine calc_Gv2
 
 
@@ -447,7 +447,7 @@ contains
     real(8), intent(in), device    :: dz(nz-1) ! 1 / dz
     real(8), intent(in), device    :: Q(5,nx,ny,nz), T(nx,ny,nz), mu(nx,ny,nz)
     real(8), intent(in), device    :: mut(nx,ny,nz), qc2(nx,ny,nz)
-    real(8), intent(inout), device :: G(5,nx-2,ny-2,nz-1)
+    real(8), intent(inout), device :: G(5,nz-1,ny-2,nx-2)
     integer i, j, k
     real(8) :: tzx, tzy, tzz, utzx, vtzy, wtzz, kTz, Hsgs
     real(8), dimension(2), device :: mx, mxsgs, my, mysgs
@@ -511,10 +511,10 @@ contains
              + 0.5d0 * (Q(2,i,j,k:k+1)**2 + Q(3,i,j,k:k+1)**2 + Q(4,i,j,k:k+1)**2) + qc2(i,j,k:k+1)
       Hsgs = -mz * (-H(1) + H(2)) * dz(k) / Prt
     end block
-    G(2,i-1,j-1,k) = G(2,i-1,j-1,k) - tzx
-    G(3,i-1,j-1,k) = G(3,i-1,j-1,k) - tzy
-    G(4,i-1,j-1,k) = G(4,i-1,j-1,k) - tzz
-    G(5,i-1,j-1,k) = G(5,i-1,j-1,k) - (utzx + vtzy + wtzz + kTz + Hsgs)
+    G(2,k,j-1,i-1) = G(2,k,j-1,i-1) - tzx
+    G(3,k,j-1,i-1) = G(3,k,j-1,i-1) - tzy
+    G(4,k,j-1,i-1) = G(4,k,j-1,i-1) - tzz
+    G(5,k,j-1,i-1) = G(5,k,j-1,i-1) - (utzx + vtzy + wtzz + kTz + Hsgs)
   end subroutine calc_Gv_LES2
 end module calc_visc2
 

@@ -401,7 +401,7 @@ contains
     integer, intent(in), value                         :: nx, ny, nz
     real(8), intent(in), dimension(5,nx,ny,nz), device :: Q
     real(8), intent(in), dimension(nx,ny,nz), device   :: T, sensor
-    real(8), intent(out), device :: F(5,nx-2,ny-1,nz-2)
+    real(8), intent(out), device :: F(5,ny-1,nx-2,nz-2)
     integer i, j, k, it, jt, kt, idy
     real(8), dimension(-1:threadsF%y+3,threadsF%x,threadsF%z), shared :: rho, u, v, w, p
     real(8) fdy, tmp(6)
@@ -461,15 +461,15 @@ contains
     if (3 <= j .and. j <= ny-3 .and. 8 <= kind(id_accuracy)) then
       tmp(:) = T(i,j-2:j+3,k)
       call flux6(id_scheme,2,rho(jt-2:jt+3,it,kt),u(jt-2:jt+3,it,kt),v(jt-2:jt+3,it,kt),w(jt-2:jt+3,it,kt),&
-                 vv(jt-2:jt+3,it,kt),p(jt-2:jt+3,it,kt),tmp,Normal_y,fdy,F(:,i-1,j,k-1))
+                 vv(jt-2:jt+3,it,kt),p(jt-2:jt+3,it,kt),tmp,Normal_y,fdy,F(:,j,i-1,k-1))
     elseif (2 <= j .and. j <= ny-2) then
       tmp(2:5) = T(i,j-1:j+2,k)
       call flux4(id_scheme,2,rho(jt-1:jt+2,it,kt),u(jt-1:jt+2,it,kt),v(jt-1:jt+2,it,kt),w(jt-1:jt+2,it,kt),&
-                 vv(jt-1:jt+2,it,kt),p(jt-1:jt+2,it,kt),tmp(2:5),Normal_y,fdy,F(:,i-1,j,k-1))
+                 vv(jt-1:jt+2,it,kt),p(jt-1:jt+2,it,kt),tmp(2:5),Normal_y,fdy,F(:,j,i-1,k-1))
     else
       tmp(3:4) = T(i,j:j+1,k)
       call flux2(id_scheme,2,rho(jt:jt+1,it,kt),u(jt:jt+1,it,kt),v(jt:jt+1,it,kt),w(jt:jt+1,it,kt),&
-                 vv(jt:jt+1,it,kt),p(jt:jt+1,it,kt),tmp(3:4),Normal_y,fdy,F(:,i-1,j,k-1))
+                 vv(jt:jt+1,it,kt),p(jt:jt+1,it,kt),tmp(3:4),Normal_y,fdy,F(:,j,i-1,k-1))
     endif
     end associate
   end subroutine calc_F6
@@ -481,7 +481,7 @@ contains
     integer, intent(in), value                         :: nx, ny, nz
     real(8), intent(in), dimension(5,nx,ny,nz), device :: Q
     real(8), intent(in), dimension(nx,ny,nz), device   :: T, sensor
-    real(8), intent(out), device :: G(5,nx-2,ny-2,nz-1)
+    real(8), intent(out), device :: G(5,nz-1,ny-2,nx-2)
     integer i, j, k, it, jt, kt, idz
     real(8), dimension(-1:threadsG%z+3,threadsG%y,threadsG%x), shared :: rho, u, v, w, p
     real(8) :: fdz, tmp(6)
@@ -541,15 +541,15 @@ contains
     if (3 <= k .and. k <= nz-3 .and. 8 <= kind(id_accuracy)) then
       tmp(:) = T(i,j,k-2:k+3)
       call flux6(id_scheme,3,rho(kt-2:kt+3,jt,it),u(kt-2:kt+3,jt,it),v(kt-2:kt+3,jt,it),w(kt-2:kt+3,jt,it),&
-                 ww(kt-2:kt+3,jt,it),p(kt-2:kt+3,jt,it),tmp,Normal_z,fdz,G(:,i-1,j-1,k))
+                 ww(kt-2:kt+3,jt,it),p(kt-2:kt+3,jt,it),tmp,Normal_z,fdz,G(:,k,j-1,i-1))
     elseif (2 <= k .and. k <= nz-2) then
       tmp(2:5) = T(i,j,k-1:k+2)
       call flux4(id_scheme,3,rho(kt-1:kt+2,jt,it),u(kt-1:kt+2,jt,it),v(kt-1:kt+2,jt,it),w(kt-1:kt+2,jt,it),&
-                 ww(kt-1:kt+2,jt,it),p(kt-1:kt+2,jt,it),tmp(2:5),Normal_z,fdz,G(:,i-1,j-1,k))
+                 ww(kt-1:kt+2,jt,it),p(kt-1:kt+2,jt,it),tmp(2:5),Normal_z,fdz,G(:,k,j-1,i-1))
     else
       tmp(3:4) = T(i,j,k:k+1)
       call flux2(id_scheme,3,rho(kt:kt+1,jt,it),u(kt:kt+1,jt,it),v(kt:kt+1,jt,it),w(kt:kt+1,jt,it),&
-                 ww(kt:kt+1,jt,it),p(kt:kt+1,jt,it),tmp(3:4),Normal_z,fdz,G(:,i-1,j-1,k))
+                 ww(kt:kt+1,jt,it),p(kt:kt+1,jt,it),tmp(3:4),Normal_z,fdz,G(:,k,j-1,i-1))
     endif
     end associate
   end subroutine calc_G6
@@ -619,7 +619,7 @@ contains
     integer, intent(in), value                         :: nx, ny, nz
     real(8), intent(in), dimension(5,nx,ny,nz), device :: Q
     real(8), intent(in), dimension(nx,ny,nz), device   :: T, sensor
-    real(8), intent(out), device :: F(5,nx-2,ny-1,nz-2)
+    real(8), intent(out), device :: F(5,ny-1,nx-2,nz-2)
     integer i, j, k, it, jt, kt
     real(8), dimension(0:threadsF%y+2,threadsF%x,threadsF%z), shared :: rho, u, v, w, p
     real(8) fdy, tmp(4)
@@ -661,11 +661,11 @@ contains
     if (2 <= j .and. j <= ny-2) then
       tmp(:) = T(i,j-1:j+2,k)
       call flux4(id_scheme,2,rho(jt-1:jt+2,it,kt),u(jt-1:jt+2,it,kt),v(jt-1:jt+2,it,kt),w(jt-1:jt+2,it,kt),&
-                 vv(jt-1:jt+2,it,kt),p(jt-1:jt+2,it,kt),tmp,Normal_y,fdy,F(:,i-1,j,k-1))
+                 vv(jt-1:jt+2,it,kt),p(jt-1:jt+2,it,kt),tmp,Normal_y,fdy,F(:,j,i-1,k-1))
     else
       tmp(2:3) = T(i,j:j+1,k)
       call flux2(id_scheme,2,rho(jt:jt+1,it,kt),u(jt:jt+1,it,kt),v(jt:jt+1,it,kt),w(jt:jt+1,it,kt),&
-                 vv(jt:jt+1,it,kt),p(jt:jt+1,it,kt),tmp(2:3),Normal_y,fdy,F(:,i-1,j,k-1))
+                 vv(jt:jt+1,it,kt),p(jt:jt+1,it,kt),tmp(2:3),Normal_y,fdy,F(:,j,i-1,k-1))
     endif
     end associate
   end subroutine calc_F4
@@ -677,7 +677,7 @@ contains
     integer, intent(in), value                         :: nx, ny, nz
     real(8), intent(in), dimension(5,nx,ny,nz), device :: Q
     real(8), intent(in), dimension(nx,ny,nz), device   :: T, sensor
-    real(8), intent(out), device :: G(5,nx-2,ny-2,nz-1)
+    real(8), intent(out), device :: G(5,nz-1,ny-2,nx-2)
     integer i, j, k, it, jt, kt
     real(8), dimension(0:threadsG%z+2,threadsG%y,threadsG%x), shared :: rho, u, v, w, p
     real(8) :: fdz, tmp(4)
@@ -719,11 +719,11 @@ contains
     if (2 <= k .and. k <= nz-2) then
       tmp(:) = T(i,j,k-1:k+2)
       call flux4(id_scheme,3,rho(kt-1:kt+2,jt,it),u(kt-1:kt+2,jt,it),v(kt-1:kt+2,jt,it),w(kt-1:kt+2,jt,it),&
-                 ww(kt-1:kt+2,jt,it),p(kt-1:kt+2,jt,it),tmp,Normal_z,fdz,G(:,i-1,j-1,k))
+                 ww(kt-1:kt+2,jt,it),p(kt-1:kt+2,jt,it),tmp,Normal_z,fdz,G(:,k,j-1,i-1))
     else
       tmp(2:3) = T(i,j,k:k+1)
       call flux2(id_scheme,3,rho(kt:kt+1,jt,it),u(kt:kt+1,jt,it),v(kt:kt+1,jt,it),w(kt:kt+1,jt,it),&
-                 ww(kt:kt+1,jt,it),p(kt:kt+1,jt,it),tmp(2:3),Normal_z,fdz,G(:,i-1,j-1,k))
+                 ww(kt:kt+1,jt,it),p(kt:kt+1,jt,it),tmp(2:3),Normal_z,fdz,G(:,k,j-1,i-1))
     endif
     end associate
   end subroutine calc_G4
@@ -763,7 +763,7 @@ contains
     integer, intent(in), value                         :: nx, ny, nz
     real(8), intent(in), dimension(5,nx,ny,nz), device :: Q
     real(8), intent(in), dimension(nx,ny,nz), device   :: T, sensor
-    real(8), intent(out), device :: F(5,nx-2,ny-1,nz-2)
+    real(8), intent(out), device :: F(5,ny-1,nx-2,nz-2)
     integer i, j, k, it, jt, kt
     real(8), dimension(2), device :: rho, u, v, w, p, tmp
     real(8) fdy
@@ -781,7 +781,7 @@ contains
     w   = Q(4,i,j:j+1,k)
     p   = Q(5,i,j:j+1,k)
     tmp = T(i,j:j+1,k)
-    call flux2(id_scheme, 2, rho, u, v, w, v, p, tmp, Normal_y, fdy, F(:,i-1,j,k-1))
+    call flux2(id_scheme, 2, rho, u, v, w, v, p, tmp, Normal_y, fdy, F(:,j,i-1,k-1))
   end subroutine calc_F2
   
   attributes(global) subroutine calc_G2(id_accuracy, nx, ny, nz, Q, T, sensor, G)
@@ -791,7 +791,7 @@ contains
     integer, intent(in), value                         :: nx, ny, nz
     real(8), intent(in), dimension(5,nx,ny,nz), device :: Q
     real(8), intent(in), dimension(nx,ny,nz), device   :: T, sensor
-    real(8), intent(out), device :: G(5,nx-2,ny-2,nz-1)
+    real(8), intent(out), device :: G(5,nz-1,ny-2,nx-2)
     integer i, j, k, it, jt, kt
     real(8), dimension(2), device :: rho, u, v, w, p, tmp
     real(8) :: fdz
@@ -809,7 +809,7 @@ contains
     w   = Q(4,i,j,k:k+1)
     p   = Q(5,i,j,k:k+1)
     tmp = T(i,j,k:k+1)
-    call flux2(id_scheme, 3, rho, u, v, w, w, p, tmp, Normal_z, fdz, G(:,i-1,j-1,k))
+    call flux2(id_scheme, 3, rho, u, v, w, w, p, tmp, Normal_z, fdz, G(:,k,j-1,i-1))
   end subroutine calc_G2
 end module calc_flux
 
