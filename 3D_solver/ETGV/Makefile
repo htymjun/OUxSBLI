@@ -72,5 +72,3 @@ main.o: main.f90 mod_globals.mod set_coordinate.mod set.mod calc_time_dev.mod
 
 clean:
 		rm -f *.mod *.o *.out
-
-
