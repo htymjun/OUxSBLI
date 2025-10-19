@@ -3,23 +3,7 @@ module calc_physical_quantities
   use mod_globals, only : gamma, R, dim => dimension
   use mod_constant, only : gamma_1, mu0_T0_S_over_T0_2_3
   implicit none
-  interface calc_quantities
-    module procedure calc_quantities_2D, calc_quantities_3D
-  end interface
 contains
-  attributes(device) subroutine set_q(Ql,Qr,rhol,rhor,pl,pr,Vl,Vr)
-    real(8), intent(in), dimension(dim+2) :: Ql, Qr
-    real(8), intent(out) :: rhol, rhor, pl, pr
-    real(8), intent(out), dimension(dim) :: Vl, Vr
-    rhol = Ql(1)
-    rhor = Qr(1)
-    pl   = Ql(dim+2)
-    pr   = Qr(dim+2)
-    Vl   = Ql(2:dim+1)
-    Vr   = Qr(2:dim+1)
-  end subroutine set_q
-
-
   subroutine calc_quantities_2D(nx,ny,Jacobian,QJ,rho,u,v,p)
     integer, intent(in), value   :: nx, ny
     real(8), intent(in), device  :: Jacobian(nx,ny)
@@ -39,14 +23,14 @@ contains
   end subroutine calc_quantities_2D
 
 
-  subroutine calc_quantities_3D(nx, ny, nz, Jacobian, QJ, Q)
+  subroutine calc_quantities_3D(nx, ny, nz, Jacobian, QJ, Q, T)
     integer, intent(in), value   :: nx, ny, nz
     real(8), intent(in), device  :: Jacobian(nx,ny)
     real(8), intent(in), device  :: QJ(5,nx,ny,nz) ! Q / Jacobian
-    real(8), intent(out), device :: Q(5,nx,ny,nz)
+    real(8), intent(out), device :: Q(5,nx,ny,nz), T(nx,ny,nz)
     integer i, j, k
-    real(8) :: over_Q1, rho, u, v, w
-    !$cuf kernel do(3) <<<*,*>>>
+    real(8) :: over_Q1, rho, u, v, w, p
+    !$cuf kernel do(3) <<<*,(32,4,2)>>>
     do k = 1, nz
       do j = 1, ny
         do i = 1, nx
@@ -55,11 +39,13 @@ contains
           u          = QJ(2,i,j,k) * over_Q1
           v          = QJ(3,i,j,k) * over_Q1
           w          = QJ(4,i,j,k) * over_Q1
+          p          = gamma_1 * (Jacobian(i,j) * QJ(5,i,j,k) - 0.5d0 * rho * (u*u + v*v + w*w))
           Q(1,i,j,k) = rho
           Q(2,i,j,k) = u
           Q(3,i,j,k) = v
           Q(4,i,j,k) = w
-          Q(5,i,j,k) = gamma_1 * (Jacobian(i,j) * QJ(5,i,j,k) - 0.5d0 * rho * (u*u + v*v + w*w))
+          Q(5,i,j,k) = p
+          T(i,j,k)   = p / (R * rho)
     enddo;enddo;enddo
   end subroutine calc_quantities_3D
   
@@ -71,7 +57,7 @@ contains
     real(8), intent(out), device :: Q(5,nx,ny,nz), T(nx,ny,nz), mu(nx,ny,nz)
     integer i, j, k
     real(8) :: over_Q1, rho, u, v, w, p, temp
-    !$cuf kernel do(3) <<<*,*>>>
+    !$cuf kernel do(3) <<<*,(32,4,2)>>>
     do k = 1, nz
       do j = 1, ny
         do i = 1, nx
