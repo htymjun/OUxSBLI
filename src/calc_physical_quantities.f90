@@ -30,7 +30,7 @@ contains
     real(8), intent(out), device :: Q(5,nx,ny,nz), T(nx,ny,nz)
     integer i, j, k
     real(8) :: over_Q1, rho, u, v, w, p
-    !$cuf kernel do(3) <<<*,*>>>
+    !$cuf kernel do(3) <<<*,(32,4,2)>>>
     do k = 1, nz
       do j = 1, ny
         do i = 1, nx
@@ -57,7 +57,7 @@ contains
     real(8), intent(out), device :: Q(5,nx,ny,nz), T(nx,ny,nz), mu(nx,ny,nz)
     integer i, j, k
     real(8) :: over_Q1, rho, u, v, w, p, temp
-    !$cuf kernel do(3) <<<*,*>>>
+    !$cuf kernel do(3) <<<*,(32,4,2)>>>
     do k = 1, nz
       do j = 1, ny
         do i = 1, nx

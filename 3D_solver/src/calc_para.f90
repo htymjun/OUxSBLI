@@ -15,7 +15,7 @@ contains
     ni = overlap
     nj = ny-2
     nk = nz-6
-    !$cuf kernel do(4)<<<*,*>>>
+    !$cuf kernel do(2)<<<*,(32,4)>>>
     do k = 1, nk
       do j = 1, nj
         do i = 1, ni
@@ -33,7 +33,7 @@ contains
     ni = overlap
     nj = ny-2
     nk = nz-6
-    !$cuf kernel do(4)<<<*,*>>>
+    !$cuf kernel do(2)<<<*,(32,4)>>>
     do k = 1, nk
       do j = 1, nj
         do i = 1, ni
@@ -50,7 +50,7 @@ contains
     ni = overlap
     nj = ny-2
     nk = nz-6
-    !$cuf kernel do(4)<<<*,*>>>
+    !$cuf kernel do(2)<<<*,(32,4)>>>
     do k = 1, nk
       do j = 1, nj
         do i = 1, ni
@@ -67,7 +67,7 @@ contains
     ni = overlap
     nj = ny-2
     nk = nz-6
-    !$cuf kernel do(4)<<<*,*>>>
+    !$cuf kernel do(2)<<<*,(32,4)>>>
     do k = 1, nk
       do j = 1, nj
         do i = 1, ni
@@ -85,7 +85,7 @@ contains
     ni = overlap
     nj = ny-2
     nk = nz-6
-    !$cuf kernel do(4)<<<*,*>>>
+    !$cuf kernel do(2)<<<*,(32,4)>>>
     do k = 1, nk
       do j = 1, nj
         do i = 1, ni
@@ -103,7 +103,7 @@ contains
     ni = overlap
     nj = ny-2
     nk = nz-6
-    !$cuf kernel do(4)<<<*,*>>>
+    !$cuf kernel do(2)<<<*,(32,4)>>>
     do k = 1, nk
       do j = 1, nj
         do i = 1, ni
@@ -120,7 +120,7 @@ contains
     ni = overlap
     nj = ny-2
     nk = nz-6
-    !$cuf kernel do(4)<<<*,*>>>
+    !$cuf kernel do(2)<<<*,(32,4)>>>
     do k = 1, nk
       do j = 1, nj
         do i = 1, ni
@@ -137,7 +137,7 @@ contains
     ni = overlap
     nj = ny1-2
     nk = nz-6
-    !$cuf kernel do(4)<<<*,*>>>
+    !$cuf kernel do(2)<<<*,(32,4)>>>
     do k = 1, nk
       do j = 1, nj
         do i = 1, overlap
