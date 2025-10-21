@@ -4,10 +4,6 @@ module set_bc_common
     module procedure set_bc_cyclic2_init, set_bc_cyclic2, set_bc_cyclic4, &
                      set_bc_cyclic4_init, set_bc_cyclic6, set_bc_cyclic6_init
   end interface set_bc_cyclic
-  
-  interface set_bc_cyclic_z
-    module procedure set_bc_cyclic_z_2, set_bc_cyclic_z_4, set_bc_cyclic_z_6
-  end interface set_bc_cyclic_z
 contains
   subroutine set_bc_cyclic2_init(id_accuracy, nx, ny, nz, Q)
     integer(kind=2), intent(in), value :: id_accuracy
@@ -269,40 +265,7 @@ contains
   end subroutine set_bc_cyclic6
 
 
-  subroutine set_bc_cyclic_z_2(id_accuracy, nx, ny, nz, QJ)
-    integer(2), intent(in)         :: id_accuracy
-    integer, intent(in), value     :: nx, ny, nz
-    real(8), intent(inout), device :: QJ(5,nx,ny,nz)
-    integer i, j, l
-    !$cuf kernel do(2)<<<*,*>>>
-    do j = 1, ny
-      do i = 1, nx
-        do l = 1, 5
-          QJ(l,i,j,1)  = QJ(l,i,j,nz-1)
-          QJ(l,i,j,nz) = QJ(l,i,j,2)
-    enddo;enddo;enddo
-  end subroutine set_bc_cyclic_z_2
-
-
-  subroutine set_bc_cyclic_z_4(id_accuracy, nx, ny, nz, QJ)
-    integer(4), intent(in)         :: id_accuracy
-    integer, intent(in), value     :: nx, ny, nz
-    real(8), intent(inout), device :: QJ(5,nx,ny,nz)
-    integer i, j, l
-    !$cuf kernel do(2)<<<*,*>>>
-    do j = 1, ny
-      do i = 1, nx
-        do l = 1, 5
-          QJ(l,i,j,1) = QJ(l,i,j,nz-3)
-          QJ(l,i,j,2) = QJ(l,i,j,nz-2)
-          QJ(l,i,j,nz-1) = QJ(l,i,j,3)
-          QJ(l,i,j,nz)   = QJ(l,i,j,4)
-    enddo;enddo;enddo
-  end subroutine set_bc_cyclic_z_4
-
-
-  subroutine set_bc_cyclic_z_6(id_accuracy, nx, ny, nz, QJ)
-    integer(8), intent(in)         :: id_accuracy
+  subroutine set_bc_cyclic_z(nx, ny, nz, QJ)
     integer, intent(in), value     :: nx, ny, nz
     real(8), intent(inout), device :: QJ(5,nx,ny,nz)
     integer i, j, l
@@ -317,7 +280,7 @@ contains
           QJ(l,i,j,nz-1) = QJ(l,i,j,5)
           QJ(l,i,j,nz)   = QJ(l,i,j,6)
     enddo;enddo;enddo
-  end subroutine set_bc_cyclic_z_6
+  end subroutine set_bc_cyclic_z
 
 
   subroutine set_bc_mut_common(nx, ny, nz, mut, qc2)

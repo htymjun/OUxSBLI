@@ -1,23 +1,12 @@
 module mod_globals
   use cudafor
   implicit none
-  integer, parameter    :: dimension = 3
-  integer, parameter    :: accuracy  = 2
-  integer, parameter    :: offset    = accuracy / 2
-  integer(4), parameter :: id_visc   = 2
-  integer, parameter    :: id_turbulence = 0
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! id_visc       ! kind2 Euler       !
   !               ! kind4 NS          !
   !               ! kind8 LES         !
   !               ! 1 2nd             !
   !               ! 2 4th             !
-  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  ! id_turbulence ! 0 laminar         !
-  !               ! 1 SMS             !
-  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  ! id_av         ! 0 no              !
-  !               ! 1 Neumann         !
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! id_scheme   ! integer(2)  KEEP    !
   !             ! real(2)     SLAU    !
@@ -36,28 +25,20 @@ module mod_globals
   !             ! kind4 minmod        !
   !             ! kind8 MUSCL4th      !
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  ! id_keep     ! kind2 KEEP          !
-  !             ! kind4 KEEPPE        !
-  !             ! kind8 KEP           !
-  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! id_slau     ! kind2 SLAU          !
   !             ! kind4 HR-SLAU2      !
-  !             ! kind8 VHR-SLAU2     !
-  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  ! slau_wall   ! kind2 off           !
-  !             ! kind4 on            !
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! id_rescale  ! kind2 off           !
   !             ! kind4 on            !
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  integer, parameter         :: dimension = 3
+  integer(4), parameter      :: id_visc   = 2
   real(2), parameter         :: id_scheme   = 0
   integer, parameter         :: id_sensor   = 1
   real(8), parameter         :: threshold   = 0.4d0
   integer(kind=8), parameter :: id_accuracy = 0
   integer(kind=8), parameter :: id_tvd      = 0
-  integer(kind=2), parameter :: id_keep     = 0
   integer(kind=4), parameter :: id_slau     = 0
-  integer(kind=2), parameter :: slau_wall   = 0
   integer(kind=4), parameter :: id_rescale  = 0
   real(8), parameter         :: blt         = 0.8d-3
 
@@ -75,7 +56,7 @@ module mod_globals
   real(8), parameter :: Lz1 = 2.5d0 * blt
   integer, parameter :: nx1 = 513
   integer, parameter :: ny1 = 161
-  integer, parameter :: nz1 = 129
+  integer, parameter :: nz1 = 65!129
 
   ! shock + boundary layer
   integer, parameter :: mygpu2 = 1
@@ -126,6 +107,9 @@ module mod_globals
   real(8), parameter :: Pr    = 0.72d0
   real(8), parameter :: Prt   = 0.9d0
 
+  ! boundary layer
+  real(8), parameter :: rf    = 0.89d0
+  real(8), parameter :: Taw   = T0 * (1.d0 + rf * 0.5d0 * (gamma - 1.d0) * M0**2)
   ! oblique shock
   real(8), parameter :: beta  = dacos(-1.d0) * 32.69d0 / 180.d0
   real(8), parameter :: Ms    = M0 * dsin(beta)

@@ -1,6 +1,6 @@
 FC = mpif90
 
-OUTPUT_OPTIN = -cuda -acc -fast -Mchkptr -Minfo=accel -gpu=cc90,ptxinfo -lnvhpcwrapnvtx
+OUTPUT_OPTIN = -cuda -acc -fast -Mchkptr -Minfo=accel -gpu=ptxinfo -lnvhpcwrapnvtx
 
 .SUFFIXES : .f90
 
@@ -19,9 +19,6 @@ OBJ =	mod_globals.o \
       calc_physical_quantities.o \
 			calc_rand.o \
       store_shared.o \
-      calc_visc_common.o \
-			calc_visc2.o \
-      calc_visc4.o \
       calc_visc.o \
       calc_les.o \
       calc_hybrid.o \
@@ -35,6 +32,7 @@ OBJ =	mod_globals.o \
       calc_rescale.o \
       calc_para.o \
       set_bc_common.o \
+      set_bc_tbl_sbli.o \
       set_init_common.o \
       set.o \
       print.o \
@@ -42,28 +40,26 @@ OBJ =	mod_globals.o \
       sbli.o
 
 a.out: $(OBJ)
-		$(FC) -cuda -acc -fast -Minfo -gpu=cc90 -lnvhpcwrapnvtx -I./ $^
+		$(FC) -cuda -acc -fast -Minfo -lnvhpcwrapnvtx -I./ $^
 
 $(TARGET): $(OBJ)
 		$(LINK.f) $^ $(LOADLIBES) $(LDLIBS) -o $@
 
 mod_constant.o: mod_globals.mod
 set_bc_common.o: mod_globals.mod
+set_bc_tbl_sbli.o: mod_globals.mod mod_constant.mod
 set_init_common.o: mod_globals.mod mod_constant.mod
-set.o: mod_globals.mod mod_constant.mod calc_para.mod set_bc_common.mod set_init_common.mod set_coordinate.mod
+set.o: mod_globals.mod mod_constant.mod calc_para.mod set_bc_common.mod set_bc_tbl_sbli.mod set_init_common.mod set_coordinate.mod
 calc_physical_quantities.o: mod_globals.mod mod_constant.mod
 calc_common.o: mod_globals.mod
 calc_keep.o: mod_constant.mod
 calc_roe.o: mod_constant.mod 
 calc_visc.o: mod_globals.mod mod_constant.mod store_shared.mod
-calc_visc_common.o: mod_constant.mod
-calc_visc2.o: mod_globals.mod mod_constant.mod calc_visc_common.mod calc_rand.mod
-calc_visc4.o: mod_globals.mod mod_constant.mod calc_visc_common.mod calc_rand.mod
 calc_mat.o: mod_globals.mod calc_common_dim.mod
 calc_slau.o: mod_globals.mod mod_constant.mod
 calc_muscl.o: mod_globals.mod
 calc_flux.o: mod_globals.mod mod_constant.mod calc_keep.mod calc_slau.mod calc_roe.mod calc_hybrid.mod calc_muscl.mod
-calc_flux_base.o: mod_globals.mod calc_physical_quantities.mod calc_hybrid.mod calc_flux.mod calc_visc.mod calc_visc2.mod calc_visc4.mod calc_les.mod set.mod
+calc_flux_base.o: mod_globals.mod calc_physical_quantities.mod calc_hybrid.mod calc_flux.mod calc_visc.mod calc_les.mod set.mod
 calc_hybrid.o: mod_globals.mod
 calc_steps.o: mod_globals.mod
 calc_rescale.o: mod_globals.mod mod_constant.mod

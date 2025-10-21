@@ -142,6 +142,8 @@ contains
     real(8), allocatable, device :: dx(:), dy(:), dz(:), xix(:), etay(:), zetaz(:), Jacobian(:,:), over_Jacobian(:,:)
     ! Landau !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     integer(8), allocatable, device :: seed(:,:,:)
+    ! for rescaling
+    real(8) bltre
     ! for plot
     real(4) :: ke0 = 1.d0, entropy0 = 1.d0
 
@@ -174,8 +176,7 @@ contains
         step = np * (t2-1) + t1
         if (mod(myrank,2) == 0) then
           if ((myrank == rerank .or. myrank == 0) .and. kind(id_rescale) == 4) then
-            print *, "y(1)=", y(1)
-            call step_rescale(1, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, QJ, Qm, Qre)
+            call step_rescale(1, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, over_Jacobian, QJ, Qm, Qre, bltre)
           endif
           call nvtxStartRange("calc flux", 1)
           if (kind(id_LL) == 4) then
@@ -206,7 +207,7 @@ contains
 
         if (mod(myrank,2) == 0) then
           if ((myrank == rerank .or. myrank == 0) .and. kind(id_rescale) == 4) then
-            call step_rescale(2, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, QJ2, Qm, Qre)
+            call step_rescale(2, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, over_Jacobian, QJ2, Qm, Qre, bltre)
           endif
           if (kind(id_LL) == 4) then
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, over_Jacobian, QJ2, ruvwp, T, mu, mut, qc2, E, F, G, Rv, seed)
@@ -226,7 +227,7 @@ contains
 
         if (mod(myrank,2) == 0) then
           if ((myrank == rerank .or. myrank == 0) .and. kind(id_rescale) == 4) then
-            call step_rescale(3, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, QJ2, Qm, Qre)
+            call step_rescale(3, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, over_Jacobian, QJ2, Qm, Qre, bltre)
           endif
           if (kind(id_LL) == 4) then
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, over_Jacobian, QJ2, ruvwp, T, mu, mut, qc2, E, F, G, Rv, seed)
@@ -288,6 +289,8 @@ contains
     real(8), allocatable, device :: dx(:), dy(:), dz(:), xix(:), etay(:), zetaz(:), Jacobian(:,:), over_Jacobian(:,:)
     ! Landau !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     integer(8), allocatable, device :: seed(:,:,:)
+    ! for rescaling
+    real(8) bltre
     ! for plot
     real(4) :: ke0 = 1.d0, entropy0 = 1.d0
 
@@ -321,7 +324,7 @@ contains
         step = np * (t2-1) + t1
         if (mod(myrank,2) == 0) then
           if ((myrank == rerank .or. myrank == 0) .and. kind(id_rescale) == 4) then
-            call step_rescale(1, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, QJ, Qm, Qre)
+            call step_rescale(1, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, over_Jacobian, QJ, Qm, Qre, bltre)
           endif
           if (kind(id_LL) == 4) then
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, over_Jacobian, QJ, ruvwp, T, mu, mut, qc2, E, F, G, Rv, seed)
@@ -341,7 +344,7 @@ contains
 
         if (mod(myrank,2) == 0) then
           if ((myrank == rerank .or. myrank == 0) .and. kind(id_rescale) == 4) then
-            call step_rescale(2, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, QJs, Qm, Qre)
+            call step_rescale(2, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, over_Jacobian, QJs, Qm, Qre, bltre)
           endif
           if (kind(id_LL) == 4) then
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, over_Jacobian, QJs, ruvwp, T, mu, mut, qc2, E, F, G, Rv, seed)
@@ -361,7 +364,7 @@ contains
 
         if (mod(myrank,2) == 0) then
           if ((myrank == rerank .or. myrank == 0) .and. kind(id_rescale) == 4) then
-            call step_rescale(3, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, QJs, Qm, Qre)
+            call step_rescale(3, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, over_Jacobian, QJs, Qm, Qre, bltre)
           endif
           if (kind(id_LL) == 4) then
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, over_Jacobian, QJs, ruvwp, T, mu, mut, qc2, E, F, G, Rv, seed)
@@ -381,7 +384,7 @@ contains
 
         if (mod(myrank,2) == 0) then
           if ((myrank == rerank .or. myrank == 0) .and. kind(id_rescale) == 4) then
-            call step_rescale(4, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, QJs, Qm, Qre)
+            call step_rescale(4, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, over_Jacobian, QJs, Qm, Qre, bltre)
           endif
           if (kind(id_LL) == 4) then
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, over_Jacobian, QJs, ruvwp, T, mu, mut, qc2, E, F, G, Rv, seed)

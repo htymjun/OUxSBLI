@@ -1,23 +1,12 @@
 module mod_globals
   use cudafor
   implicit none
-  integer, parameter    :: dimension = 3
-  integer, parameter    :: accuracy  = 2
-  integer, parameter    :: offset    = accuracy / 2
-  integer(4), parameter :: id_visc   = 1
-  integer(2), parameter :: id_LL     = 0
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! id_visc       ! kind2 Euler       !
   !               ! kind4 NS          !
   !               ! kind8 LES         !
   !               ! 1 2nd             !
   !               ! 2 4th             !
-  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  ! id_turbulence ! 0 laminar         !
-  !               ! 1 SMS             !
-  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  ! id_av         ! 0 no              !
-  !               ! 1 Neumann         !
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! id_scheme   ! integer(2)  KEEP    !
   !             ! real(2)     SLAU    !
@@ -36,28 +25,21 @@ module mod_globals
   !             ! kind4 minmod        !
   !             ! kind8 MUSCL4th      !
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  ! id_keep     ! kind2 KEEP          !
-  !             ! kind4 KEEPPE        !
-  !             ! kind8 KEP           !
-  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! id_slau     ! kind2 SLAU          !
   !             ! kind4 HR-SLAU2      !
-  !             ! kind8 VHR-SLAU2     !
-  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  ! slau_wall   ! kind2 off           !
-  !             ! kind4 on            !
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! id_rescale  ! kind2 off           !
   !             ! kind4 on            !
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  integer(2), parameter      :: id_scheme   = 0
+  integer, parameter         :: dimension   = 3
+  integer(4), parameter      :: id_visc     = 1
+  integer(2), parameter      :: id_LL       = 0
+  real(2), parameter         :: id_scheme   = 0
   integer, parameter         :: id_sensor   = 1
   real(8), parameter         :: threshold   = 0.4d0
-  integer(kind=2), parameter :: id_accuracy = 0
-  integer(kind=2), parameter :: id_tvd      = 0
-  integer(kind=2), parameter :: id_keep     = 0
+  integer(kind=8), parameter :: id_accuracy = 0
+  integer(kind=4), parameter :: id_tvd      = 0
   integer(kind=4), parameter :: id_slau     = 0
-  integer(kind=2), parameter :: slau_wall   = 0
   integer(kind=4), parameter :: id_rescale  = 0
   real(8), parameter         :: blt         = 0.8d-3
 
@@ -75,7 +57,7 @@ module mod_globals
   ! DNS
   integer, parameter :: nx = 257
   integer, parameter :: ny = 129
-  integer, parameter :: nz = 129
+  integer, parameter :: nz = 65
 
   integer, parameter :: nre1 = int(0.7 * nx)
   integer, parameter :: nre2 = int(0.9 * nx)
@@ -83,12 +65,12 @@ module mod_globals
 
   ! RTX 4090
   type(dim3), parameter :: threadsE  = dim3(128,1,1)
-  type(dim3), parameter :: threadsF  = dim3(32,8,1)
-  type(dim3), parameter :: threadsG  = dim3(32,1,8)
+  type(dim3), parameter :: threadsF  = dim3(32,4,1)
+  type(dim3), parameter :: threadsG  = dim3(32,1,4)
   type(dim3), parameter :: threadsEv = dim3(64,1,1)
-  type(dim3), parameter :: threadsFv = dim3(32,8,1)
-  type(dim3), parameter :: threadsGv = dim3(32,1,8)
-  type(dim3), parameter :: threads   = dim3(32,1,1)
+  type(dim3), parameter :: threadsFv = dim3(32,4,1)
+  type(dim3), parameter :: threadsGv = dim3(32,1,4)
+  type(dim3), parameter :: threads   = dim3(32,2,1)
   type(dim3) :: blocksE, blocksF, blocksG, blocksEv, blocksFv, blocksGv, blocks
 
   ! time
@@ -102,7 +84,7 @@ module mod_globals
   integer(kind=2), parameter :: id_RungeKutta = 0
   integer(kind=2), parameter :: id_recal      = 0
   integer, parameter         :: step_offset   = 0
-  integer, parameter         :: start_rescale = 100
+  integer, parameter         :: start_rescale = 10
   real(8), parameter :: endT  = 0.1d-3
   integer, parameter :: np    = 10
   real(8), parameter :: R     = 287.03d0
@@ -112,12 +94,15 @@ module mod_globals
   real(8), parameter :: p0    = 14924.d0
   real(8), parameter :: u0    = M0 * sqrt(gamma * R * T0)
   real(8), parameter :: dt    = 2.d-9
-  integer, parameter :: nt    = int(endT / (dble(np) * dt))
+  integer, parameter :: nt    = 1000!int(endT / (dble(np) * dt))
 
   ! physical properties
   real(8), parameter :: Pr    = 0.72d0
   real(8), parameter :: Prt   = 0.9d0
 
+  ! boundary layer
+  real(8), parameter :: rf    = 0.89d0
+  real(8), parameter :: Taw   = T0 * (1.d0 + rf * 0.5d0 * (gamma - 1.d0) * M0**2)
   ! oblique shock
   real(8), parameter :: beta  = dacos(-1.d0) * 40.03d0 / 180.d0
   real(8), parameter :: Ms    = M0 * dsin(beta)

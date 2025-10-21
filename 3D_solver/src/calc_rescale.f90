@@ -50,35 +50,37 @@ contains
   end subroutine flatten
 
 
-  subroutine Q_over_J(nx, ny, nz, Jacobian, Qre)
+  subroutine Q_over_J(nx, ny, nz, over_Jacobian, Qre)
     integer, intent(in)            :: nx, ny, nz
-    real(8), intent(in), device    :: Jacobian(nx,ny)
+    real(8), intent(in), device    :: over_Jacobian(nx,ny)
     real(8), intent(inout), device :: Qre(ny*(nz-6)*5)
-    integer i, j, k, l, j_offset, k_offset
+    integer i, j, k, kh, l, j_offset, k_offset
     !$cuf kernel do <<<*,*>>>
     do k = 1, nz-6
-      k_offset = ny * 5 * (k-1)
+      kh = mod(k+(nz-6)/2,nz-6) + 1
+      k_offset = ny * 5 * (kh-1)
       do j = 1, ny
         j_offset = 5 * (j-1)
         do l = 1, 5
           i = k_offset + j_offset + l
-          Qre(i) = Qre(i) * Jacobian(nre2,j)
+          Qre(i) = Qre(i) * over_Jacobian(nre2,j)
     enddo;enddo;enddo
   end subroutine Q_over_J
 
 
-  subroutine step_rescale(num, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, QJ, Qm, Qre)
+  subroutine step_rescale(num, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, over_Jacobian, QJ, Qm, Qre, bltre)
     integer, intent(in)            :: num, myrank, step, nx, ny, nz
     integer, intent(inout)         :: flag_re, ireq, ireq2(2)
     real(8), intent(in)            :: y(ny)
-    real(8), intent(in), device    :: Jacobian(nx,ny), QJ(5,nx,ny,nz)
+    real(8), intent(in), device    :: Jacobian(nx,ny), over_Jacobian(nx,ny), QJ(5,nx,ny,nz)
     real(8), intent(inout), device :: Qm(5,ny), Qre(ny*(nz-6)*5)
-    real(8) Qm_cpu(5,ny), dudy, bltre
+    real(8), intent(inout)         :: bltre
+    real(8) Qm_cpu(5,ny), dudy
     integer ierr, j
     if (myrank == rerank) then
+      call flatten(nx, ny, nz, Jacobian, QJ, Qre)
       if (num == 1) then
         call calc_mean(step, flag_re, nx, ny, nz, Jacobian, QJ, Qm)
-        call flatten(nx, ny, nz, Jacobian, QJ, Qre)
         Qm_cpu = Qm
         bltre  = 0.d0
         do j = 2, ny
@@ -90,16 +92,18 @@ contains
         enddo
         print *, "Boundary layer thickness = ", bltre
       endif
+      bltre = 0.d0
       if (bltre >= blt) then
         block
           real(8) beta
           real(8), dimension(ny), device :: ady, ade, ypre, ypin, etre, etin, weight
           integer, dimension(ny), device :: jj_y, jj_e
-          call set_rescale_cpu(nx, ny, nz, y, Qm_cpu, beta, ady, ade, ypre, ypin, etre, etin, weight, jj_y, jj_e)
-          !call set_rescale_gpu(nx, ny, nz, beta, ady, ade, ypre, ypin, etre, etin, weight, Qm, jj_y, jj_e, Qre)
+          call set_rescale_cpu(nx, ny, y, Qm_cpu, beta, ady, ade, ypre, ypin, etre, etin, weight, jj_y, jj_e)
+          call set_rescale_gpu(nx, ny, nz-6, beta, ady, ade, ypre, ypin, etre, etin, weight, over_Jacobian, Qm, jj_y, jj_e, Qre)
         end block
+      else
+        call Q_over_J(nx, ny, nz, over_Jacobian, Qre)
       endif
-      call Q_over_J(nx, ny, nz, Jacobian, Qre)
     endif
     if (rerank /= 0 .and. myrank == rerank) then
       call MPI_ISEND(Qre, 5*ny*(nz-6), MPI_REAL8, 0,      0, MPI_COMM_WORLD, ireq, ierr)
@@ -109,9 +113,9 @@ contains
   end subroutine step_rescale
 
 
-  subroutine set_rescale_cpu(nx, ny, nz, y, Qm_cpu, beta, ady_gpu, ade_gpu, ypre_gpu, ypin_gpu, etre_gpu, etin_gpu, &
+  subroutine set_rescale_cpu(nx, ny, y, Qm_cpu, beta, ady_gpu, ade_gpu, ypre_gpu, ypin_gpu, etre_gpu, etin_gpu, &
                              weight_gpu, jj_y_gpu, jj_e_gpu)
-    integer, intent(in), value                  :: nx, ny, nz
+    integer, intent(in), value                  :: nx, ny
     real(8), intent(in)                         :: y(ny), Qm_cpu(5,ny)
     real(8), intent(out)                        :: beta
     real(8), intent(out), dimension(ny), device :: ady_gpu, ade_gpu, ypre_gpu, ypin_gpu, etre_gpu, etin_gpu, weight_gpu
@@ -171,11 +175,11 @@ contains
   end subroutine set_rescale_cpu
 
 
-  subroutine set_rescale_gpu(nx, ny, nz, beta, ady, ade, ypre, ypin, etre, etin, weight, Qm, jj_y, jj_e, Qre)
+  subroutine set_rescale_gpu(nx, ny, nz, beta, ady, ade, ypre, ypin, etre, etin, weight, over_Jacobian, Qm, jj_y, jj_e, Qre)
     integer, intent(in)                        :: nx, ny, nz ! nz-6
     real(8), intent(in)                        :: beta
     real(8), intent(in), dimension(ny), device :: ady, ade, ypre, ypin, etre, etin, weight
-    real(8), intent(in), device                :: Qm(5,ny)
+    real(8), intent(in), device                :: over_Jacobian(nx,ny), Qm(5,ny)
     integer, intent(in), dimension(ny), device :: jj_y, jj_e
     real(8), intent(inout), device             :: Qre(ny*nz*5) ! Q / J
     ! mean properties at rescaling plane
@@ -245,28 +249,21 @@ contains
     end block
     !$cuf kernel do <<<*,*>>>
     do j = 1, ny
-      do jj = 2, ny
-        if (ypre(jj) > ypin(j)) then
-          ! mean
-          Umin(j) = beta * ((1.d0 - ady(j)) * Qm(2,jj-1) + ady(j) * Qm(2,jj))!(Um(jj-1) + ady * (-Um(jj-1) + Um(jj)))
-          Vmin(j) =         (1.d0 - ady(j)) * Qm(3,jj-1) + ady(j) * Qm(3,jj) !Vm(jj-1) + ady * (-Vm(jj-1) + Vm(jj))
-          Tmin(j) =         (1.d0 - ady(j)) *   Tm(jj-1) + ady(j) *   Tm(jj) !Tm(jj-1) + ady * (-Tm(jj-1) + Tm(jj))
-          pmin(j) =         (1.d0 - ady(j)) * Qm(5,jj-1) + ady(j) * Qm(5,jj) !pm(jj-1) + ady * (-pm(jj-1) + pm(jj))
-          exit
-        endif
-    enddo;enddo
-    !$cuf kernel do <<<*,*>>>
-    do j = 1, ny
-      do jj = 2, ny
-        if (etre(jj) > etin(j)) then
-          ! mean
-          Umout(j) = beta * ((1.d0 - ade(j)) * Qm(2,jj-1) + ade(j) * Qm(2,jj)) + (1.d0 - beta) * u0
-          Vmout(j) =         (1.d0 - ade(j)) * Qm(3,jj-1) + ade(j) * Qm(3,jj) !Vm(jj-1) + ade * (-Vm(jj-1) + Vm(jj))
-          Tmout(j) =         (1.d0 - ade(j)) *   Tm(jj-1) + ade(j) *   Tm(jj) !Tm(jj-1) + ade * (-Tm(jj-1) + Tm(jj))
-          pmout(j) =         (1.d0 - ade(j)) * Qm(5,jj-1) + ade(j) * Qm(5,jj) !pm(jj-1) + ade * (-pm(jj-1) + pm(jj))
-          exit
-        endif
-    enddo;enddo
+      jj = jj_y(j)
+      if (jj > 0) then
+        Umin(j) = beta * ((1.d0 - ady(j)) * Qm(2,jj-1) + ady(j) * Qm(2,jj))!(Um(jj-1) + ady * (-Um(jj-1) + Um(jj)))
+        Vmin(j) =         (1.d0 - ady(j)) * Qm(3,jj-1) + ady(j) * Qm(3,jj) !Vm(jj-1) + ady * (-Vm(jj-1) + Vm(jj))
+        Tmin(j) =         (1.d0 - ady(j)) *   Tm(jj-1) + ady(j) *   Tm(jj) !Tm(jj-1) + ady * (-Tm(jj-1) + Tm(jj))
+        pmin(j) =         (1.d0 - ady(j)) * Qm(5,jj-1) + ady(j) * Qm(5,jj) !pm(jj-1) + ady * (-pm(jj-1) + pm(jj))
+      endif
+      jj = jj_e(j)
+      if (jj > 0) then
+        Umout(j) = beta * ((1.d0 - ade(j)) * Qm(2,jj-1) + ade(j) * Qm(2,jj)) + (1.d0 - beta) * u0
+        Vmout(j) =         (1.d0 - ade(j)) * Qm(3,jj-1) + ade(j) * Qm(3,jj) !Vm(jj-1) + ade * (-Vm(jj-1) + Vm(jj))
+        Tmout(j) =         (1.d0 - ade(j)) *   Tm(jj-1) + ade(j) *   Tm(jj) !Tm(jj-1) + ade * (-Tm(jj-1) + Tm(jj))
+        pmout(j) =         (1.d0 - ade(j)) * Qm(5,jj-1) + ade(j) * Qm(5,jj) !pm(jj-1) + ade * (-pm(jj-1) + pm(jj))
+      endif
+    enddo
     !$cuf kernel do <<<*,*>>>
     do k = 1, nz
       do j = 1, ny
@@ -296,18 +293,18 @@ contains
         k_offset = ny * 5 * (k-1)
         do j = 1, ny
           j_offset = 5 * (j-1)
-          weight_tmp   = weight(j)
+          weight_tmp    = weight(j)
           uin = (Umin(j) + ufin(j,kh)) * (1.d0 - weight_tmp) + (Umout(j) + ufout(j,kh)) * weight_tmp
           vin = (Vmin(j) + vfin(j,kh)) * (1.d0 - weight_tmp) + (Vmout(j) + vfout(j,kh)) * weight_tmp
           win =            wfin(j,kh)  * (1.d0 - weight_tmp) +             wfout(j,kh)  * weight_tmp
           Tin = (Tmin(j) + Tfin(j,kh)) * (1.d0 - weight_tmp) + (Tmout(j) + Tfout(j,kh)) * weight_tmp
           pin = (pmin(j) + pfin(j,kh)) * (1.d0 - weight_tmp) + (pmout(j) + pfout(j,kh)) * weight_tmp
           rhoin = pin / (R * Tin)
-          Qre(k_offset+j_offset+1) = rhoin
-          Qre(k_offset+j_offset+2) = rhoin * uin
-          Qre(k_offset+j_offset+3) = rhoin * vin
-          Qre(k_offset+j_offset+4) = rhoin * win
-          Qre(k_offset+j_offset+5) = pin * over_gamma_1 + 0.5d0 * rhoin * (uin**2 + vin**2 + win**2)
+          Qre(k_offset+j_offset+1) = rhoin * over_Jacobian(nre2,j)
+          Qre(k_offset+j_offset+2) = rhoin * uin * over_Jacobian(nre2,j)
+          Qre(k_offset+j_offset+3) = rhoin * vin * over_Jacobian(nre2,j)
+          Qre(k_offset+j_offset+4) = rhoin * win * over_Jacobian(nre2,j)
+          Qre(k_offset+j_offset+5) = (pin * over_gamma_1 + 0.5d0 * rhoin * (uin**2 + vin**2 + win**2)) * over_Jacobian(nre2,j)
       enddo;enddo
     end block
   end subroutine set_rescale_gpu

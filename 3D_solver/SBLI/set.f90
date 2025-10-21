@@ -1,9 +1,10 @@
 module set
   use cudafor
   use mpi
-  use mod_globals, only : id_rescale, ny1, nre2, gamma, R, Cp, Pr, u0, p0, T0, M0, blt, rho2, p2, ux, uy
+  use mod_globals, only : id_accuracy, id_rescale, ny1, nre2, gamma, R, rf, Cp, Pr, u0, p0, T0, M0, blt, rho2, p2, ux, uy
   use mod_constant, only : Cp, gamma_1, over_gamma_1
   use set_bc_common
+  use set_bc_tbl_sbli
   use set_init_common
   use calc_para
   implicit none
@@ -17,7 +18,6 @@ contains
     dx1 = Lx / dble(nx-1)
     dy1 = dx1
     dz1 = Lz / dble(nz-1)
-
     if (myrank == 0) then
       x(1) = 0.d0
     else
@@ -27,7 +27,6 @@ contains
       dx(i) = dx1
       x(i+1) = x(i) + dx(i)
     enddo
-
     y(1) = 0.d0
     do j = 1, ny-1
       if (y(j) <= 3.d0 * blt) then
@@ -40,7 +39,6 @@ contains
       y(j+1) = y(j) + dy(j)
     enddo
     print *, y(ny)
-
     z(1) = 0.d0
     do k = 1, nz-1
       dz(k) = dz1
@@ -48,14 +46,15 @@ contains
     enddo
   end subroutine set_grid
 
+
   subroutine set_init(myrank, nx, ny, nz, xs, ys, zs, Q)
     integer, intent(in)  :: myrank, nx, ny, nz
     real(8), intent(in)  :: xs(nx), ys(ny), zs(nz)
     real(8), intent(out) :: Q(5,nx,ny,nz)
-    real(8) :: rf = 0.89d0
-    call set_init_tbl(nx, ny, nz, xs, ys, zs, 0.75d0*blt, blt, rf, u0, p0, T0, M0, Q)
+    call set_init_tbl(nx, ny, nz, xs, ys, zs, 0.05d0, 0.75d0*blt, blt, rf, u0, p0, T0, M0, Q)
   end subroutine set_init
-  
+
+
   subroutine set_bc(myrank, nx, ny, nz, Jacobian, QJ, Qre)
     integer, intent(in), value     :: myrank, nx, ny, nz
     real(8), intent(in), device    :: Jacobian(nx,ny)
@@ -77,6 +76,7 @@ contains
     rho0 = p0 / (R * T)
     c0   = sqrt(gamma * p0 / rho0)
     if (myrank == 0) then
+      ! inlet & outlet !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       if (kind(id_rescale) == 4) then
         !$cuf kernel do(2)<<<*,*>>>
         do k = 1, nz-6
@@ -131,37 +131,9 @@ contains
       enddo;enddo;enddo
     endif
 
-    !$cuf kernel do(2)<<<*,*>>>
-    do k = 4, nz-3
-      do i = 1, nx
-        ! top
-        ! Riemann invariants
-        Jacobian_tmp = 1.d0 / Jacobian(i,ny)
-        pin   = gamma_1 * (QJ(5,i,ny-1,k) - 0.5d0 * (QJ(2,i,ny-1,k)**2 + QJ(3,i,ny-1,k)**2 + QJ(4,i,ny-1,k)**2) &
-                / QJ(1,i,ny-1,k)) * Jacobian(i,ny-1)
-        rhoin = QJ(1,i,ny-1,k) * Jacobian(i,ny-1)
-        cin   = sqrt(gamma * pin / rhoin)
-        vin   = QJ(3,i,ny-1,k) / QJ(1,i,ny-1,k)
-        Rp   = vin + 2.d0 * cin * over_gamma_1
-        Rm   = v0  - 2.d0 * c0  * over_gamma_1
-        vb   = 0.5d0 * (Rp + Rm)
-        cb   = 0.25d0 * gamma_1 * (Rp - Rm)
-        rhob = (cb / c0)**(2.d0 * over_gamma_1) * rho0
-        pb   = (rhob * cb**2) / gamma
-        QJ(1,i,ny,k) = rhob * Jacobian_tmp
-        QJ(2,i,ny,k) = rhob * u0 * Jacobian_tmp
-        QJ(3,i,ny,k) = rhob * vb * Jacobian_tmp
-        QJ(4,i,ny,k) = 0.d0
-        QJ(5,i,ny,k) = (pb * over_gamma_1 + 0.5d0 * rhob * (u0**2 + vb**2)) * Jacobian_tmp
-        ! NoSlip
-        QJ(1,i,1,k) = QJ(1,i,2,k)
-        QJ(2,i,1,k) = 0.d0
-        QJ(3,i,1,k) = 0.d0
-        QJ(4,i,1,k) = 0.d0
-        p_wall = gamma_1 * (QJ(5,i,2,k) - 0.5d0 * (QJ(2,i,2,k)**2 + QJ(3,i,2,k)**2 + QJ(4,i,2,k)**2) / QJ(1,i,2,k))
-        QJ(5,i,1,k) = p_wall * over_gamma_1
-    enddo;enddo
-
+    !call set_bc_Riemann_tbl_top_down(nx, ny, nz, 3, 1, nx, Jacobian, QJ)
+    call set_bc_Neumann_tbl_top_down(nx, ny, nz, 3, 1, nx, Jacobian, QJ)
+    
     if (myrank == 2) then
       No = int(dble(nx)*0.1d0)!int(dble(nx) * 0.33d0 / 35.d0)
       !$cuf kernel do(2)<<<*,*>>>
@@ -196,24 +168,12 @@ contains
           endif
       enddo;enddo
     endif
-
-    ! cyclic
-    !$cuf kernel do(2)<<<*,*>>>
-    do j = 1, ny
-      do i = 1, nx
-        do l = 1, 5
-          QJ(l,i,j,1) = QJ(l,i,j,nz-5)
-          QJ(l,i,j,2) = QJ(l,i,j,nz-4)
-          QJ(l,i,j,3) = QJ(l,i,j,nz-3)
-          QJ(l,i,j,nz-2) = QJ(l,i,j,4)
-          QJ(l,i,j,nz-1) = QJ(l,i,j,5)
-          QJ(l,i,j,nz)   = QJ(l,i,j,6)
-    enddo;enddo;enddo
-
+    call set_bc_cyclic_z(nx, ny, nz, QJ)
     if (myrank == 0) then
       call MPI_WAIT(ireq, istat, ierr)
     endif
   end subroutine set_bc
+
 
   subroutine set_bc_mut(nx,ny,nz,mut,qc2)
     integer, intent(in), value      :: nx, ny, nz
@@ -229,7 +189,6 @@ contains
         mut(nx,j,k) = mut(nx-1,j,k)
         qc2(nx,j,k) = qc2(nx-1,j,k)
     enddo;enddo
-
     !$cuf kernel do(2) <<<*,*>>>
     do k = 4, nz-3
       do i = 1, nx
@@ -240,7 +199,6 @@ contains
         mut(i,ny,k) = mut(i,ny-1,k)
         qc2(i,ny,k) = qc2(i,ny-1,k)
     enddo;enddo
-
     !$cuf kernel do(2) <<<*,*>>>
     do j = 1, ny
       do i = 1, nx
@@ -259,14 +217,5 @@ contains
         qc2(i,j,nz)   = qc2(i,j,6)
     enddo;enddo
   end subroutine set_bc_mut
-  
-  subroutine calc_forcing(nx, ny, nz, dx, dy, dz, Q, fx, fy, fz)
-    integer, intent(in), value   :: nx, ny, nz
-    real(8), intent(in), device  :: dx(nx-1) ! 1 / dx
-    real(8), intent(in), device  :: dy(ny-1) ! 1 / dy
-    real(8), intent(in), device  :: dz(nz-1) ! 1 / dz
-    real(8), intent(in), device  :: Q(5,nx,ny,nz)
-    real(8), intent(out), device :: fx(nx-2,ny-2,nz-2), fy(nx-2,ny-2,nz-2), fz(nx-2,ny-2,nz-2)
-  end subroutine calc_forcing
 end module set
 
