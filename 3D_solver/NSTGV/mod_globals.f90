@@ -1,20 +1,12 @@
 module mod_globals
   use cudafor
   implicit none
-  integer, parameter    :: dimension = 3
-  integer, parameter    :: accuracy  = 2 
-  integer, parameter    :: offset    = accuracy / 2
-  integer(4), parameter :: id_visc   = 2
-  integer(2), parameter :: id_LL     = 0
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! id_visc       ! kind2 Euler       !
   !               ! kind4 NS          !
   !               ! kind8 LES         !
   !               ! 1 2nd             !
   !               ! 2 4th             !
-  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  ! id_av         ! 0 no              !
-  !               ! 1 Neumann         !
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! id_scheme   ! integer(2)  KEEP    !
   !             ! real(2)     SLAU    !
@@ -33,28 +25,21 @@ module mod_globals
   !             ! kind4 minmod        !
   !             ! kind8 MUSCL4th      !
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  ! id_keep     ! kind2 KEEP          !
-  !             ! kind4 KEEPPE        !
-  !             ! kind8 KEP           !
-  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! id_slau     ! kind2 SLAU          !
   !             ! kind4 HR-SLAU2      !
-  !             ! kind8 VHR-SLAU2     !
-  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  ! slau_wall   ! kind2 off           !
-  !             ! kind4 on            !
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! id_rescale  ! kind2 off           !
   !             ! kind4 on            !
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  integer, parameter         :: dimension = 3
+  integer(4), parameter      :: id_visc   = 2
+  integer(2), parameter      :: id_LL     = 0
   integer(2), parameter      :: id_scheme   = 0
   integer, parameter         :: id_sensor   = 1
-  real(8), parameter         :: threshold   = 0.4d0
-  integer(kind=2), parameter :: id_accuracy = 0
-  integer(kind=2), parameter :: id_tvd      = 0
-  integer(kind=2), parameter :: id_keep     = 0
+  real(8), parameter         :: threshold   = 0.2d0
+  integer(kind=4), parameter :: id_accuracy = 0
+  integer(kind=8), parameter :: id_tvd      = 0
   integer(kind=4), parameter :: id_slau     = 0
-  integer(kind=2), parameter :: slau_wall   = 0
   integer(kind=2), parameter :: id_rescale  = 0
 
   ! mesh
@@ -63,13 +48,14 @@ module mod_globals
   real(8), parameter :: Lx = 2.d0 * pi * L0
   real(8), parameter :: Ly = 2.d0 * pi * L0
   real(8), parameter :: Lz = 2.d0 * pi * L0
-  integer, parameter :: nx = 65!130!258!66
-  integer, parameter :: ny = 65!130!258!66
-  integer, parameter :: nz = 65!130!258!66
+  integer, parameter :: nx = 129
+  integer, parameter :: ny = 129
+  integer, parameter :: nz = 129
 
   integer, parameter :: nre1 = 1
   integer, parameter :: nre2 = nx
   integer, parameter :: rerank = 0
+  real(8), parameter :: blt = 0.d0
 
   ! GPU
   type(dim3), parameter :: threadsE  = dim3(32,1,1)
@@ -78,7 +64,7 @@ module mod_globals
   type(dim3), parameter :: threadsEv = dim3(32,1,1)
   type(dim3), parameter :: threadsFv = dim3(32,8,1)
   type(dim3), parameter :: threadsGv = dim3(32,1,8)
-  type(dim3), parameter :: threads   = dim3(32,8,1)
+  type(dim3), parameter :: threads   = dim3(32,2,2)
   type(dim3) :: blocksE, blocksF, blocksG, blocksEv, blocksFv, blocksGv, blocks
 
   ! time

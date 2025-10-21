@@ -1,4 +1,44 @@
-# GPU Based Explicit Solver
+# OUxSBLI
+OUxSBLI is a GPU-accelerated CFD code written in CUDA Fortran. It employs explicit high-order finite-difference schemes on a rectilinear grid.
+
+## Dependency
+1. HPC SDK (version 24.* and 25.* are better)
+2. ParaView (for visualization output files are XML VTK format)
+3. CUDA & pybind11... (for Python interface. This is under development.)
+
+## Usage
+1. Go to a directory (./3D_solver/NSTGV)
+   1. 1D_solver and 2D_solver are under development.
+   2. pyETGV and pyNSTGV are under development.
+2. Edit mod_globals.f90
+   1. Choose equation type "id_visc" (Euler or NS)
+   2. Choose scheme "id_scheme", "id_accuracy", "id_tvd", and "id_slau"
+   3. Choose grid size "nx", "ny", and "nz"
+   4. Optimize block-size
+   5. Choose time integration method
+3. Edit set.f90
+   1. Set grid
+   2. Set initial conditions
+   3. Set boundary conditions
+4. $ make
+5. $ bash calc.sh
+6. In some directory, you can get nsys and ncu iformation by running profile.sh
+
+## Discretization
+### Spatial (Convection terms)
+   1. Kinetic energy and entropy preserving (KEEP) scheme
+   2. Simple low-dissipation AUSM (SLAU) scheme
+   3. Roe scheme
+### Spatial (Viscous terms)
+   1. Sandham's Laplacian form (Recently added. Validation is not enougth)
+   2. ME4-Base (./3D_solver/src/old_visc)
+   3. Gaitonde and Visbal's 2nd-order scheme (./3D_solver/src/old_visc)
+### Spatial SGS
+   1. Selective mixed scale model (Under development)
+### Temporal
+   1. 3-3 TVD Runge-Kutta
+   2. 4-4 Runge-Kutta
+   3. Gauss Legendre Runge-Kutta (Under development)
 
 ## Validation and Verification
 

@@ -57,7 +57,7 @@ contains
     integer, intent(in), value     :: myrank, nx, ny, nz
     real(8), intent(in), device    :: Jacobian(ny)
     real(8), intent(inout), device :: QJ(5,nx,ny,nz) ! Q / J
-    real(8), intent(in), device    :: Qre(ny*(nz-6)*5)
+    real(8), intent(in), device, optional :: Qre(ny*(nz-6)*5)
     integer i, j, k, l, jc, kc, offset
     real(8), device :: Qc(5,nx)
     real(8) pw
@@ -103,14 +103,5 @@ contains
     real(8), intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
     call set_bc_mut_common(nx, ny, nz, mut, qc2)
   end subroutine set_bc_mut
-
-  subroutine calc_forcing(nx, ny, nz, dx, dy, dz, rho, u, v, w, p, fx, fy, fz)
-    integer, intent(in), value   :: nx, ny, nz
-    real(8), intent(in), device  :: dx(nx-1) ! 1 / dx
-    real(8), intent(in), device  :: dy(ny-1) ! 1 / dy
-    real(8), intent(in), device  :: dz(nz-1) ! 1 / dz
-    real(8), intent(in), device  :: rho(nx,ny,nz), u(nx,ny,nz), v(nx,ny,nz), w(nx,ny,nz), p(nx,ny,nz)
-    real(8), intent(out), device :: fx(nx-2,ny-2,nz-2), fy(nx-2,ny-2,nz-2), fz(nx-2,ny-2,nz-2)
-  end subroutine calc_forcing
 end module set
 

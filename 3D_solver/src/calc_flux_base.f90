@@ -4,8 +4,8 @@ module calc_flux_base
   use calc_physical_quantities
   use calc_hybrid
   use calc_flux
-  use calc_visc2
-  use calc_visc4
+  !use calc_visc2
+  !use calc_visc4
   use calc_visc
   use calc_les
   use set

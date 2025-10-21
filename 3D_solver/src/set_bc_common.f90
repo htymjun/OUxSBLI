@@ -1,10 +1,13 @@
 module set_bc_common
-  use mod_globals, only : nx, ny, nz
   implicit none
   interface set_bc_cyclic
     module procedure set_bc_cyclic2_init, set_bc_cyclic2, set_bc_cyclic4, &
                      set_bc_cyclic4_init, set_bc_cyclic6, set_bc_cyclic6_init
   end interface set_bc_cyclic
+  
+  interface set_bc_cyclic_z
+    module procedure set_bc_cyclic_z_2, set_bc_cyclic_z_4, set_bc_cyclic_z_6
+  end interface set_bc_cyclic_z
 contains
   subroutine set_bc_cyclic2_init(id_accuracy, nx, ny, nz, Q)
     integer(kind=2), intent(in), value :: id_accuracy
@@ -34,6 +37,7 @@ contains
     enddo;enddo
   end subroutine set_bc_cyclic2_init 
 
+
   subroutine set_bc_cyclic4_init(id_accuracy, nx, ny, nz, Q)
     integer(kind=4), intent(in), value :: id_accuracy
     integer, intent(in), value         :: nx, ny, nz
@@ -61,7 +65,8 @@ contains
         Q(:,i,j,nz-1:nz) = Q(:,i,j,3:4)
     enddo;enddo
   end subroutine set_bc_cyclic4_init
-  
+
+
   subroutine set_bc_cyclic6_init(id_accuracy, nx, ny, nz, Q)
     integer(kind=8), intent(in), value :: id_accuracy
     integer, intent(in), value         :: nx, ny, nz
@@ -89,7 +94,8 @@ contains
         Q(:,i,j,nz-2:nz) = Q(:,i,j,4:6)
     enddo;enddo
   end subroutine set_bc_cyclic6_init
-  
+
+
   subroutine set_bc_cyclic2(id_accuracy, nx, ny, nz, Q)
     integer(kind=2), intent(in), value :: id_accuracy
     integer, intent(in), value         :: nx, ny, nz
@@ -125,6 +131,7 @@ contains
           Q(l,i,j,nz) = Q(l,i,j,2)
     enddo;enddo;enddo
   end subroutine set_bc_cyclic2
+
 
   subroutine set_bc_cyclic4(id_accuracy, nx, ny, nz, Q)
     integer(kind=4), intent(in), value :: id_accuracy
@@ -179,6 +186,7 @@ contains
           Q(l,i,j,nz) = Q(l,i,j,4)
     enddo;enddo;enddo
   end subroutine set_bc_cyclic4
+
 
   subroutine set_bc_cyclic6(id_accuracy, nx, ny, nz, Q)
     integer(kind=8), intent(in), value :: id_accuracy
@@ -259,6 +267,58 @@ contains
           Q(l,i,j,nz)   = Q(l,i,j,6)
     enddo;enddo;enddo
   end subroutine set_bc_cyclic6
+
+
+  subroutine set_bc_cyclic_z_2(id_accuracy, nx, ny, nz, QJ)
+    integer(2), intent(in)         :: id_accuracy
+    integer, intent(in), value     :: nx, ny, nz
+    real(8), intent(inout), device :: QJ(5,nx,ny,nz)
+    integer i, j, l
+    !$cuf kernel do(2)<<<*,*>>>
+    do j = 1, ny
+      do i = 1, nx
+        do l = 1, 5
+          QJ(l,i,j,1)  = QJ(l,i,j,nz-1)
+          QJ(l,i,j,nz) = QJ(l,i,j,2)
+    enddo;enddo;enddo
+  end subroutine set_bc_cyclic_z_2
+
+
+  subroutine set_bc_cyclic_z_4(id_accuracy, nx, ny, nz, QJ)
+    integer(4), intent(in)         :: id_accuracy
+    integer, intent(in), value     :: nx, ny, nz
+    real(8), intent(inout), device :: QJ(5,nx,ny,nz)
+    integer i, j, l
+    !$cuf kernel do(2)<<<*,*>>>
+    do j = 1, ny
+      do i = 1, nx
+        do l = 1, 5
+          QJ(l,i,j,1) = QJ(l,i,j,nz-3)
+          QJ(l,i,j,2) = QJ(l,i,j,nz-2)
+          QJ(l,i,j,nz-1) = QJ(l,i,j,3)
+          QJ(l,i,j,nz)   = QJ(l,i,j,4)
+    enddo;enddo;enddo
+  end subroutine set_bc_cyclic_z_4
+
+
+  subroutine set_bc_cyclic_z_6(id_accuracy, nx, ny, nz, QJ)
+    integer(8), intent(in)         :: id_accuracy
+    integer, intent(in), value     :: nx, ny, nz
+    real(8), intent(inout), device :: QJ(5,nx,ny,nz)
+    integer i, j, l
+    !$cuf kernel do(2)<<<*,*>>>
+    do j = 1, ny
+      do i = 1, nx
+        do l = 1, 5
+          QJ(l,i,j,1) = QJ(l,i,j,nz-5)
+          QJ(l,i,j,2) = QJ(l,i,j,nz-4)
+          QJ(l,i,j,3) = QJ(l,i,j,nz-3)
+          QJ(l,i,j,nz-2) = QJ(l,i,j,4)
+          QJ(l,i,j,nz-1) = QJ(l,i,j,5)
+          QJ(l,i,j,nz)   = QJ(l,i,j,6)
+    enddo;enddo;enddo
+  end subroutine set_bc_cyclic_z_6
+
 
   subroutine set_bc_mut_common(nx, ny, nz, mut, qc2)
     integer, intent(in), value     :: nx, ny, nz

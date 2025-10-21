@@ -1,19 +1,12 @@
 module mod_globals
   use cudafor
   implicit none
-  integer, parameter    :: dimension = 3
-  integer, parameter    :: accuracy  = 2 
-  integer, parameter    :: offset    = accuracy / 2
-  integer(2), parameter :: id_visc   = 0
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! id_visc       ! kind2 Euler       !
   !               ! kind4 NS          !
   !               ! kind8 LES         !
   !               ! 1 2nd             !
   !               ! 2 4th             !
-  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  ! id_av         ! 0 no              !
-  !               ! 1 Neumann         !
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! id_scheme   ! integer(2)  KEEP    !
   !             ! real(2)     SLAU    !
@@ -32,27 +25,20 @@ module mod_globals
   !             ! kind4 minmod        !
   !             ! kind8 MUSCL4th      !
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  ! id_keep     ! kind2 KEEP          !
-  !             ! kind4 KEEPPE        !
-  !             ! kind8 KEP           !
-  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! id_slau     ! kind2 SLAU          !
   !             ! kind4 HR-SLAU2      !
-  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  ! slau_wall   ! kind2 off           !
-  !             ! kind4 on            !
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! id_rescale  ! kind2 off           !
   !             ! kind4 on            !
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  integer, parameter         :: dimension = 3
+  integer(2), parameter      :: id_visc   = 0
   integer(2), parameter      :: id_scheme   = 0
   integer, parameter         :: id_sensor   = 1
   real(8), parameter         :: threshold   = 0.9d0
   integer(kind=8), parameter :: id_accuracy = 0
   integer(kind=2), parameter :: id_tvd      = 0
-  integer(kind=2), parameter :: id_keep     = 0
   integer(kind=4), parameter :: id_slau     = 0
-  integer(kind=2), parameter :: slau_wall   = 0
   integer(kind=2), parameter :: id_rescale  = 0
   
   ! exchange
@@ -61,32 +47,26 @@ module mod_globals
   !             ! kind4 on  !
   !!!!!!!!!!!!!!!!!!!!!!!!!!!
   integer(kind=2), parameter :: id_exchange = 0
-  integer(kind=2), parameter :: id_forcing  = 0
   ! mesh
   real(8), parameter :: Lx = 1.d0
   real(8), parameter :: Ly = 1.d0
   real(8), parameter :: Lz = 1.d0
-  integer, parameter :: nx = 258!130
-  integer, parameter :: ny = 258!130
-  integer, parameter :: nz = 258!130
+  integer, parameter :: nx = 129
+  integer, parameter :: ny = 129
+  integer, parameter :: nz = 129
   integer, parameter :: nre1 = 1
   integer, parameter :: nre2 = nx
   integer, parameter :: rerank = 0
+  real(8), parameter :: blt = 0.d0
 
-  type(dim3) :: blocksE   = dim3((nx-accuracy+1)/1,(ny-accuracy)/32,(nz-accuracy)/8)
-  type(dim3) :: blocksF   = dim3((nx-accuracy)/32,(ny-accuracy+1)/1,(nz-accuracy)/8)
-  type(dim3) :: blocksG   = dim3((nx-accuracy)/32,(ny-accuracy)/8,(nz-accuracy+1)/1)
-  type(dim3) :: blocksEv  = dim3((nx-accuracy+1)/1,(ny-accuracy)/32,(nz-accuracy)/8)
-  type(dim3) :: blocksFv  = dim3((nx-accuracy)/32,(ny-accuracy+1)/1,(nz-accuracy)/8)
-  type(dim3) :: blocksGv  = dim3((nx-accuracy)/32,(ny-accuracy)/8,(nz-accuracy+1)/1)
-  type(dim3) :: blocks    = dim3((nx-accuracy)/8,(ny-accuracy)/8,(nz-accuracy)/4)
-  type(dim3) :: threadsE  = dim3(1,32,8)
-  type(dim3) :: threadsF  = dim3(32,1,8)
-  type(dim3) :: threadsG  = dim3(32,8,1)
-  type(dim3) :: threadsEv = dim3(1,32,8)
-  type(dim3) :: threadsFv = dim3(32,1,8)
-  type(dim3) :: threadsGv = dim3(32,8,1)
-  type(dim3) :: threads   = dim3(8,8,4)
+  type(dim3), parameter :: threadsE  = dim3(32,1,1)
+  type(dim3), parameter :: threadsF  = dim3(32,4,1)
+  type(dim3), parameter :: threadsG  = dim3(32,1,4)
+  type(dim3), parameter :: threadsEv = dim3(32,1,1)
+  type(dim3), parameter :: threadsFv = dim3(32,4,1)
+  type(dim3), parameter :: threadsGv = dim3(32,1,4)
+  type(dim3), parameter :: threads   = dim3(32,4,1)
+  type(dim3) :: blocksE, blocksF, blocksG, blocksEv, blocksFv, blocksGv, blocks
 
   ! time
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!

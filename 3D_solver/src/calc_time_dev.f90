@@ -101,12 +101,12 @@ contains
 
   subroutine pre_rescale(myrank, ny, nz, Qre, Qm, Qm_cpu)
     integer, intent(in)                         :: myrank, ny, nz
-    real(8), intent(inout), allocatable, device :: Qre(:), Qm(:)
+    real(8), intent(inout), allocatable, device :: Qre(:), Qm(:,:)
     real(8), intent(inout), allocatable         :: Qm_cpu(:)
     integer stat, ilen, ierr
     type(cudaDeviceProp) prop
     if (mod(myrank,2) == 0) then
-      allocate(Qre(ny*(nz-6)*5), Qm(ny*5), stat=ierr)
+      allocate(Qre(ny*(nz-6)*5), Qm(5,ny), stat=ierr)
       if (ierr /= 0) then
         print *, "myrank is ", myrank, " memory allocation failed (Qm)", ierr
       else
@@ -134,7 +134,7 @@ contains
     integer istat(MPI_STATUS_SIZE), istat2(MPI_STATUS_SIZE,2)
     ! rescal_cpu!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     integer :: step, flag_re = 0
-    real(8), allocatable, device :: Qre(:), Qm(:)
+    real(8), allocatable, device :: Qre(:), Qm(:,:)
     real(8), allocatable, pinned :: Qm_cpu(:)
     ! GPU !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     real(8), allocatable, device :: ruvwp(:,:,:,:), QJ(:,:,:,:), QJ2(:,:,:,:), E(:,:,:,:), F(:,:,:,:), G(:,:,:,:), Rv(:,:,:,:)
@@ -173,8 +173,9 @@ contains
       do t1 = 1, nt
         step = np * (t2-1) + t1
         if (mod(myrank,2) == 0) then
-          if (kind(id_rescale) == 4) then
-            call step_rescale(1, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, Jacobian, QJ, Qm, Qre)
+          if ((myrank == rerank .or. myrank == 0) .and. kind(id_rescale) == 4) then
+            print *, "y(1)=", y(1)
+            call step_rescale(1, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, QJ, Qm, Qre)
           endif
           call nvtxStartRange("calc flux", 1)
           if (kind(id_LL) == 4) then
@@ -194,7 +195,6 @@ contains
             call nvtxEndRange
           endif
           if (kind(id_rescale) == 4) then
-            call wait_rescale(myrank, ireq, ireq2, istat, istat2)
             call set_bc(myrank, nx, ny, nz, Jacobian, QJ2, Qre)
             call nvtxStartRange("set bc", 4)
           else
@@ -202,15 +202,11 @@ contains
           endif
           !print *, "myrank is ", myrank, " set bc"
           call nvtxEndRange
-        elseif (myrank == rerank+1 .and. kind(id_rescale) == 4) then
-          call nvtxStartRange("calc rescale", 5)
-          call rescale_recv_send(1, flag_re, nx, ny, nz, step, y, Jacobian_cpu, Qm_cpu)
-          call nvtxEndRange
         endif
 
         if (mod(myrank,2) == 0) then
-          if (kind(id_rescale) == 4) then
-            call step_rescale(2, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, Jacobian, QJ2, Qm, Qre)
+          if ((myrank == rerank .or. myrank == 0) .and. kind(id_rescale) == 4) then
+            call step_rescale(2, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, QJ2, Qm, Qre)
           endif
           if (kind(id_LL) == 4) then
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, over_Jacobian, QJ2, ruvwp, T, mu, mut, qc2, E, F, G, Rv, seed)
@@ -222,18 +218,15 @@ contains
             call exchange(id_rescale, myrank, nranks, overlap, nx, ny, nz, QJ2)
           endif
           if (kind(id_rescale) == 4) then
-            call wait_rescale(myrank, ireq, ireq2, istat, istat2)
             call set_bc(myrank, nx, ny, nz, Jacobian, QJ2, Qre)
           else
             call set_bc(myrank, nx, ny, nz, Jacobian, QJ2)
           endif
-        elseif (myrank == rerank+1 .and. kind(id_rescale) == 4) then
-          call rescale_recv_send(2, flag_re, nx, ny, nz, step, y, Jacobian_cpu, Qm_cpu)
         endif
 
         if (mod(myrank,2) == 0) then
-          if (kind(id_rescale) == 4) then
-            call step_rescale(3, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, Jacobian, QJ2, Qm, Qre)
+          if ((myrank == rerank .or. myrank == 0) .and. kind(id_rescale) == 4) then
+            call step_rescale(3, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, QJ2, Qm, Qre)
           endif
           if (kind(id_LL) == 4) then
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, over_Jacobian, QJ2, ruvwp, T, mu, mut, qc2, E, F, G, Rv, seed)
@@ -245,13 +238,10 @@ contains
             call exchange(id_rescale, myrank, nranks, overlap, nx, ny, nz, QJ)
           endif
           if (kind(id_rescale) == 4) then
-            call wait_rescale(myrank, ireq, ireq2, istat, istat2)
             call set_bc(myrank, nx, ny, nz, Jacobian, QJ, Qre)
           else
             call set_bc(myrank, nx, ny, nz, Jacobian, QJ)
           endif
-        elseif (myrank == rerank+1 .and. kind(id_rescale) == 4) then
-          call rescale_recv_send(3, flag_re, nx, ny, nz, step, y, Jacobian_cpu, Qm_cpu)
         endif
       enddo
       if (mod(myrank, 2) == 0) then
@@ -290,7 +280,7 @@ contains
     integer istat(MPI_STATUS_SIZE), istat2(MPI_STATUS_SIZE,2)
     ! rescale !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     integer :: step, flag_re = 0
-    real(8), allocatable, device :: Qre(:), Qm(:)
+    real(8), allocatable, device :: Qre(:), Qm(:,:)
     real(8), allocatable, pinned :: Qm_cpu(:)
     ! GPU !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     real(8), allocatable, device :: ruvwp(:,:,:,:), QJ(:,:,:,:), QJs(:,:,:,:), Rs(:,:,:,:), E(:,:,:,:), F(:,:,:,:), G(:,:,:,:), Rv(:,:,:,:)
@@ -330,8 +320,8 @@ contains
       do t1 = 1, nt
         step = np * (t2-1) + t1
         if (mod(myrank,2) == 0) then
-          if (kind(id_rescale) == 4) then
-            call step_rescale(1, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, Jacobian, QJ, Qm, Qre)
+          if ((myrank == rerank .or. myrank == 0) .and. kind(id_rescale) == 4) then
+            call step_rescale(1, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, QJ, Qm, Qre)
           endif
           if (kind(id_LL) == 4) then
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, over_Jacobian, QJ, ruvwp, T, mu, mut, qc2, E, F, G, Rv, seed)
@@ -343,18 +333,15 @@ contains
             call exchange(id_rescale, myrank, nranks, overlap, nx, ny, nz, QJs)
           endif
           if (kind(id_rescale) == 4) then
-            call wait_rescale(myrank, ireq, ireq2, istat, istat2)
             call set_bc(myrank, nx, ny, nz, Jacobian, QJs, Qre)
           else
             call set_bc(myrank, nx, ny, nz, Jacobian, QJs)
           endif
-        elseif (myrank == rerank+1 .and. kind(id_rescale) == 4) then
-          call rescale_recv_send(1, flag_re, nx, ny, nz, step, y, Jacobian_cpu, Qm_cpu)
         endif
 
         if (mod(myrank,2) == 0) then
-          if (kind(id_rescale) == 4) then
-            call step_rescale(2, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, Jacobian, QJs, Qm, Qre)
+          if ((myrank == rerank .or. myrank == 0) .and. kind(id_rescale) == 4) then
+            call step_rescale(2, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, QJs, Qm, Qre)
           endif
           if (kind(id_LL) == 4) then
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, over_Jacobian, QJs, ruvwp, T, mu, mut, qc2, E, F, G, Rv, seed)
@@ -366,18 +353,15 @@ contains
             call exchange(id_rescale, myrank, nranks, overlap, nx, ny, nz, QJs)
           endif
           if (kind(id_rescale) == 4) then
-            call wait_rescale(myrank, ireq, ireq2, istat, istat2)
             call set_bc(myrank, nx, ny, nz, Jacobian, QJs, Qre)
           else
             call set_bc(myrank, nx, ny, nz, Jacobian, QJs)
           endif
-        elseif (myrank == rerank+1 .and. kind(id_rescale) == 4) then
-          call rescale_recv_send(2, flag_re, nx, ny, nz, step, y, Jacobian_cpu, Qm_cpu)
         endif
 
         if (mod(myrank,2) == 0) then
-          if (kind(id_rescale) == 4) then
-            call step_rescale(3, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, Jacobian, QJs, Qm, Qre)
+          if ((myrank == rerank .or. myrank == 0) .and. kind(id_rescale) == 4) then
+            call step_rescale(3, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, QJs, Qm, Qre)
           endif
           if (kind(id_LL) == 4) then
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, over_Jacobian, QJs, ruvwp, T, mu, mut, qc2, E, F, G, Rv, seed)
@@ -389,18 +373,15 @@ contains
             call exchange(id_rescale, myrank, nranks, overlap, nx, ny, nz, QJs)
           endif
           if (kind(id_rescale) == 4) then
-            call wait_rescale(myrank, ireq, ireq2, istat, istat2)
             call set_bc(myrank, nx, ny, nz, Jacobian, QJs, Qre)
           else
             call set_bc(myrank, nx, ny, nz, Jacobian, QJs)
           endif
-        elseif (myrank == rerank+1 .and. kind(id_rescale) == 4) then
-          call rescale_recv_send(3, flag_re, nx, ny, nz, step, y, Jacobian_cpu, Qm_cpu)
         endif
 
         if (mod(myrank,2) == 0) then
-          if (kind(id_rescale) == 4) then
-            call step_rescale(4, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, Jacobian, QJs, Qm, Qre)
+          if ((myrank == rerank .or. myrank == 0) .and. kind(id_rescale) == 4) then
+            call step_rescale(4, myrank, step, nx, ny, nz, flag_re, ireq, ireq2, y, Jacobian, QJs, Qm, Qre)
           endif
           if (kind(id_LL) == 4) then
             call calc_EFG(id_visc, nx, ny, nz, xix, etay, zetaz, Jacobian, over_Jacobian, QJs, ruvwp, T, mu, mut, qc2, E, F, G, Rv, seed)
@@ -412,13 +393,10 @@ contains
             call exchange(id_rescale, myrank, nranks, overlap, nx, ny, nz, QJ)
           endif
           if (kind(id_rescale) == 4) then
-            call wait_rescale(myrank, ireq, ireq2, istat, istat2)
             call set_bc(myrank, nx, ny, nz, Jacobian, QJ, Qre)
           else
             call set_bc(myrank, nx, ny, nz, Jacobian, QJ)
           endif
-        elseif (myrank == rerank+1 .and. kind(id_rescale) == 4) then
-          call rescale_recv_send(4, flag_re, nx, ny, nz, step, y, Jacobian_cpu, Qm_cpu)
         endif
       enddo
       if (mod(myrank, 2) == 0) then

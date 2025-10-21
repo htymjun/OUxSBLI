@@ -1,5 +1,5 @@
 module set
-  use mod_globals, only : nx, ny, nz, Lx, Ly, Lz, gamma, R
+  use mod_globals, only : id_accuracy, nx, ny, nz, Lx, Ly, Lz, gamma, R
   use set_bc_common
   use set_coordinate
   implicit none
@@ -46,7 +46,7 @@ contains
     integer, intent(in), value     :: myrank, nx, ny, nz
     real(8), intent(in), device    :: Jacobian(nx,ny,nz)
     real(8), intent(inout), device :: Q(5,nx,ny,nz)
-    real(8), intent(in), device    :: Qre(ny*(nz-6)*5)
+    real(8), intent(in), device, optional :: Qre(ny*(nz-6)*5)
     call set_bc_cyclic(id_accuracy, nx, ny, nz, Q)
   end subroutine set_bc
 
@@ -55,14 +55,5 @@ contains
     real(8), intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
     call set_bc_mut_common(nx, ny, nz, mut, qc2)
   end subroutine set_bc_mut
-
-  subroutine calc_forcing(nx, ny, nz, dx, dy, dz, rho, u, v, w, p, fx, fy, fz)
-    integer, intent(in), value   :: nx, ny, nz
-    real(8), intent(in), device  :: dx(nx-1) ! 1 / dx
-    real(8), intent(in), device  :: dy(ny-1) ! 1 / dy
-    real(8), intent(in), device  :: dz(nz-1) ! 1 / dz
-    real(8), intent(in), device  :: rho(nx,ny,nz), u(nx,ny,nz), v(nx,ny,nz), w(nx,ny,nz), p(nx,ny,nz)
-    real(8), intent(out), device :: fx(nx-2,ny-2,nz-2), fy(nx-2,ny-2,nz-2), fz(nx-2,ny-2,nz-2)
-  end subroutine calc_forcing
 end module set
 
