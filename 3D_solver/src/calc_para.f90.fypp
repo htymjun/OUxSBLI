@@ -389,8 +389,8 @@ contains
     msglen  = nx * ny * overlap * 5
     call flatten_z_lo(nx, ny, nz, overlap, QJ, Qs1d_lo)
     call flatten_z_hi(nx, ny, nz, overlap, QJ, Qs1d_hi)
-    stat = cudaMemcpy(send_lo, Qs1d_lo, msglen, cudaMemcpyDeviceToHost)
-    stat = cudaMemcpy(send_hi, Qs1d_hi, msglen, cudaMemcpyDeviceToHost)
+    !stat = cudaMemcpy(send_lo, Qs1d_lo, msglen, cudaMemcpyDeviceToHost)
+    !stat = cudaMemcpy(send_hi, Qs1d_hi, msglen, cudaMemcpyDeviceToHost)
     id = nvtxRangeStart("MPI_Isend_Irecv")
     call MPI_Isend(Qs1d_lo, msglen, MPI_REAL8, rank_lo, 20, MPI_COMM_WORLD, req(1), ierr)
     call MPI_Isend(Qs1d_hi, msglen, MPI_REAL8, rank_hi, 21, MPI_COMM_WORLD, req(2), ierr)

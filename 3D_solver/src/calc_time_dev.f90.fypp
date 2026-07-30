@@ -442,7 +442,12 @@ contains
     real(8), allocatable, device :: xix(:), etay(:), zetaz(:), Jacobian(:,:)
     real(8), allocatable, device :: dtdxdy(:,:), dtdydz(:,:), dtdzdx(:,:)
     real(8), allocatable, device :: Qs1d_lo(:), Qs1d_hi(:), Qr1d_lo(:), Qr1d_hi(:)
-    real(8), allocatable, pinned :: send_lo(:), send_hi(:), recv_lo(:), recv_hi(:)
+    real(8), allocatable, pinned :: send_lo(:), send_hi(:)
+    #:if MPI == 'CPU'
+    real(8), allocatable, pinned :: recv_lo(:), recv_hi(:)
+    #:else
+    real(8), allocatable, device :: recv_lo(:), recv_hi(:)
+    #:endif
     real(4) :: ke0 = 1.e0, entropy0 = 1.e0
     type(nvtxRangeId) :: id
     #:if ORDER == 6
@@ -555,7 +560,12 @@ contains
     real(8), allocatable, device :: xix(:), etay(:), zetaz(:), Jacobian(:,:)
     real(8), allocatable, device :: dtdxdy(:,:), dtdydz(:,:), dtdzdx(:,:)
     real(8), allocatable, device :: Qs1d_lo(:), Qs1d_hi(:), Qr1d_lo(:), Qr1d_hi(:)
-    real(8), allocatable, pinned :: send_lo(:), send_hi(:), recv_lo(:), recv_hi(:)
+    real(8), allocatable, pinned :: send_lo(:), send_hi(:)
+    #:if MPI == 'CPU'
+    real(8), allocatable, pinned :: recv_lo(:), recv_hi(:)
+    #:else
+    real(8), allocatable, device :: recv_lo(:), recv_hi(:)
+    #:endif
     real(4) :: ke0 = 1.e0, entropy0 = 1.e0
     #:if ORDER == 6
     overlap = 3

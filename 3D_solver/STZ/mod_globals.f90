@@ -12,7 +12,7 @@ module mod_globals
   real(8), parameter :: Lz = 1.0d0
   integer, parameter :: nx = 513 !6    ! small: 6 interior cells
   integer, parameter :: ny = 513 !6
-  integer, parameter :: nz = 129 !128 interior + 1 ghost each end
+  integer, parameter :: nz = 513 !128 interior + 1 ghost each end
 
 
   integer, parameter :: nre1   = 1
