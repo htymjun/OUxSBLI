@@ -60,7 +60,11 @@ module mod_constant
   #:elif SLAU_VARIANT == 'HRSLAU2'
   integer(4), parameter :: id_slau = 0
   #:endif
+  #:if MPI == 'CPU'
   integer(2), parameter :: id_gpumpi = 0
+  #:elif MPI == 'GPU'
+  integer(4), parameter :: id_gpumpi = 0
+  #:endif
   #:if COMMZ and RESCALE
     $:error('COMMZ=True with RESCALE=True is not supported (no zdec_rescale procedure exists)')
   #:endif

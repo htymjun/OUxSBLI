@@ -44,6 +44,7 @@ macro(add_ouxsbli_case)
       "calc_hybrid_kernel_internal"
       "calc_flux_base"
       "calc_time_dev"
+      "calc_para"
       "preprocess")
 
   set(_GEN "")
@@ -80,7 +81,7 @@ macro(add_ouxsbli_case)
       "${CMAKE_CURRENT_SOURCE_DIR}/../../src/calc_muscl.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_steps.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_rescale.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_para.f90"
+      #"${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_para.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/set_bc_common.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../../src/print.f90")
 

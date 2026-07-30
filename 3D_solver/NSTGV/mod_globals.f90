@@ -53,6 +53,6 @@ module mod_globals
   real(8), parameter :: CFL  = 0.03d0
   real(8), parameter :: dt   = CFL * (Lx / dble(nx-1)) / V0
   real(8), parameter :: dtn  = V0 * dt / L0
-  integer, parameter :: np   = 100
-  integer, parameter :: nt   = int(20.d0 / (dble(np) * dtn))
+  integer, parameter :: np   = 1!100
+  integer, parameter :: nt   = 1!int(20.d0 / (dble(np) * dtn))
 end module mod_globals

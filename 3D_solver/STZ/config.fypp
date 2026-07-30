@@ -11,4 +11,5 @@
 #:set RESTART = False
 #:set TVD = 'tvd'
 #:set SLAU_VARIANT = 'SLAU'
+#:set MPI = 'CPU'
 #:set ORDER_IO = ORDER // 2 - 1

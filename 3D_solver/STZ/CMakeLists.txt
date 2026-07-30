@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.15)
 
 project(OUxSBLI LANGUAGES Fortran)
 
+set(CASE_GPU_CC "90")
 include("${CMAKE_CURRENT_SOURCE_DIR}/../CMakeLists.txt")
 
 set(CASE_EXTRA_SOURCES "")

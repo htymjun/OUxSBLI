@@ -49,6 +49,7 @@ contains
     real(8), allocatable, device :: xix(:), etay(:), zetaz(:), Jacobian(:,:), dtdxdy(:,:), dtdydz(:,:), dtdzdx(:,:)
     ! for plot
     real(4) :: ke0 = 1.d0, entropy0 = 1.d0
+    type(nvtxRangeId) :: id
 
     call MPI_COMM_SIZE(MPI_COMM_WORLD, nranks, ierr)
     ! count GPU
@@ -82,22 +83,34 @@ contains
       if (mod(myrank,2) == 0) then
         ! GPU-accelerated ranks perform time integration
         do t1 = 1, nt
+          !id = nvtxRangeStart("RK_stage1")
           ! Step 1: Compute fluxes E, F, G from current state QJ
           call calc_EFG(nx, ny, nz, xix, etay, zetaz, Jacobian, QJ, ruvwp, T, mu, mut, qc2, E, F, G, 1, nz-1)
           ! Step 2a: TVD RK3 Stage 1 - compute Q(1), store in QJ2
+          id = nvtxRangeStart("RK_stage1")
           call calc_step1<<<blocks,threads>>>(nx, ny, nz, 1.d0, dtdxdy, dtdydz, dtdzdx, E, F, G, QJ, QJ2)
           ! Enforce boundary conditions at cell interfaces (extrapolation or characteristic-based)
+          call nvtxRangeEnd(id)
           call set_bc(myrank, nx, ny, nz, Jacobian, QJ2)
-
+          !call nvtxRangeEnd(id)
+          
+          !id = nvtxRangeStart("RK_stage2")
           ! Step 2b: TVD RK3 Stage 2 - blend Q(1) with Q^n, store in QJ2
           call calc_EFG(nx, ny, nz, xix, etay, zetaz, Jacobian, QJ2, ruvwp, T, mu, mut, qc2, E, F, G, 1, nz-1)
+          id = nvtxRangeStart("RK_stage2")
           call calc_step2_3<<<blocks,threads>>>(nx, ny, nz, 0.75d0, 0.25d0, 0.25d0, 1.d0, dtdxdy, dtdydz, dtdzdx, E, F, G, QJ, QJ2)
+          call nvtxRangeEnd(id)
           call set_bc(myrank, nx, ny, nz, Jacobian, QJ2)
-
+          !call nvtxRangeEnd(id)
+          
+          !id = nvtxRangeStart("RK_stage3")
           ! Step 2c: TVD RK3 Stage 3 - final solution Q^(n+1), store in QJ (swap arrays)
           call calc_EFG(nx, ny, nz, xix, etay, zetaz, Jacobian, QJ2, ruvwp, T, mu, mut, qc2, E, F, G, 1, nz-1)
+          id = nvtxRangeStart("RK_stage3")
           call calc_step2_3<<<blocks,threads>>>(nx, ny, nz, 2.d0, 1.d0, 2.d0, one_third, dtdxdy, dtdydz, dtdzdx, E, F, G, QJ2, QJ)
+          call nvtxRangeEnd(id)
           call set_bc(myrank, nx, ny, nz, Jacobian, QJ)
+          !call nvtxRangeEnd(id)
         enddo
       endif
       if (mod(myrank, 2) == 0) then
@@ -431,6 +444,7 @@ contains
     real(8), allocatable, device :: Qs1d_lo(:), Qs1d_hi(:), Qr1d_lo(:), Qr1d_hi(:)
     real(8), allocatable, pinned :: send_lo(:), send_hi(:), recv_lo(:), recv_hi(:)
     real(4) :: ke0 = 1.e0, entropy0 = 1.e0
+    type(nvtxRangeId) :: id
     #:if ORDER == 6
     overlap = 3
     #:elif ORDER == 4
@@ -462,6 +476,7 @@ contains
       print *, "myrank is ", myrank, " start Runge-Kutta (z-decomp)"
       do t2 = 1, np
         do t1 = 1, nt
+          id = nvtxRangeStart("RK_start")
           call start_exchange_z(myrank, nranks, overlap, nx, ny, nz, QJ, &
                                      Qs1d_lo, Qs1d_hi, Qr1d_lo, Qr1d_hi, &
                                      send_lo, send_hi, recv_lo, recv_hi, req_z)
@@ -496,8 +511,11 @@ contains
           call calc_step2_3<<<blocks,threads>>>(nx, ny, nz, 2.d0, 1.d0, 2.d0, one_third, &
                                                 dtdxdy, dtdydz, dtdzdx, E, F, G, QJ2, QJ)
           call set_bc(myrank, nx, ny, nz, Jacobian, QJ)
+          call nvtxRangeEnd(id)
         enddo
+        !id = nvtxRangeStart("send_recv_for_print_even")
         call send_recv_for_print_even(myrank, nranks, t2, nx, ny, nz, x, y, z, Jacobian_cpu, QJ, Q, ke0, entropy0)
+        !call nvtxRangeEnd(id)
       enddo
       deallocate(ruvwp, T, mu, mut, qc2, QJ, QJ2, E, F, G, xix, etay, zetaz, Jacobian, &
                  dtdxdy, dtdydz, dtdzdx)
