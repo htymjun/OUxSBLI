@@ -5,6 +5,7 @@
 module calc_visc4_internal
   use mod_globals, only : gamma, R, Pr, Prt, dt, threadsEv, threadsFv
   use mod_constant, only : Cp, gamma_1, Cp_over_Pr, one_third, two_third, one_twelfth, id_visc
+  use libm
   use load_smem_visc4
   implicit none
   private
@@ -107,4 +108,3 @@ contains
     endif
   end subroutine calc_Fv4_in
 end module calc_visc4_internal
-

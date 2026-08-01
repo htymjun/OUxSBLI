@@ -1,0 +1,547 @@
+#:include 'config.fypp'
+#:if not defined('VISC_ORDER')
+  #:set VISC_ORDER = ORDER
+#:endif
+#:set is_les = (VISC == 'LES')
+#:set base_suf = "_in"
+#:if VISC_ORDER == 2
+module calc_visc_high_internal
+end module calc_visc_high_internal
+#:else
+module calc_visc_high_internal
+  use libm
+  use mod_globals, only : gamma, R, Pr, Prt, dt, threadsEv, threadsFv, threadsGv
+  use mod_constant, only : id_visc, Cp, gamma_1, Cp_over_Pr, one_third, two_third, one_twelfth
+  use load_smem_visc_cent${VISC_ORDER}$
+  implicit none
+  private
+  public calc_Ev${VISC_ORDER}$_in, calc_Fv${VISC_ORDER}$_in, calc_Gv${VISC_ORDER}$_in, &
+         calc_Ev${VISC_ORDER}$_in_koff, calc_Fv${VISC_ORDER}$_in_koff, calc_Gv${VISC_ORDER}$_in_koff
+  real(8), parameter :: one_24 = 1.d0 / 24.d0
+contains
+  #:include 'calc_visc_cent.f90.fypp'
+
+  ! See calc_visc_high.f90.fypp for the shared/register layout rationale
+  ! (`uvw` is a single reusable shared buffer loaded fresh by each stage's
+  ! own load call instead of 3 persistent u,v,w arrays; mu is never held in
+  ! shared memory or a register array -- `mui` is computed once via scalar
+  ! reads + interp${VISC_ORDER}$_s, reused across all 3 stages; likewise T
+  ! uses diff${VISC_ORDER}$_s directly on scalar reads; LES `Hsgs` -- dead
+  ! code -- accumulates u²+v²+w² incrementally across the 3 stages since
+  ! only one component is available per stage).
+  ! This interior-only variant has no boundary fallback: `valid` gates
+  ! whether this thread's (i,j,k) is in-array-bounds at all (an early
+  ! `return` here would leave out-of-range threads never reaching the
+  ! later stage2/stage3 syncthreads() calls that their still-running
+  ! block-mates do reach, deadlocking the block), and threads outside the
+  ! `interior` range simply skip all 3 stages' consumption blocks. The
+  ! staged loads (and their syncthreads()) still run unconditionally for
+  ! every thread in the block.
+
+#:for is_koff in [False, True]
+  #:set suf = base_suf
+  #:if is_koff
+    #:set suf = suf + "_koff"
+  #:endif
+  attributes(global) subroutine calc_Ev${VISC_ORDER}$${suf}$(nx, ny, nz, dx, dy, dz, Q_2, Q_3, Q_4, T, mu, &
+    #:if is_les
+      mut, qc2, &
+    #:endif
+    #:if is_koff
+      k_lo, k_hi, &
+    #:endif
+    E)
+    integer, intent(in), value                 :: nx
+    integer, intent(in), value                 :: ny
+    integer, intent(in), value                 :: nz
+    real(8), intent(in), device, contiguous    :: dx(nx-1)
+    real(8), intent(in), device, contiguous    :: dy(ny-1)
+    real(8), intent(in), device, contiguous    :: dz(nz-1)
+    real(8), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: T(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
+    #:if is_les
+    real(8), intent(in), device, contiguous    :: mut(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: qc2(nx,ny,nz)
+    #:endif
+    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
+    #:if is_koff
+    integer, intent(in), value                 :: k_lo
+    integer, intent(in), value                 :: k_hi
+    #:endif
+    #:if VISC_ORDER == 4
+    integer, parameter :: io_v = 1
+    #:else
+    integer, parameter :: io_v = 2
+    #:endif
+    integer, parameter :: sx = threadsEv%x + 2*io_v + 1
+    integer, parameter :: sy = threadsEv%y
+    integer, parameter :: sz = threadsEv%z
+    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: uvw
+    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: grad_a
+    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: grad_b
+    integer i, j, k, it, jt, kt, idx
+    logical :: valid, interior
+    real(8) :: utau_sum, mui
+    #:if is_les
+    real(8) :: Hsgs, muti
+    real(8) :: H(2*io_v+2)
+    #:endif
+    interior = .false.
+    it = threadIdx%x
+    jt = threadIdx%y
+    kt = threadIdx%z
+    j  = (blockIdx%y-1)*blockDim%y + jt + 1
+    #:if is_koff
+    k  = (blockIdx%z-1)*blockDim%z + kt + k_lo - 1
+    #:else
+    k  = (blockIdx%z-1)*blockDim%z + kt + 1
+    #:endif
+    call load_smem_visc_cent${VISC_ORDER}$_x_stage1(it, jt, kt, j, k, nx, ny, nz, dy(j), dz(k), Q_2, Q_3, Q_4, grad_a, grad_b, uvw)
+    i  = (blockIdx%x-1)*blockDim%x + it
+    idx = it + (jt-1)*sx + (kt-1)*sx*sy
+    #:if is_koff
+    valid = .not. (nx-1 < i .or. ny-1 < j .or. k_hi < k)
+    #:else
+    valid = .not. (nx-1 < i .or. ny-1 < j .or. nz-1 < k)
+    #:endif
+    if (valid) then
+      interior = (io_v+1 <= i .and. i <= nx-io_v-1 .and. io_v+2 <= j .and. j <= ny-io_v-1 .and. io_v+2 <= k .and. k <= nz-io_v-1)
+    endif
+
+    ! ---- stage 1: straight component -> E(...,2) [uses uvw=u, grad_a=vy, grad_b=wz] ----
+    if (valid .and. interior) then
+      #:if VISC_ORDER == 4
+      mui = interp${VISC_ORDER}$_s(mu(i,j,k)+mu(i+1,j,k), mu(i-1,j,k)+mu(i+2,j,k))
+      #:if is_les
+      muti = interp${VISC_ORDER}$_s(mut(i,j,k)+mut(i+1,j,k), mut(i-1,j,k)+mut(i+2,j,k))
+      H(1) = Cp*T(i-1,j,k) + 0.5d0*uvw(idx-1)**2 + qc2(i-1,j,k)
+      H(2) = Cp*T(i,  j,k) + 0.5d0*uvw(idx  )**2 + qc2(i,  j,k)
+      H(3) = Cp*T(i+1,j,k) + 0.5d0*uvw(idx+1)**2 + qc2(i+1,j,k)
+      H(4) = Cp*T(i+2,j,k) + 0.5d0*uvw(idx+2)**2 + qc2(i+2,j,k)
+      #:endif
+      #:else
+      mui = interp${VISC_ORDER}$_s(mu(i-2,j,k)+mu(i+3,j,k), mu(i-1,j,k)+mu(i+2,j,k), mu(i,j,k)+mu(i+1,j,k))
+      #:if is_les
+      muti = interp${VISC_ORDER}$_s(mut(i-2,j,k)+mut(i+3,j,k), mut(i-1,j,k)+mut(i+2,j,k), mut(i,j,k)+mut(i+1,j,k))
+      H(1) = Cp*T(i-2,j,k) + 0.5d0*uvw(idx-2)**2 + qc2(i-2,j,k)
+      H(2) = Cp*T(i-1,j,k) + 0.5d0*uvw(idx-1)**2 + qc2(i-1,j,k)
+      H(3) = Cp*T(i,  j,k) + 0.5d0*uvw(idx  )**2 + qc2(i,  j,k)
+      H(4) = Cp*T(i+1,j,k) + 0.5d0*uvw(idx+1)**2 + qc2(i+1,j,k)
+      H(5) = Cp*T(i+2,j,k) + 0.5d0*uvw(idx+2)**2 + qc2(i+2,j,k)
+      H(6) = Cp*T(i+3,j,k) + 0.5d0*uvw(idx+3)**2 + qc2(i+3,j,k)
+      #:endif
+      #:endif
+      block
+        real(8) :: tau, utau
+        #:if is_les
+        call calc_tau_straight_LES(mui, muti, uvw(idx-io_v:idx+io_v+1), grad_a(idx-io_v:idx+io_v+1), grad_b(idx-io_v:idx+io_v+1), dx(i), tau, utau)
+        #:else
+        call calc_tau_straight(mui, uvw(idx-io_v:idx+io_v+1), grad_a(idx-io_v:idx+io_v+1), grad_b(idx-io_v:idx+io_v+1), dx(i), tau, utau)
+        #:endif
+        call __stcg(E(i,j-1,k-1,2), __ldlu(E(i,j-1,k-1,2)) - tau)
+        utau_sum = utau
+      end block
+    endif
+    call syncthreads()
+    call load_smem_visc_cent${VISC_ORDER}$_x_stage2(it, jt, kt, j, k, nx, ny, nz, dy(j), Q_2, Q_3, grad_a, uvw)
+
+    ! ---- stage 2: cross component #1 -> E(...,3) [uses uvw=v, grad_a=uy] ----
+    if (valid .and. interior) then
+      block
+        real(8) :: tau, utau
+        #:if is_les
+        H(:) = H(:) + 0.5d0*uvw(idx-io_v:idx+io_v+1)**2
+        call calc_tau_cross_LES(mui, muti, uvw(idx-io_v:idx+io_v+1), grad_a(idx-io_v:idx+io_v+1), dx(i), tau, utau)
+        #:else
+        call calc_tau_cross(mui, uvw(idx-io_v:idx+io_v+1), grad_a(idx-io_v:idx+io_v+1), dx(i), tau, utau)
+        #:endif
+        call __stcg(E(i,j-1,k-1,3), __ldlu(E(i,j-1,k-1,3)) - tau)
+        utau_sum = utau_sum + utau
+      end block
+    endif
+    call syncthreads()
+    call load_smem_visc_cent${VISC_ORDER}$_x_stage3(it, jt, kt, j, k, nx, ny, nz, dz(k), Q_2, Q_4, grad_a, uvw)
+
+    ! ---- stage 3: cross component #2 -> E(...,4) [uses uvw=w, grad_a=uz] ----
+    if (valid .and. interior) then
+      block
+        real(8) :: tau, utau
+        #:if is_les
+        H(:) = H(:) + 0.5d0*uvw(idx-io_v:idx+io_v+1)**2
+        Hsgs = -muti * diff${VISC_ORDER}$_s(dx(i), &
+        #:if VISC_ORDER == 4
+        H(2)-H(3), H(1)-H(4) &
+        #:else
+        -H(1)+H(6), H(2)-H(5), -H(3)+H(4) &
+        #:endif
+        ) / Prt
+        call calc_tau_cross_LES(mui, muti, uvw(idx-io_v:idx+io_v+1), grad_a(idx-io_v:idx+io_v+1), dx(i), tau, utau)
+        #:else
+        call calc_tau_cross(mui, uvw(idx-io_v:idx+io_v+1), grad_a(idx-io_v:idx+io_v+1), dx(i), tau, utau)
+        #:endif
+        call __stcg(E(i,j-1,k-1,4), __ldlu(E(i,j-1,k-1,4)) - tau)
+        utau_sum = utau_sum + utau
+      end block
+      block
+        real(8) :: e5v, Tx, kTx
+        #:if VISC_ORDER == 4
+        Tx  = diff${VISC_ORDER}$_s(dx(i), T(i,j,k)-T(i+1,j,k), T(i-1,j,k)-T(i+2,j,k))
+        #:else
+        Tx  = diff${VISC_ORDER}$_s(dx(i), -T(i-2,j,k)+T(i+3,j,k), T(i-1,j,k)-T(i+2,j,k), -T(i,j,k)+T(i+1,j,k))
+        #:endif
+        kTx = Cp_over_Pr * mui * Tx
+        e5v = __ldlu(E(i,j-1,k-1,5))
+        call __stcg(E(i,j-1,k-1,5), e5v - (utau_sum + kTx &
+    #:if is_les
+      + Hsgs &
+    #:endif
+      ))
+      end block
+    endif
+  end subroutine calc_Ev${VISC_ORDER}$${suf}$
+#:endfor
+
+
+#:for is_koff in [False, True]
+  #:set suf = base_suf
+  #:if is_koff
+    #:set suf = suf + "_koff"
+  #:endif
+  attributes(global) subroutine calc_Fv${VISC_ORDER}$${suf}$(nx, ny, nz, dx, dy, dz, Q_2, Q_3, Q_4, T, mu, &
+    #:if is_les
+      mut, qc2, &
+    #:endif
+    #:if is_koff
+      k_lo, k_hi, &
+    #:endif
+    F)
+    integer, intent(in), value                 :: nx
+    integer, intent(in), value                 :: ny
+    integer, intent(in), value                 :: nz
+    real(8), intent(in), device, contiguous    :: dx(nx-1)
+    real(8), intent(in), device, contiguous    :: dy(ny-1)
+    real(8), intent(in), device, contiguous    :: dz(nz-1)
+    real(8), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: T(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
+    #:if is_les
+    real(8), intent(in), device, contiguous    :: mut(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: qc2(nx,ny,nz)
+    #:endif
+    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
+    #:if is_koff
+    integer, intent(in), value                 :: k_lo
+    integer, intent(in), value                 :: k_hi
+    #:endif
+    #:if VISC_ORDER == 4
+    integer, parameter :: io_v = 1
+    #:else
+    integer, parameter :: io_v = 2
+    #:endif
+    integer, parameter :: sx = threadsFv%x
+    integer, parameter :: sy = threadsFv%y + 2*io_v + 1
+    integer, parameter :: sz = threadsFv%z
+    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: uvw
+    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: grad_a
+    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: grad_b
+    integer i, j, k, it, jt, kt, idx
+    logical :: valid, interior
+    real(8) :: utau_sum, mui
+    #:if is_les
+    real(8) :: Hsgs, muti
+    real(8) :: H(2*io_v+2)
+    #:endif
+    interior = .false.
+    it = threadIdx%x
+    jt = threadIdx%y
+    kt = threadIdx%z
+    i  = (blockIdx%x-1)*blockDim%x + it + 1
+    #:if is_koff
+    k  = (blockIdx%z-1)*blockDim%z + kt + k_lo - 1
+    #:else
+    k  = (blockIdx%z-1)*blockDim%z + kt + 1
+    #:endif
+    call load_smem_visc_cent${VISC_ORDER}$_y_stage1(it, jt, kt, i, k, nx, ny, nz, dx(i), dz(k), Q_2, Q_3, Q_4, grad_a, grad_b, uvw)
+    j  = (blockIdx%y-1)*blockDim%y + jt
+    idx = jt + (it-1)*sy + (kt-1)*sy*sx
+    #:if is_koff
+    valid = .not. (nx-1 < i .or. ny-1 < j .or. k_hi < k)
+    #:else
+    valid = .not. (nx-1 < i .or. ny-1 < j .or. nz-1 < k)
+    #:endif
+    if (valid) then
+      interior = (io_v+2 <= i .and. i <= nx-io_v-1 .and. io_v+1 <= j .and. j <= ny-io_v-1 .and. io_v+2 <= k .and. k <= nz-io_v-1)
+    endif
+
+    ! ---- stage 1: straight component -> F(...,3) [uses uvw=v, grad_a=ux, grad_b=wz] ----
+    if (valid .and. interior) then
+      #:if VISC_ORDER == 4
+      mui = interp${VISC_ORDER}$_s(mu(i,j,k)+mu(i,j+1,k), mu(i,j-1,k)+mu(i,j+2,k))
+      #:if is_les
+      muti = interp${VISC_ORDER}$_s(mut(i,j,k)+mut(i,j+1,k), mut(i,j-1,k)+mut(i,j+2,k))
+      H(1) = Cp*T(i,j-1,k) + 0.5d0*uvw(idx-1)**2 + qc2(i,j-1,k)
+      H(2) = Cp*T(i,j,  k) + 0.5d0*uvw(idx  )**2 + qc2(i,j,  k)
+      H(3) = Cp*T(i,j+1,k) + 0.5d0*uvw(idx+1)**2 + qc2(i,j+1,k)
+      H(4) = Cp*T(i,j+2,k) + 0.5d0*uvw(idx+2)**2 + qc2(i,j+2,k)
+      #:endif
+      #:else
+      mui = interp${VISC_ORDER}$_s(mu(i,j-2,k)+mu(i,j+3,k), mu(i,j-1,k)+mu(i,j+2,k), mu(i,j,k)+mu(i,j+1,k))
+      #:if is_les
+      muti = interp${VISC_ORDER}$_s(mut(i,j-2,k)+mut(i,j+3,k), mut(i,j-1,k)+mut(i,j+2,k), mut(i,j,k)+mut(i,j+1,k))
+      H(1) = Cp*T(i,j-2,k) + 0.5d0*uvw(idx-2)**2 + qc2(i,j-2,k)
+      H(2) = Cp*T(i,j-1,k) + 0.5d0*uvw(idx-1)**2 + qc2(i,j-1,k)
+      H(3) = Cp*T(i,j,  k) + 0.5d0*uvw(idx  )**2 + qc2(i,j,  k)
+      H(4) = Cp*T(i,j+1,k) + 0.5d0*uvw(idx+1)**2 + qc2(i,j+1,k)
+      H(5) = Cp*T(i,j+2,k) + 0.5d0*uvw(idx+2)**2 + qc2(i,j+2,k)
+      H(6) = Cp*T(i,j+3,k) + 0.5d0*uvw(idx+3)**2 + qc2(i,j+3,k)
+      #:endif
+      #:endif
+      block
+        real(8) :: tau, utau
+        #:if is_les
+        call calc_tau_straight_LES(mui, muti, uvw(idx-io_v:idx+io_v+1), grad_a(idx-io_v:idx+io_v+1), grad_b(idx-io_v:idx+io_v+1), dy(j), tau, utau)
+        #:else
+        call calc_tau_straight(mui, uvw(idx-io_v:idx+io_v+1), grad_a(idx-io_v:idx+io_v+1), grad_b(idx-io_v:idx+io_v+1), dy(j), tau, utau)
+        #:endif
+        call __stcg(F(i-1,j,k-1,3), __ldlu(F(i-1,j,k-1,3)) - tau)
+        utau_sum = utau
+      end block
+    endif
+    call syncthreads()
+    call load_smem_visc_cent${VISC_ORDER}$_y_stage2(it, jt, kt, i, k, nx, ny, nz, dx(i), Q_2, Q_3, grad_a, uvw)
+
+    ! ---- stage 2: cross component #1 -> F(...,2) [uses uvw=u, grad_a=vx] ----
+    if (valid .and. interior) then
+      block
+        real(8) :: tau, utau
+        #:if is_les
+        H(:) = H(:) + 0.5d0*uvw(idx-io_v:idx+io_v+1)**2
+        call calc_tau_cross_LES(mui, muti, uvw(idx-io_v:idx+io_v+1), grad_a(idx-io_v:idx+io_v+1), dy(j), tau, utau)
+        #:else
+        call calc_tau_cross(mui, uvw(idx-io_v:idx+io_v+1), grad_a(idx-io_v:idx+io_v+1), dy(j), tau, utau)
+        #:endif
+        call __stcg(F(i-1,j,k-1,2), __ldlu(F(i-1,j,k-1,2)) - tau)
+        utau_sum = utau_sum + utau
+      end block
+    endif
+    call syncthreads()
+    call load_smem_visc_cent${VISC_ORDER}$_y_stage3(it, jt, kt, i, k, nx, ny, nz, dz(k), Q_3, Q_4, grad_a, uvw)
+
+    ! ---- stage 3: cross component #2 -> F(...,4) [uses uvw=w, grad_a=vz] ----
+    if (valid .and. interior) then
+      block
+        real(8) :: tau, utau
+        #:if is_les
+        H(:) = H(:) + 0.5d0*uvw(idx-io_v:idx+io_v+1)**2
+        Hsgs = -muti * diff${VISC_ORDER}$_s(dy(j), &
+        #:if VISC_ORDER == 4
+        H(2)-H(3), H(1)-H(4) &
+        #:else
+        -H(1)+H(6), H(2)-H(5), -H(3)+H(4) &
+        #:endif
+        ) / Prt
+        call calc_tau_cross_LES(mui, muti, uvw(idx-io_v:idx+io_v+1), grad_a(idx-io_v:idx+io_v+1), dy(j), tau, utau)
+        #:else
+        call calc_tau_cross(mui, uvw(idx-io_v:idx+io_v+1), grad_a(idx-io_v:idx+io_v+1), dy(j), tau, utau)
+        #:endif
+        call __stcg(F(i-1,j,k-1,4), __ldlu(F(i-1,j,k-1,4)) - tau)
+        utau_sum = utau_sum + utau
+      end block
+      block
+        real(8) :: f5v, Ty, kTy
+        #:if VISC_ORDER == 4
+        Ty  = diff${VISC_ORDER}$_s(dy(j), T(i,j,k)-T(i,j+1,k), T(i,j-1,k)-T(i,j+2,k))
+        #:else
+        Ty  = diff${VISC_ORDER}$_s(dy(j), -T(i,j-2,k)+T(i,j+3,k), T(i,j-1,k)-T(i,j+2,k), -T(i,j,k)+T(i,j+1,k))
+        #:endif
+        kTy = Cp_over_Pr * mui * Ty
+        f5v = __ldlu(F(i-1,j,k-1,5))
+        call __stcg(F(i-1,j,k-1,5), f5v - (utau_sum + kTy &
+    #:if is_les
+      + Hsgs &
+    #:endif
+      ))
+      end block
+    endif
+  end subroutine calc_Fv${VISC_ORDER}$${suf}$
+#:endfor
+
+
+#:for is_koff in [False, True]
+  #:set suf = base_suf
+  #:if is_koff
+    #:set suf = suf + "_koff"
+  #:endif
+  attributes(global) subroutine calc_Gv${VISC_ORDER}$${suf}$(nx, ny, nz, dx, dy, dz, Q_2, Q_3, Q_4, T, mu, &
+    #:if is_les
+      mut, qc2, &
+    #:endif
+    #:if is_koff
+      k_lo, k_hi, &
+    #:endif
+    G)
+    integer, intent(in), value                 :: nx
+    integer, intent(in), value                 :: ny
+    integer, intent(in), value                 :: nz
+    real(8), intent(in), device, contiguous    :: dx(nx-1)
+    real(8), intent(in), device, contiguous    :: dy(ny-1)
+    real(8), intent(in), device, contiguous    :: dz(nz-1)
+    real(8), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: T(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
+    #:if is_les
+    real(8), intent(in), device, contiguous    :: mut(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: qc2(nx,ny,nz)
+    #:endif
+    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    #:if is_koff
+    integer, intent(in), value                 :: k_lo
+    integer, intent(in), value                 :: k_hi
+    #:endif
+    #:if VISC_ORDER == 4
+    integer, parameter :: io_v = 1
+    #:else
+    integer, parameter :: io_v = 2
+    #:endif
+    integer, parameter :: sx = threadsGv%x
+    integer, parameter :: sy = threadsGv%y
+    integer, parameter :: sz = threadsGv%z + 2*io_v + 1
+    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: uvw
+    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: grad_a
+    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: grad_b
+    integer i, j, k, it, jt, kt, idx
+    logical :: valid, interior
+    real(8) :: utau_sum, mui
+    #:if is_les
+    real(8) :: Hsgs, muti
+    real(8) :: H(2*io_v+2)
+    #:endif
+    interior = .false.
+    it = threadIdx%x
+    jt = threadIdx%y
+    kt = threadIdx%z
+    i  = (blockIdx%x-1)*blockDim%x + it + 1
+    j  = (blockIdx%y-1)*blockDim%y + jt + 1
+    #:if is_koff
+    call load_smem_visc_cent${VISC_ORDER}$_z_koff_stage1(it, jt, kt, i, j, nx, ny, nz, dx(i), dy(j), Q_2, Q_3, Q_4, grad_a, grad_b, uvw, k_lo)
+    k  = (blockIdx%z-1)*blockDim%z + k_lo - 1 + kt
+    valid = .not. (nx-1 < i .or. ny-1 < j .or. k_hi < k)
+    #:else
+    call load_smem_visc_cent${VISC_ORDER}$_z_stage1(it, jt, kt, i, j, nx, ny, nz, dx(i), dy(j), Q_2, Q_3, Q_4, grad_a, grad_b, uvw)
+    k  = (blockIdx%z-1)*blockDim%z + kt
+    valid = .not. (nx-1 < i .or. ny-1 < j .or. nz-1 < k)
+    #:endif
+    idx = kt + (jt-1)*sz + (it-1)*sz*sy
+    if (valid) then
+      interior = (io_v+2 <= i .and. i <= nx-io_v-1 .and. io_v+2 <= j .and. j <= ny-io_v-1 .and. io_v+1 <= k .and. k <= nz-io_v-1)
+    endif
+
+    ! ---- stage 1: straight component -> G(...,4) [uses uvw=w, grad_a=ux, grad_b=vy] ----
+    if (valid .and. interior) then
+      #:if VISC_ORDER == 4
+      mui = interp${VISC_ORDER}$_s(mu(i,j,k)+mu(i,j,k+1), mu(i,j,k-1)+mu(i,j,k+2))
+      #:if is_les
+      muti = interp${VISC_ORDER}$_s(mut(i,j,k)+mut(i,j,k+1), mut(i,j,k-1)+mut(i,j,k+2))
+      H(1) = Cp*T(i,j,k-1) + 0.5d0*uvw(idx-1)**2 + qc2(i,j,k-1)
+      H(2) = Cp*T(i,j,k  ) + 0.5d0*uvw(idx  )**2 + qc2(i,j,k  )
+      H(3) = Cp*T(i,j,k+1) + 0.5d0*uvw(idx+1)**2 + qc2(i,j,k+1)
+      H(4) = Cp*T(i,j,k+2) + 0.5d0*uvw(idx+2)**2 + qc2(i,j,k+2)
+      #:endif
+      #:else
+      mui = interp${VISC_ORDER}$_s(mu(i,j,k-2)+mu(i,j,k+3), mu(i,j,k-1)+mu(i,j,k+2), mu(i,j,k)+mu(i,j,k+1))
+      #:if is_les
+      muti = interp${VISC_ORDER}$_s(mut(i,j,k-2)+mut(i,j,k+3), mut(i,j,k-1)+mut(i,j,k+2), mut(i,j,k)+mut(i,j,k+1))
+      H(1) = Cp*T(i,j,k-2) + 0.5d0*uvw(idx-2)**2 + qc2(i,j,k-2)
+      H(2) = Cp*T(i,j,k-1) + 0.5d0*uvw(idx-1)**2 + qc2(i,j,k-1)
+      H(3) = Cp*T(i,j,k  ) + 0.5d0*uvw(idx  )**2 + qc2(i,j,k  )
+      H(4) = Cp*T(i,j,k+1) + 0.5d0*uvw(idx+1)**2 + qc2(i,j,k+1)
+      H(5) = Cp*T(i,j,k+2) + 0.5d0*uvw(idx+2)**2 + qc2(i,j,k+2)
+      H(6) = Cp*T(i,j,k+3) + 0.5d0*uvw(idx+3)**2 + qc2(i,j,k+3)
+      #:endif
+      #:endif
+      block
+        real(8) :: tau, utau
+        #:if is_les
+        call calc_tau_straight_LES(mui, muti, uvw(idx-io_v:idx+io_v+1), grad_a(idx-io_v:idx+io_v+1), grad_b(idx-io_v:idx+io_v+1), dz(k), tau, utau)
+        #:else
+        call calc_tau_straight(mui, uvw(idx-io_v:idx+io_v+1), grad_a(idx-io_v:idx+io_v+1), grad_b(idx-io_v:idx+io_v+1), dz(k), tau, utau)
+        #:endif
+        call __stcg(G(i-1,j-1,k,4), __ldlu(G(i-1,j-1,k,4)) - tau)
+        utau_sum = utau
+      end block
+    endif
+    call syncthreads()
+    #:if is_koff
+    call load_smem_visc_cent${VISC_ORDER}$_z_koff_stage2(it, jt, kt, i, j, nx, ny, nz, dx(i), Q_2, Q_4, grad_a, uvw, k_lo)
+    #:else
+    call load_smem_visc_cent${VISC_ORDER}$_z_stage2(it, jt, kt, i, j, nx, ny, nz, dx(i), Q_2, Q_4, grad_a, uvw)
+    #:endif
+
+    ! ---- stage 2: cross component #1 -> G(...,2) [uses uvw=u, grad_a=wx] ----
+    if (valid .and. interior) then
+      block
+        real(8) :: tau, utau
+        #:if is_les
+        H(:) = H(:) + 0.5d0*uvw(idx-io_v:idx+io_v+1)**2
+        call calc_tau_cross_LES(mui, muti, uvw(idx-io_v:idx+io_v+1), grad_a(idx-io_v:idx+io_v+1), dz(k), tau, utau)
+        #:else
+        call calc_tau_cross(mui, uvw(idx-io_v:idx+io_v+1), grad_a(idx-io_v:idx+io_v+1), dz(k), tau, utau)
+        #:endif
+        call __stcg(G(i-1,j-1,k,2), __ldlu(G(i-1,j-1,k,2)) - tau)
+        utau_sum = utau_sum + utau
+      end block
+    endif
+    call syncthreads()
+    #:if is_koff
+    call load_smem_visc_cent${VISC_ORDER}$_z_koff_stage3(it, jt, kt, i, j, nx, ny, nz, dy(j), Q_3, Q_4, grad_a, uvw, k_lo)
+    #:else
+    call load_smem_visc_cent${VISC_ORDER}$_z_stage3(it, jt, kt, i, j, nx, ny, nz, dy(j), Q_3, Q_4, grad_a, uvw)
+    #:endif
+
+    ! ---- stage 3: cross component #2 -> G(...,3) [uses uvw=v, grad_a=wy] ----
+    if (valid .and. interior) then
+      block
+        real(8) :: tau, utau
+        #:if is_les
+        H(:) = H(:) + 0.5d0*uvw(idx-io_v:idx+io_v+1)**2
+        Hsgs = -muti * diff${VISC_ORDER}$_s(dz(k), &
+        #:if VISC_ORDER == 4
+        H(2)-H(3), H(1)-H(4) &
+        #:else
+        -H(1)+H(6), H(2)-H(5), -H(3)+H(4) &
+        #:endif
+        ) / Prt
+        call calc_tau_cross_LES(mui, muti, uvw(idx-io_v:idx+io_v+1), grad_a(idx-io_v:idx+io_v+1), dz(k), tau, utau)
+        #:else
+        call calc_tau_cross(mui, uvw(idx-io_v:idx+io_v+1), grad_a(idx-io_v:idx+io_v+1), dz(k), tau, utau)
+        #:endif
+        call __stcg(G(i-1,j-1,k,3), __ldlu(G(i-1,j-1,k,3)) - tau)
+        utau_sum = utau_sum + utau
+      end block
+      block
+        real(8) :: g5v, Tz, kTz
+        #:if VISC_ORDER == 4
+        Tz  = diff${VISC_ORDER}$_s(dz(k), T(i,j,k)-T(i,j,k+1), T(i,j,k-1)-T(i,j,k+2))
+        #:else
+        Tz  = diff${VISC_ORDER}$_s(dz(k), -T(i,j,k-2)+T(i,j,k+3), T(i,j,k-1)-T(i,j,k+2), -T(i,j,k)+T(i,j,k+1))
+        #:endif
+        kTz = Cp_over_Pr * mui * Tz
+        g5v = __ldlu(G(i-1,j-1,k,5))
+        call __stcg(G(i-1,j-1,k,5), g5v - (utau_sum + kTz &
+    #:if is_les
+      + Hsgs &
+    #:endif
+      ))
+      end block
+    endif
+  end subroutine calc_Gv${VISC_ORDER}$${suf}$
+#:endfor
+end module calc_visc_high_internal
+#:endif

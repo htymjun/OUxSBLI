@@ -25,7 +25,7 @@ macro(add_ouxsbli_2d_case)
   set(FYPP_FLAGS "-I${_CASE_DIR}")
 
   # mod_constant comes from the shared src/ (../../src relative to case dir)
-  set(_PARENT_FYPP "mod_constant")
+  set(_PARENT_FYPP "mod_constant" "calc_muscl")
   # calc_flux_base is the only fypp template in 2D_solver/src/
   set(_SHARED_FYPP
       "calc_flux_base"
@@ -68,7 +68,6 @@ macro(add_ouxsbli_2d_case)
       "${CMAKE_CURRENT_SOURCE_DIR}/../../src/cpu_gpu_mpi.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../../src/set_coordinate.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../../src/calc_physical_quantities.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../../src/calc_muscl.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../../src/print.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/load_smem_visc2.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/load_smem_visc4.f90"

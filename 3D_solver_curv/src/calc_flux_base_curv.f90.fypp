@@ -45,7 +45,7 @@ contains
   !> Ducros shock sensor: f_d = (∇·u)²/[(∇·u)² + (∇×u)² + ε]
   #:endif
   subroutine calc_conv_curv(nx, ny, nz, dz, &
-      n_xi_x, n_xi_y, n_eta_x, n_eta_y, xi_x, xi_y, eta_x, eta_y, Q, T, E, F, G)
+      n_xi_x, n_xi_y, n_eta_x, n_eta_y, xi_x, xi_y, eta_x, eta_y, Q_1, Q_2, Q_3, Q_4, Q_5, T, E, F, G)
     use mod_constant, only : id_accuracy
     implicit none
     integer, intent(in), value               :: nx, ny, nz
@@ -54,26 +54,28 @@ contains
     real(8), intent(in), device, contiguous  :: n_eta_x(nx-2,ny-1), n_eta_y(nx-2,ny-1)
     real(8), intent(in), device, contiguous  :: xi_x(nx,ny), xi_y(nx,ny)
     real(8), intent(in), device, contiguous  :: eta_x(nx,ny), eta_y(nx,ny)
-    real(8), intent(in), device, contiguous  :: Q(nx,5,ny,nz)
+    real(8), intent(in), device, contiguous  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous  :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     real(8), intent(in), device, contiguous  :: T(nx,ny,nz)
-    real(8), intent(out), device, contiguous :: E(5,nx-1,ny-2,nz-2)
-    real(8), intent(out), device, contiguous :: F(5,nx-2,ny-1,nz-2)
-    real(8), intent(out), device, contiguous :: G(5,nx-2,ny-2,nz-1)
+    real(8), intent(out), device, contiguous :: E(nx-1,ny-2,nz-2,5)
+    real(8), intent(out), device, contiguous :: F(nx-2,ny-1,nz-2,5)
+    real(8), intent(out), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     ! shock sensor
     #:if SCHEME in ('SLAU', 'Hybrid')
-    call calc_Ducros_curv<<<blocks,threads>>>(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, Q, sensor)
+    call calc_Ducros_curv<<<blocks,threads>>>(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, Q_2, Q_3, Q_4, sensor)
     #:endif
     ! flux
-    call calc_${scheme_name}$_xi_curv<<<blocksE,threadsE>>>(id_accuracy, nx, ny, nz, n_xi_x, n_xi_y, Q${args_t}$${args_sensor}$, E)
-    call calc_${scheme_name}$_eta_curv<<<blocksF,threadsF>>>(id_accuracy, nx, ny, nz, n_eta_x, n_eta_y, Q${args_t}$${args_sensor}$, F)
-    call calc_${scheme_name}$_z_curv<<<blocksG,threadsG>>>(id_accuracy, nx, ny, nz, Q${args_t}$${args_sensor}$, G)
+    call calc_${scheme_name}$_xi_curv<<<blocksE,threadsE>>>(id_accuracy, nx, ny, nz, n_xi_x, n_xi_y, Q_1, Q_2, Q_3, Q_4, Q_5${args_t}$${args_sensor}$, E)
+    call calc_${scheme_name}$_eta_curv<<<blocksF,threadsF>>>(id_accuracy, nx, ny, nz, n_eta_x, n_eta_y, Q_1, Q_2, Q_3, Q_4, Q_5${args_t}$${args_sensor}$, F)
+    call calc_${scheme_name}$_z_curv<<<blocksG,threadsG>>>(id_accuracy, nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5${args_t}$${args_sensor}$, G)
   end subroutine calc_conv_curv
 
 
   #:if VISC == 'Euler'
   !> Curvilinear Euler flux: reconstructs primitive Q from QJ, dispatches convective kernels.
   subroutine calc_EFG_curv(nx, ny, nz, dz, n_xi_x, n_xi_y, n_eta_x, n_eta_y, &
-      xi_x, xi_y, eta_x, eta_y, Jacobian, QJ, Q, T, mu, E, F, G)
+      xi_x, xi_y, eta_x, eta_y, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, &
+      Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, E, F, G)
     integer, intent(in), value               :: nx, ny, nz
     real(8), intent(in), value               :: dz
     real(8), intent(in), device, contiguous  :: n_xi_x(nx-1,ny-2), n_xi_y(nx-1,ny-2)
@@ -81,22 +83,25 @@ contains
     real(8), intent(in), device, contiguous  :: xi_x(nx,ny), xi_y(nx,ny)
     real(8), intent(in), device, contiguous  :: eta_x(nx,ny), eta_y(nx,ny)
     real(8), intent(in), device, contiguous  :: Jacobian(nx,ny)
-    real(8), intent(in), device, contiguous  :: QJ(nx,5,ny,nz)
-    real(8), intent(out), device, contiguous :: Q(nx,5,ny,nz)
+    real(8), intent(in), device, contiguous  :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous  :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(8), intent(out), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
+    real(8), intent(out), device, contiguous :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     real(8), intent(out), device, contiguous :: T(nx,ny,nz)
     real(8), intent(inout), device, contiguous :: mu(1,1,1)
-    real(8), intent(inout), device, contiguous :: E(5,nx-1,ny-2,nz-2)
-    real(8), intent(inout), device, contiguous :: F(5,nx-2,ny-1,nz-2)
-    real(8), intent(inout), device, contiguous :: G(5,nx-2,ny-2,nz-1)
-    call calc_quantities_3D(nx, ny, nz, Jacobian, QJ, Q, T, 1, nz)
+    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
+    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
+    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    call calc_quantities_3D(nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, 1, nz)
     call calc_conv_curv(nx, ny, nz, dz, &
         n_xi_x, n_xi_y, n_eta_x, n_eta_y, xi_x, xi_y, eta_x, eta_y, &
-        Q, T, E, F, G)
+        Q_1, Q_2, Q_3, Q_4, Q_5, T, E, F, G)
   end subroutine calc_EFG_curv
   #:elif VISC == 'NS'
   !> Curvilinear NS flux: reconstructs Q, dispatches convective kernels, adds viscous flux.
   subroutine calc_EFG_curv(nx, ny, nz, dz, n_xi_x, n_xi_y, n_eta_x, n_eta_y, &
-      xi_x, xi_y, eta_x, eta_y, Jacobian, QJ, Q, T, mu, E, F, G)
+      xi_x, xi_y, eta_x, eta_y, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, &
+      Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, E, F, G)
     integer, intent(in), value               :: nx, ny, nz
     real(8), intent(in), value               :: dz
     real(8), intent(in), device, contiguous  :: n_xi_x(nx-1,ny-2), n_xi_y(nx-1,ny-2)
@@ -104,23 +109,25 @@ contains
     real(8), intent(in), device, contiguous  :: xi_x(nx,ny), xi_y(nx,ny)
     real(8), intent(in), device, contiguous  :: eta_x(nx,ny), eta_y(nx,ny)
     real(8), intent(in), device, contiguous  :: Jacobian(nx,ny)
-    real(8), intent(in), device, contiguous  :: QJ(nx,5,ny,nz)
-    real(8), intent(out), device, contiguous :: Q(nx,5,ny,nz)
+    real(8), intent(in), device, contiguous  :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous  :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(8), intent(out), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
+    real(8), intent(out), device, contiguous :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     real(8), intent(out), device, contiguous :: T(nx,ny,nz)
     real(8), intent(inout), device, contiguous :: mu(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: E(5,nx-1,ny-2,nz-2)
-    real(8), intent(inout), device, contiguous :: F(5,nx-2,ny-1,nz-2)
-    real(8), intent(inout), device, contiguous :: G(5,nx-2,ny-2,nz-1)
-    call calc_quantities_T_3D(nx, ny, nz, Jacobian, QJ, Q, T, mu, 1, nz)
+    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
+    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
+    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    call calc_quantities_T_3D(nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, 1, nz)
     call calc_conv_curv(nx, ny, nz, dz, &
         n_xi_x, n_xi_y, n_eta_x, n_eta_y, xi_x, xi_y, eta_x, eta_y, &
-        Q, T, E, F, G)
+        Q_1, Q_2, Q_3, Q_4, Q_5, T, E, F, G)
     call calc_Ev2_curv<<<blocksEv,threadsEv>>>(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, &
-        n_xi_x, n_xi_y, Q, T, mu, E)
+        n_xi_x, n_xi_y, Q_2, Q_3, Q_4, T, mu, E)
     call calc_Fv2_curv<<<blocksFv,threadsFv>>>(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, &
-        n_eta_x, n_eta_y, Q, T, mu, F)
+        n_eta_x, n_eta_y, Q_2, Q_3, Q_4, T, mu, F)
     call calc_Gv2_curv<<<blocksGv,threadsGv>>>(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, &
-        Q, T, mu, G)
+        Q_2, Q_3, Q_4, T, mu, G)
   end subroutine calc_EFG_curv
   #:endif
 end module calc_flux_base_curv

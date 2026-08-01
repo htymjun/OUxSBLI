@@ -2,6 +2,7 @@
 module calc_keep_kernel_internal
   use mod_globals, only : threadsE, threadsF
   use mod_constant, only : R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
+  use libm
   implicit none
   private
   public calc_keep_x_in, calc_keep_y_in

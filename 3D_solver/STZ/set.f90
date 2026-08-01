@@ -39,21 +39,21 @@ contains
   subroutine set_init(myrank, nx, ny, nz, x, y, z, Q)
     integer, intent(in)  :: myrank, nx, ny, nz
     real(8), intent(in)  :: x(nx), y(ny), z(nz)
-    real(8), intent(out) :: Q(nx,5,ny,nz)
+    real(8), intent(out) :: Q(nx,ny,nz,5)
     integer i, j, k
     do k = 1, nz
       do j = 1, ny
         do i = 1, nx
           if (myrank < 2) then
-            Q(i,1,j,k) = rho_L
-            Q(i,5,j,k) = p_L / (gamma - 1.d0)
+            Q(i,j,k,1) = rho_L
+            Q(i,j,k,5) = p_L / (gamma - 1.d0)
           else
-            Q(i,1,j,k) = rho_R
-            Q(i,5,j,k) = p_R / (gamma - 1.d0)
+            Q(i,j,k,1) = rho_R
+            Q(i,j,k,5) = p_R / (gamma - 1.d0)
           endif
-          Q(i,2,j,k) = 0.d0   ! rho*u
-          Q(i,3,j,k) = 0.d0   ! rho*v
-          Q(i,4,j,k) = 0.d0   ! rho*w
+          Q(i,j,k,2) = 0.d0   ! rho*u
+          Q(i,j,k,3) = 0.d0   ! rho*v
+          Q(i,j,k,4) = 0.d0   ! rho*w
         enddo
       enddo
     enddo
@@ -64,14 +64,14 @@ contains
   !   - periodic in x and y (for all z including ghost layers)
   !   - zero-gradient in z only for outermost ranks
   !   - does NOT call set_bc_cyclic (which would corrupt z ghost cells)
-  subroutine set_bc(myrank, nx, ny, nz, Jacobian, QJ, Qre)
+  subroutine set_bc(myrank, nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Qre_1, Qre_2, Qre_3, Qre_4, Qre_5)
     use mpi
     use mod_constant, only : id_accuracy
     integer, intent(in), value               :: myrank, nx, ny, nz
     real(8), intent(in), device              :: Jacobian(nx,ny)
-    real(8), intent(inout), device           :: QJ(nx,5,ny,nz)
-    real(8), intent(in), device, optional    :: Qre(ny*(nz-6)*5)
-    integer nranks, ierr, i, j, k, l, m, ovlp
+    real(8), intent(inout), device           :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(8), intent(in), device, optional    :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
+    integer nranks, ierr, i, j, k, m, ovlp
     ovlp = kind(id_accuracy)/3 + 1
     call MPI_COMM_SIZE(MPI_COMM_WORLD, nranks, ierr)
     ! x: Dirichlet slip wall — reflect ρu (l=2) to enforce u=0 at face; extrapolate rest
@@ -79,16 +79,16 @@ contains
     do k = 1, nz
       do j = 1, ny
         do m = 0, ovlp-1
-          QJ(ovlp-m,      1,j,k) =  QJ(ovlp+1+m,  1,j,k)
-          QJ(ovlp-m,      2,j,k) = -QJ(ovlp+1+m,  2,j,k)
-          QJ(ovlp-m,      3,j,k) =  QJ(ovlp+1+m,  3,j,k)
-          QJ(ovlp-m,      4,j,k) =  QJ(ovlp+1+m,  4,j,k)
-          QJ(ovlp-m,      5,j,k) =  QJ(ovlp+1+m,  5,j,k)
-          QJ(nx-ovlp+1+m, 1,j,k) =  QJ(nx-ovlp-m, 1,j,k)
-          QJ(nx-ovlp+1+m, 2,j,k) = -QJ(nx-ovlp-m, 2,j,k)
-          QJ(nx-ovlp+1+m, 3,j,k) =  QJ(nx-ovlp-m, 3,j,k)
-          QJ(nx-ovlp+1+m, 4,j,k) =  QJ(nx-ovlp-m, 4,j,k)
-          QJ(nx-ovlp+1+m, 5,j,k) =  QJ(nx-ovlp-m, 5,j,k)
+          QJ_1(ovlp-m,      j,k) =  QJ_1(ovlp+1+m,  j,k)
+          QJ_2(ovlp-m,      j,k) = -QJ_2(ovlp+1+m,  j,k)
+          QJ_3(ovlp-m,      j,k) =  QJ_3(ovlp+1+m,  j,k)
+          QJ_4(ovlp-m,      j,k) =  QJ_4(ovlp+1+m,  j,k)
+          QJ_5(ovlp-m,      j,k) =  QJ_5(ovlp+1+m,  j,k)
+          QJ_1(nx-ovlp+1+m, j,k) =  QJ_1(nx-ovlp-m, j,k)
+          QJ_2(nx-ovlp+1+m, j,k) = -QJ_2(nx-ovlp-m, j,k)
+          QJ_3(nx-ovlp+1+m, j,k) =  QJ_3(nx-ovlp-m, j,k)
+          QJ_4(nx-ovlp+1+m, j,k) =  QJ_4(nx-ovlp-m, j,k)
+          QJ_5(nx-ovlp+1+m, j,k) =  QJ_5(nx-ovlp-m, j,k)
         enddo
       enddo
     enddo
@@ -97,16 +97,16 @@ contains
     do k = 1, nz
       do i = 1, nx
         do m = 0, ovlp-1
-          QJ(i,1,ovlp-m,     k) =  QJ(i,1,ovlp+1+m,  k)
-          QJ(i,2,ovlp-m,     k) =  QJ(i,2,ovlp+1+m,  k)
-          QJ(i,3,ovlp-m,     k) = -QJ(i,3,ovlp+1+m,  k)
-          QJ(i,4,ovlp-m,     k) =  QJ(i,4,ovlp+1+m,  k)
-          QJ(i,5,ovlp-m,     k) =  QJ(i,5,ovlp+1+m,  k)
-          QJ(i,1,ny-ovlp+1+m,k) =  QJ(i,1,ny-ovlp-m, k)
-          QJ(i,2,ny-ovlp+1+m,k) =  QJ(i,2,ny-ovlp-m, k)
-          QJ(i,3,ny-ovlp+1+m,k) = -QJ(i,3,ny-ovlp-m, k)
-          QJ(i,4,ny-ovlp+1+m,k) =  QJ(i,4,ny-ovlp-m, k)
-          QJ(i,5,ny-ovlp+1+m,k) =  QJ(i,5,ny-ovlp-m, k)
+          QJ_1(i,ovlp-m,     k) =  QJ_1(i,ovlp+1+m,  k)
+          QJ_2(i,ovlp-m,     k) =  QJ_2(i,ovlp+1+m,  k)
+          QJ_3(i,ovlp-m,     k) = -QJ_3(i,ovlp+1+m,  k)
+          QJ_4(i,ovlp-m,     k) =  QJ_4(i,ovlp+1+m,  k)
+          QJ_5(i,ovlp-m,     k) =  QJ_5(i,ovlp+1+m,  k)
+          QJ_1(i,ny-ovlp+1+m,k) =  QJ_1(i,ny-ovlp-m, k)
+          QJ_2(i,ny-ovlp+1+m,k) =  QJ_2(i,ny-ovlp-m, k)
+          QJ_3(i,ny-ovlp+1+m,k) = -QJ_3(i,ny-ovlp-m, k)
+          QJ_4(i,ny-ovlp+1+m,k) =  QJ_4(i,ny-ovlp-m, k)
+          QJ_5(i,ny-ovlp+1+m,k) =  QJ_5(i,ny-ovlp-m, k)
         enddo
       enddo
     enddo
@@ -116,9 +116,11 @@ contains
       do k = 1, ovlp
         do j = 1, ny
           do i = 1, nx
-            do l = 1, 5
-              QJ(i,l,j,k) = QJ(i,l,j,ovlp+1)
-            enddo
+            QJ_1(i,j,k) = QJ_1(i,j,ovlp+1)
+            QJ_2(i,j,k) = QJ_2(i,j,ovlp+1)
+            QJ_3(i,j,k) = QJ_3(i,j,ovlp+1)
+            QJ_4(i,j,k) = QJ_4(i,j,ovlp+1)
+            QJ_5(i,j,k) = QJ_5(i,j,ovlp+1)
           enddo
         enddo
       enddo
@@ -129,9 +131,11 @@ contains
       do k = 1, ovlp
         do j = 1, ny
           do i = 1, nx
-            do l = 1, 5
-              QJ(i,l,j,nz-ovlp+k) = QJ(i,l,j,nz-ovlp)
-            enddo
+            QJ_1(i,j,nz-ovlp+k) = QJ_1(i,j,nz-ovlp)
+            QJ_2(i,j,nz-ovlp+k) = QJ_2(i,j,nz-ovlp)
+            QJ_3(i,j,nz-ovlp+k) = QJ_3(i,j,nz-ovlp)
+            QJ_4(i,j,nz-ovlp+k) = QJ_4(i,j,nz-ovlp)
+            QJ_5(i,j,nz-ovlp+k) = QJ_5(i,j,nz-ovlp)
           enddo
         enddo
       enddo

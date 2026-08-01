@@ -217,7 +217,7 @@ contains
 
   subroutine make_1d_for_print3(nx, ny, nz, Jacobian, QJ, rho_flat, p_flat, vel_flat)
     integer, intent(in)  :: nx, ny, nz
-    real(8), intent(in)  :: Jacobian(nx,ny), QJ(nx,5,ny,nz) ! Q / Jacobian
+    real(8), intent(in)  :: Jacobian(nx,ny), QJ(nx,ny,nz,5) ! Q / Jacobian
     real(io), intent(out), dimension(nx*ny*nz)   :: rho_flat, p_flat
     real(io), intent(out), dimension(nx*ny*nz*3) :: vel_flat
     real(8) rho, u, v, w, p
@@ -227,11 +227,11 @@ contains
     do k = 1, nz
       do j = 1, ny
         do i = 1, nx
-          rho      = Jacobian(i,j) * QJ(i,1,j,k)
-          u        = QJ(i,2,j,k) / QJ(i,1,j,k)
-          v        = QJ(i,3,j,k) / QJ(i,1,j,k)
-          w        = QJ(i,4,j,k) / QJ(i,1,j,k)
-          p        = (gamma - 1.d0) * (Jacobian(i,j) * QJ(i,5,j,k) - 0.5d0 * rho * (u**2 + v**2 + w**2))
+          rho      = Jacobian(i,j) * QJ(i,j,k,1)
+          u        = QJ(i,j,k,2) / QJ(i,j,k,1)
+          v        = QJ(i,j,k,3) / QJ(i,j,k,1)
+          w        = QJ(i,j,k,4) / QJ(i,j,k,1)
+          p        = (gamma - 1.d0) * (Jacobian(i,j) * QJ(i,j,k,5) - 0.5d0 * rho * (u**2 + v**2 + w**2))
           rho_flat(l) = real(rho, kind=io)
           p_flat(l)   = real(p,   kind=io)
           vel_flat(m)   = real(u,   kind=io)
@@ -266,15 +266,20 @@ contains
   end subroutine send_recv_for_print_even2
 
 
-  subroutine send_recv_for_print_even3(myrank, nranks, step, nx, ny, nz, x, y, z, Jacobian_cpu, QJ, Q, ke0, entropy0)
+  subroutine send_recv_for_print_even3(myrank, nranks, step, nx, ny, nz, x, y, z, Jacobian_cpu, &
+                                       QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q, ke0, entropy0)
     integer, intent(in)         :: myrank, nranks, step, nx, ny, nz
     real(8), intent(in)         :: x(nx), y(ny), z(nz), Jacobian_cpu(nx,ny)
-    real(8), intent(in), device :: QJ(nx,5,ny,nz)
-    real(8), intent(inout)      :: Q(nx,5,ny,nz)
+    real(8), intent(in), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(8), intent(inout)      :: Q(nx,ny,nz,5)
     real(4), intent(inout)      :: ke0, entropy0
     integer ireq3(3), istat3(MPI_STATUS_SIZE,3), ierr
     real(io) rho_flat(nx*ny*nz), p_flat(nx*ny*nz), vel_flat(nx*ny*nz*3)
-    Q = QJ
+    Q(:,:,:,1) = QJ_1
+    Q(:,:,:,2) = QJ_2
+    Q(:,:,:,3) = QJ_3
+    Q(:,:,:,4) = QJ_4
+    Q(:,:,:,5) = QJ_5
     call make_1d_for_print(nx, ny, nz, Jacobian_cpu, Q, rho_flat, p_flat, vel_flat)
     if (io == 4) then
       call MPI_ISEND(rho_flat, nx*ny*nz,   MPI_REAL4, myrank+1, 3*(myrank+1)-2, MPI_COMM_WORLD, ireq3(1), ierr)
@@ -313,7 +318,7 @@ contains
   subroutine send_recv_for_print_odd3(myrank, nranks, step, nx, ny, nz, x, y, z, Jacobian_cpu, Q, ke0, entropy0)
     integer, intent(in)    :: myrank, nranks, step, nx, ny, nz
     real(8), intent(in)    :: x(nx), y(ny), z(nz), Jacobian_cpu(nx,ny)
-    real(8), intent(inout) :: Q(nx,5,ny,nz)
+    real(8), intent(inout) :: Q(nx,ny,nz,5)
     real(4), intent(inout) :: ke0, entropy0
     integer ireq3(3), istat3(MPI_STATUS_SIZE,3), ierr
     real(io) rho_flat(nx*ny*nz), p_flat(nx*ny*nz), vel_flat(nx*ny*nz*3)
@@ -381,4 +386,3 @@ contains
     close(IO_UNIT_VTK)
   end subroutine print_vtk_3D
 end module print
-

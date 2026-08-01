@@ -164,15 +164,15 @@ contains
   subroutine set_init(myrank, nx, ny, nz, x, y, z, Q)
     integer, intent(in) :: myrank, nx, ny, nz
     real(8), intent(in) :: x(nx), y(ny), z(nz)
-    real(8), intent(out) :: Q(nx,5,ny,nz)
+    real(8), intent(out) :: Q(nx,ny,nz,5)
     real(8) :: E_inf = p_inf / (gamma - 1.d0) + 0.5d0 * rho_inf * (u_inf**2 + v_inf**2)
     ! Initialize all cells to free-stream
     Q = 0.d0
-    Q(:,1,:,:) = rho_inf
-    Q(:,2,:,:) = rho_inf * u_inf
-    Q(:,3,:,:) = rho_inf * v_inf
-    Q(:,4,:,:) = 0.d0  ! w = 0 (quasi-2D in z)
-    Q(:,5,:,:) = E_inf
+    Q(:,:,:,1) = rho_inf
+    Q(:,:,:,2) = rho_inf * u_inf
+    Q(:,:,:,3) = rho_inf * v_inf
+    Q(:,:,:,4) = 0.d0  ! w = 0 (quasi-2D in z)
+    Q(:,:,:,5) = E_inf
     if (myrank == 0) then
       print *, "Flow: M_inf =", Ma_inf, " (supersonic)"
       print *, "  rho_inf =", rho_inf, " p_inf =", p_inf, " E_inf =", E_inf
@@ -186,11 +186,11 @@ contains
   !> (c) eta lower wall (j=1): Euler slip wall (flat plate)
   !> (d) eta upper wall (j=ny): Euler slip wall (flat reflector for shock reflection)
   !> (e) z-periodic
-  subroutine set_bc(myrank, nx, ny, nz, Jacobian, eta_x, eta_y, Q)
+  subroutine set_bc(myrank, nx, ny, nz, Jacobian, eta_x, eta_y, Q_1, Q_2, Q_3, Q_4, Q_5)
     integer, intent(in) :: myrank, nx, ny, nz
     real(8), intent(in), device :: Jacobian(nx,ny)
     real(8), intent(in), device :: eta_x(nx,ny), eta_y(nx,ny)
-    real(8), intent(inout), device :: Q(nx,5,ny,nz)
+    real(8), intent(inout), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     integer :: i, j, k
     real(8) :: nxw, nyw, nmag, u_int, v_int, u_n, Jratio
     real(8) :: E_inf = p_inf / (gamma - 1.d0) + 0.5d0 * rho_inf * (u_inf**2 + v_inf**2)
@@ -198,11 +198,11 @@ contains
     !$cuf kernel do(2) <<<*,(16,16)>>>
     do k = 1, nz
       do j = 1, ny
-        Q(1,1,j,k) = rho_inf / Jacobian(1,j)
-        Q(1,2,j,k) = rho_inf * u_inf / Jacobian(1,j)
-        Q(1,3,j,k) = rho_inf * v_inf / Jacobian(1,j)
-        Q(1,4,j,k) = 0.d0
-        Q(1,5,j,k) = E_inf / Jacobian(1,j)
+        Q_1(1,j,k) = rho_inf / Jacobian(1,j)
+        Q_2(1,j,k) = rho_inf * u_inf / Jacobian(1,j)
+        Q_3(1,j,k) = rho_inf * v_inf / Jacobian(1,j)
+        Q_4(1,j,k) = 0.d0
+        Q_5(1,j,k) = E_inf / Jacobian(1,j)
       enddo
     enddo
     ! (b) xi outlet ghost (i=nx): zero-gradient (physical) extrapolation
@@ -210,11 +210,11 @@ contains
     do k = 1, nz
       do j = 1, ny
         Jratio = Jacobian(nx-1,j) / Jacobian(nx,j)
-        Q(nx,1,j,k) = Q(nx-1,1,j,k) * Jratio
-        Q(nx,2,j,k) = Q(nx-1,2,j,k) * Jratio
-        Q(nx,3,j,k) = Q(nx-1,3,j,k) * Jratio
-        Q(nx,4,j,k) = Q(nx-1,4,j,k) * Jratio
-        Q(nx,5,j,k) = Q(nx-1,5,j,k) * Jratio
+        Q_1(nx,j,k) = Q_1(nx-1,j,k) * Jratio
+        Q_2(nx,j,k) = Q_2(nx-1,j,k) * Jratio
+        Q_3(nx,j,k) = Q_3(nx-1,j,k) * Jratio
+        Q_4(nx,j,k) = Q_4(nx-1,j,k) * Jratio
+        Q_5(nx,j,k) = Q_5(nx-1,j,k) * Jratio
       enddo
     enddo
     ! (c) eta lower wall (j=1): Euler slip wall (flat plate, normal = eta direction)
@@ -224,15 +224,15 @@ contains
         nxw   = eta_x(i,1);  nyw = eta_y(i,1)
         nmag  = sqrt(nxw*nxw + nyw*nyw)
         nxw   = nxw / nmag;  nyw = nyw / nmag
-        u_int = Q(i,2,2,k) / Q(i,1,2,k)
-        v_int = Q(i,3,2,k) / Q(i,1,2,k)
+        u_int = Q_2(i,2,k) / Q_1(i,2,k)
+        v_int = Q_3(i,2,k) / Q_1(i,2,k)
         u_n   = u_int*nxw + v_int*nyw
         Jratio = Jacobian(i,2) / Jacobian(i,1)
-        Q(i,1,1,k) = Q(i,1,2,k) * Jratio
-        Q(i,2,1,k) = (Q(i,2,2,k) - 2.d0*u_n*nxw*Q(i,1,2,k)) * Jratio
-        Q(i,3,1,k) = (Q(i,3,2,k) - 2.d0*u_n*nyw*Q(i,1,2,k)) * Jratio
-        Q(i,4,1,k) = Q(i,4,2,k) * Jratio
-        Q(i,5,1,k) = Q(i,5,2,k) * Jratio
+        Q_1(i,1,k) = Q_1(i,2,k) * Jratio
+        Q_2(i,1,k) = (Q_2(i,2,k) - 2.d0*u_n*nxw*Q_1(i,2,k)) * Jratio
+        Q_3(i,1,k) = (Q_3(i,2,k) - 2.d0*u_n*nyw*Q_1(i,2,k)) * Jratio
+        Q_4(i,1,k) = Q_4(i,2,k) * Jratio
+        Q_5(i,1,k) = Q_5(i,2,k) * Jratio
       enddo
     enddo
     ! (d) eta upper wall (j=ny): Euler slip wall (flat reflector, normal = eta direction)
@@ -242,19 +242,27 @@ contains
         nxw   = eta_x(i,ny);  nyw = eta_y(i,ny)
         nmag  = sqrt(nxw*nxw + nyw*nyw)
         nxw   = nxw / nmag;  nyw = nyw / nmag
-        u_int = Q(i,2,ny-1,k) / Q(i,1,ny-1,k)
-        v_int = Q(i,3,ny-1,k) / Q(i,1,ny-1,k)
+        u_int = Q_2(i,ny-1,k) / Q_1(i,ny-1,k)
+        v_int = Q_3(i,ny-1,k) / Q_1(i,ny-1,k)
         u_n   = u_int*nxw + v_int*nyw
         Jratio = Jacobian(i,ny-1) / Jacobian(i,ny)
-        Q(i,1,ny,k) = Q(i,1,ny-1,k) * Jratio
-        Q(i,2,ny,k) = (Q(i,2,ny-1,k) - 2.d0*u_n*nxw*Q(i,1,ny-1,k)) * Jratio
-        Q(i,3,ny,k) = (Q(i,3,ny-1,k) - 2.d0*u_n*nyw*Q(i,1,ny-1,k)) * Jratio
-        Q(i,4,ny,k) = Q(i,4,ny-1,k) * Jratio
-        Q(i,5,ny,k) = Q(i,5,ny-1,k) * Jratio
+        Q_1(i,ny,k) = Q_1(i,ny-1,k) * Jratio
+        Q_2(i,ny,k) = (Q_2(i,ny-1,k) - 2.d0*u_n*nxw*Q_1(i,ny-1,k)) * Jratio
+        Q_3(i,ny,k) = (Q_3(i,ny-1,k) - 2.d0*u_n*nyw*Q_1(i,ny-1,k)) * Jratio
+        Q_4(i,ny,k) = Q_4(i,ny-1,k) * Jratio
+        Q_5(i,ny,k) = Q_5(i,ny-1,k) * Jratio
       enddo
     enddo
     ! (e) z-periodic: ghost cells k=1 and k=nz wrap around interior k=2..nz-1
-    Q(:,:,:,1)  = Q(:,:,:,nz-1)
-    Q(:,:,:,nz) = Q(:,:,:,2)
+    Q_1(:,:,1)  = Q_1(:,:,nz-1)
+    Q_2(:,:,1)  = Q_2(:,:,nz-1)
+    Q_3(:,:,1)  = Q_3(:,:,nz-1)
+    Q_4(:,:,1)  = Q_4(:,:,nz-1)
+    Q_5(:,:,1)  = Q_5(:,:,nz-1)
+    Q_1(:,:,nz) = Q_1(:,:,2)
+    Q_2(:,:,nz) = Q_2(:,:,2)
+    Q_3(:,:,nz) = Q_3(:,:,2)
+    Q_4(:,:,nz) = Q_4(:,:,2)
+    Q_5(:,:,nz) = Q_5(:,:,2)
   end subroutine set_bc
 end module set

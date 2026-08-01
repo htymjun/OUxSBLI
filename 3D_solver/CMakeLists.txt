@@ -28,7 +28,7 @@ macro(add_ouxsbli_case)
   endif()
   set(FYPP_FLAGS "-I${_CASE_DIR}" "-I${CMAKE_CURRENT_SOURCE_DIR}/../src")
 
-  set(_PARENT_FYPP "mod_constant")
+  set(_PARENT_FYPP "mod_constant" "calc_muscl")
   set(_SHARED_FYPP
       "calc_visc2"
       "calc_visc_high"
@@ -75,9 +75,9 @@ macro(add_ouxsbli_case)
       "${CMAKE_CURRENT_SOURCE_DIR}/../../src/calc_physical_quantities.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/load_smem_visc2.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/load_smem_visc_me4_base.f90"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_div.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_les.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_hybrid.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../../src/calc_muscl.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_steps.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_rescale.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_para.f90"

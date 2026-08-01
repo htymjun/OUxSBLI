@@ -1,5 +1,6 @@
 #:include 'config.fypp'
 module calc_hybrid_kernel
+  use libm
   use mod_globals, only : gamma, threshold, threadsE, threadsF
   use mod_constant, only : id_slau, over_gamma_1, R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
   use calc_muscl

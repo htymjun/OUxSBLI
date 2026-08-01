@@ -4,6 +4,7 @@ module calc_hybrid_kernel
   use mod_constant, only : id_slau, over_gamma_1, R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
   use calc_muscl
   use calc_hybrid
+  use libm
   implicit none
   private
   public calc_hybrid_x, calc_hybrid_y, calc_hybrid_z
@@ -37,12 +38,12 @@ contains
   include 'calc_keep_3d.f90'
   include 'calc_slau_3d.f90'
 
-  attributes(global) subroutine calc_hybrid_x(nx, ny, nz, Q, T, sensor, E)
+  attributes(global) subroutine calc_hybrid_x(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, E)
     use mod_constant, only : Normal_x
     integer, intent(in), value                :: nx, ny, nz
-    real(8), intent(in), device, contiguous   :: Q(nx,5,ny,nz), T(nx,ny,nz)
+    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: E(5,nx-1,ny-2,nz-2)
+    real(8), intent(out), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
     integer i, j, k, it, jt, kt, ii, i_base
     integer :: idx, offset_yz
     integer, parameter :: sx = threadsE%x + 2*io + 1
@@ -53,6 +54,7 @@ contains
     real(8)  :: rho_r, u_r, v_r, w_r, p_r
     real(sp) :: fdx
     logical  :: compute_slau
+    logical  :: jk_in_range
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -60,13 +62,13 @@ contains
     k  = (blockIdx%z-1)*blockDim%z + kt + 1
     i_base = (blockIdx%x-1)*blockDim%x
     offset_yz = (jt-1) * sx + (kt-1) * sx * sy
-    
+    jk_in_range = (j >= 1 .and. j <= ny .and. k >= 1 .and. k <= nz)
     do ii = it-io, threadsE%x+io+1, blockDim%x
       i = i_base + ii
-      if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny .and. k >= 1 .and. k <= nz) then
+      if (i >= 1 .and. i <= nx .and. jk_in_range) then
         idx = ii + offset_yz
-        rho(idx) = Q(i,1,j,k); u(idx) = Q(i,2,j,k); v(idx) = Q(i,3,j,k)
-        w(idx)   = Q(i,4,j,k); p(idx) = Q(i,5,j,k)
+        rho(idx) = Q_1(i,j,k); u(idx) = Q_2(i,j,k); v(idx) = Q_3(i,j,k)
+        w(idx)   = Q_4(i,j,k); p(idx) = Q_5(i,j,k)
       endif
     enddo
     call syncthreads()
@@ -85,7 +87,7 @@ contains
           real(8) :: tmp(6)
           tmp = T(i-2:i+3,j,k)
           associate(uu => u)
-            E(:,i,j-1,k-1) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3), v(idx-2:idx+3), &
+            E(i,j-1,k-1,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3), v(idx-2:idx+3), &
                                   w(idx-2:idx+3), uu(idx-2:idx+3), p(idx-2:idx+3), tmp, Normal_x)
           end associate
         end block
@@ -103,7 +105,7 @@ contains
           real(8) :: tmp(4)
           tmp = T(i-1:i+2,j,k)
           associate(uu => u)
-            E(:,i,j-1,k-1) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
+            E(i,j-1,k-1,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
                                   w(idx-1:idx+2), uu(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_x)
           end associate
         end block
@@ -121,7 +123,7 @@ contains
           real(8) :: tmp(2)
           tmp = T(i:i+1,j,k)
           associate(uu => u)
-            E(:,i,j-1,k-1) = KEEP(id_acc2,     rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+            E(i,j-1,k-1,:) = KEEP(id_acc2,     rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
                                   w(idx:idx+1), uu(idx:idx+1), p(idx:idx+1), tmp, Normal_x)
           end associate
         end block
@@ -141,7 +143,7 @@ contains
           real(8) :: tmp(4)
           tmp = T(i-1:i+2,j,k)
           associate(uu => u)
-            E(:,i,j-1,k-1) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
+            E(i,j-1,k-1,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
                                   w(idx-1:idx+2), uu(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_x)
           end associate
         end block
@@ -159,7 +161,7 @@ contains
           real(8) :: tmp(2)
           tmp = T(i:i+1,j,k)
           associate(uu => u)
-            E(:,i,j-1,k-1) = KEEP(id_acc2,     rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+            E(i,j-1,k-1,:) = KEEP(id_acc2,     rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
                                   w(idx:idx+1), uu(idx:idx+1), p(idx:idx+1), tmp, Normal_x)
           end associate
         end block
@@ -178,7 +180,7 @@ contains
         real(8) :: tmp(2)
         tmp = T(i:i+1,j,k)
         associate(uu => u)
-          E(:,i,j-1,k-1) = KEEP(id_acc,      rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+          E(i,j-1,k-1,:) = KEEP(id_acc,      rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
                                 w(idx:idx+1), uu(idx:idx+1), p(idx:idx+1), tmp, Normal_x)
         end associate
       end block
@@ -195,18 +197,18 @@ contains
     if (compute_slau) then
       associate(un1 => ul, un2 => u_r)
         call SLAU(id_slau, rhol, rho_r, ul, u_r, vl, v_r, wl, w_r, un1, un2, pl, p_r, Normal_x, 1.0_sp, &
-                  E(1,i,j-1,k-1), E(2,i,j-1,k-1), E(3,i,j-1,k-1), E(4,i,j-1,k-1), E(5,i,j-1,k-1))
+                  E(i,j-1,k-1,1), E(i,j-1,k-1,2), E(i,j-1,k-1,3), E(i,j-1,k-1,4), E(i,j-1,k-1,5))
       end associate
     endif
   end subroutine calc_hybrid_x
 
 
-  attributes(global) subroutine calc_hybrid_y(nx, ny, nz, Q, T, sensor, F)
+  attributes(global) subroutine calc_hybrid_y(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, F)
     use mod_constant, only : Normal_y
     integer, intent(in), value                :: nx, ny, nz
-    real(8), intent(in), device, contiguous   :: Q(nx,5,ny,nz), T(nx,ny,nz)
+    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: F(5,nx-2,ny-1,nz-2)
+    real(8), intent(out), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
     integer i, j, k, it, jt, kt, jj, j_base
     integer :: idx, offset_xz
     integer, parameter :: sx = threadsF%x
@@ -217,6 +219,7 @@ contains
     real(8)  :: rho_r, u_r, v_r, w_r, p_r
     real(sp) :: fdy
     logical  :: compute_slau
+    logical  :: ik_in_range
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -224,13 +227,13 @@ contains
     k  = (blockIdx%z-1)*blockDim%z + kt + 1
     j_base = (blockIdx%y-1)*blockDim%y
     offset_xz = (it-1) * sy + (kt-1) * sy * sx
-    
+    ik_in_range = (i >= 1 .and. i <= nx .and. k >= 1 .and. k <= nz)
     do jj = jt-io, threadsF%y+io+1, blockDim%y
       j = j_base + jj
-      if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny .and. k >= 1 .and. k <= nz) then
+      if (ik_in_range .and. j >= 1 .and. j <= ny) then
         idx = jj + offset_xz
-        rho(idx) = Q(i,1,j,k); u(idx) = Q(i,2,j,k); v(idx) = Q(i,3,j,k)
-        w(idx)   = Q(i,4,j,k); p(idx) = Q(i,5,j,k)
+        rho(idx) = Q_1(i,j,k); u(idx) = Q_2(i,j,k); v(idx) = Q_3(i,j,k)
+        w(idx)   = Q_4(i,j,k); p(idx) = Q_5(i,j,k)
       endif
     enddo
     call syncthreads()
@@ -249,7 +252,7 @@ contains
           real(8) :: tmp(6)
           tmp = T(i,j-2:j+3,k)
           associate(vv => v)
-            F(:,i-1,j,k-1) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3), v(idx-2:idx+3), &
+            F(i-1,j,k-1,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3), v(idx-2:idx+3), &
                                   w(idx-2:idx+3), vv(idx-2:idx+3), p(idx-2:idx+3), tmp, Normal_y)
           end associate
         end block
@@ -267,7 +270,7 @@ contains
           real(8) :: tmp(4)
           tmp = T(i,j-1:j+2,k)
           associate(vv => v)
-            F(:,i-1,j,k-1) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
+            F(i-1,j,k-1,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
                                   w(idx-1:idx+2), vv(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_y)
           end associate
         end block
@@ -285,7 +288,7 @@ contains
           real(8) :: tmp(2)
           tmp = T(i,j:j+1,k)
           associate(vv => v)
-            F(:,i-1,j,k-1) = KEEP(id_acc2,     rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+            F(i-1,j,k-1,:) = KEEP(id_acc2,     rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
                                   w(idx:idx+1), vv(idx:idx+1), p(idx:idx+1), tmp, Normal_y)
           end associate
         end block
@@ -305,7 +308,7 @@ contains
           real(8) :: tmp(4)
           tmp = T(i,j-1:j+2,k)
           associate(vv => v)
-            F(:,i-1,j,k-1) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
+            F(i-1,j,k-1,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
                                   w(idx-1:idx+2), vv(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_y)
           end associate
         end block
@@ -323,7 +326,7 @@ contains
           real(8) :: tmp(2)
           tmp = T(i,j:j+1,k)
           associate(vv => v)
-            F(:,i-1,j,k-1) = KEEP(id_acc2,     rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+            F(i-1,j,k-1,:) = KEEP(id_acc2,     rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
                                   w(idx:idx+1), vv(idx:idx+1), p(idx:idx+1), tmp, Normal_y)
           end associate
         end block
@@ -342,7 +345,7 @@ contains
         real(8) :: tmp(2)
         tmp = T(i,j:j+1,k)
         associate(vv => v)
-          F(:,i-1,j,k-1) = KEEP(id_acc,      rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+          F(i-1,j,k-1,:) = KEEP(id_acc,      rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
                                 w(idx:idx+1), vv(idx:idx+1), p(idx:idx+1), tmp, Normal_y)
         end associate
       end block
@@ -359,18 +362,18 @@ contains
     if (compute_slau) then
       associate(un1 => vl, un2 => v_r)
         call SLAU(id_slau, rhol, rho_r, ul, u_r, vl, v_r, wl, w_r, un1, un2, pl, p_r, Normal_y, 1.0_sp, &
-                  F(1,i-1,j,k-1), F(2,i-1,j,k-1), F(3,i-1,j,k-1), F(4,i-1,j,k-1), F(5,i-1,j,k-1))
+                  F(i-1,j,k-1,1), F(i-1,j,k-1,2), F(i-1,j,k-1,3), F(i-1,j,k-1,4), F(i-1,j,k-1,5))
       end associate
     endif
   end subroutine calc_hybrid_y
 
 
-  attributes(global) subroutine calc_hybrid_z(nx, ny, nz, Q, T, sensor, G)
+  attributes(global) subroutine calc_hybrid_z(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, G)
     use mod_constant, only : Normal_z
     integer, intent(in), value                :: nx, ny, nz
-    real(8), intent(in), device, contiguous   :: Q(nx,5,ny,nz), T(nx,ny,nz)
+    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: G(5,nx-2,ny-2,nz-1)
+    real(8), intent(out), device, contiguous  :: G(nx-2,ny-2,nz-1,5)
     integer i, j, k, it, jt, kt, kk, k_base
     integer :: idx, offset_xy
     integer, parameter :: sx = threadsG%x
@@ -381,6 +384,7 @@ contains
     real(8)  :: rho_r, u_r, v_r, w_r, p_r
     real(sp) :: fdz
     logical  :: compute_slau
+    logical  :: ij_in_range
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -388,13 +392,13 @@ contains
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
     k_base = (blockIdx%z-1)*blockDim%z
     offset_xy = (jt-1) * sz + (it-1) * sz * sy
-    
+    ij_in_range = (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny)
     do kk = kt-io, threadsG%z+io+1, blockDim%z
       k = k_base + kk
-      if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny .and. k >= 1 .and. k <= nz) then
+      if (ij_in_range .and. k >= 1 .and. k <= nz) then
         idx = kk + offset_xy
-        rho(idx) = Q(i,1,j,k); u(idx) = Q(i,2,j,k); v(idx) = Q(i,3,j,k)
-        w(idx)   = Q(i,4,j,k); p(idx) = Q(i,5,j,k)
+        rho(idx) = Q_1(i,j,k); u(idx) = Q_2(i,j,k); v(idx) = Q_3(i,j,k)
+        w(idx)   = Q_4(i,j,k); p(idx) = Q_5(i,j,k)
       endif
     enddo
     call syncthreads()
@@ -413,7 +417,7 @@ contains
           real(8) :: tmp(6)
           tmp = T(i,j,k-2:k+3)
           associate(ww => w)
-            G(:,i-1,j-1,k) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3), v(idx-2:idx+3), &
+            G(i-1,j-1,k,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3), v(idx-2:idx+3), &
                                   w(idx-2:idx+3), ww(idx-2:idx+3), p(idx-2:idx+3), tmp, Normal_z)
           end associate
         end block
@@ -431,7 +435,7 @@ contains
           real(8) :: tmp(4)
           tmp = T(i,j,k-1:k+2)
           associate(ww => w)
-            G(:,i-1,j-1,k) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
+            G(i-1,j-1,k,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
                                   w(idx-1:idx+2), ww(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_z)
           end associate
         end block
@@ -449,7 +453,7 @@ contains
           real(8) :: tmp(2)
           tmp = T(i,j,k:k+1)
           associate(ww => w)
-            G(:,i-1,j-1,k) = KEEP(id_acc2,     rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+            G(i-1,j-1,k,:) = KEEP(id_acc2,     rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
                                   w(idx:idx+1), ww(idx:idx+1), p(idx:idx+1), tmp, Normal_z)
           end associate
         end block
@@ -469,7 +473,7 @@ contains
           real(8) :: tmp(4)
           tmp = T(i,j,k-1:k+2)
           associate(ww => w)
-            G(:,i-1,j-1,k) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
+            G(i-1,j-1,k,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
                                   w(idx-1:idx+2), ww(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_z)
           end associate
         end block
@@ -487,7 +491,7 @@ contains
           real(8) :: tmp(2)
           tmp = T(i,j,k:k+1)
           associate(ww => w)
-            G(:,i-1,j-1,k) = KEEP(id_acc2,     rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+            G(i-1,j-1,k,:) = KEEP(id_acc2,     rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
                                   w(idx:idx+1), ww(idx:idx+1), p(idx:idx+1), tmp, Normal_z)
           end associate
         end block
@@ -506,7 +510,7 @@ contains
         real(8) :: tmp(2)
         tmp = T(i,j,k:k+1)
         associate(ww => w)
-          G(:,i-1,j-1,k) = KEEP(id_acc,      rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+          G(i-1,j-1,k,:) = KEEP(id_acc,      rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
                                 w(idx:idx+1), ww(idx:idx+1), p(idx:idx+1), tmp, Normal_z)
         end associate
       end block
@@ -523,7 +527,7 @@ contains
     if (compute_slau) then
       associate(un1 => wl, un2 => w_r)
         call SLAU(id_slau, rhol, rho_r, ul, u_r, vl, v_r, wl, w_r, un1, un2, pl, p_r, Normal_z, 1.0_sp, &
-                  G(1,i-1,j-1,k), G(2,i-1,j-1,k), G(3,i-1,j-1,k), G(4,i-1,j-1,k), G(5,i-1,j-1,k))
+                  G(i-1,j-1,k,1), G(i-1,j-1,k,2), G(i-1,j-1,k,3), G(i-1,j-1,k,4), G(i-1,j-1,k,5))
       end associate
     endif
   end subroutine calc_hybrid_z

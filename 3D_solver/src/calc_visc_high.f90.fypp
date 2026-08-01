@@ -2,9 +2,6 @@
 #:if not defined('VISC_ORDER')
   #:set VISC_ORDER = ORDER
 #:endif
-#:if not defined('VISC_STENCIL')
-  #:set VISC_STENCIL = 'Central'
-#:endif
 #:set is_les = (VISC == 'LES')
 #:set base_suf = ""
 #:if VISC_ORDER == 2
@@ -12,38 +9,39 @@ module calc_visc_high
 end module calc_visc_high
 #:else
 module calc_visc_high
+  use libm
   use mod_globals, only : gamma, R, Pr, Prt, dt, threadsEv, threadsFv, threadsGv
   use mod_constant, only : id_visc, Cp, gamma_1, Cp_over_Pr, one_third, two_third, one_twelfth
-  #:if VISC_ORDER == 4
-  use load_smem_visc_cent4
-  #:elif VISC_STENCIL == 'ME4Base'
-  use load_smem_visc_me4_base
-  #:else
-  use load_smem_visc_cent6
-  #:endif
+  use load_smem_visc_cent${VISC_ORDER}$
   implicit none
   private
   public calc_Ev${VISC_ORDER}$, calc_Fv${VISC_ORDER}$, calc_Gv${VISC_ORDER}$, &
          calc_Ev${VISC_ORDER}$_koff, calc_Fv${VISC_ORDER}$_koff, calc_Gv${VISC_ORDER}$_koff
   real(8), parameter :: one_24 = 1.d0 / 24.d0
 contains
-  #:if VISC_ORDER == 4
   #:include 'calc_visc_cent.f90.fypp'
-  #:elif VISC_STENCIL == 'ME4Base'
-  include 'calc_visc_me4_base.f90'
-  #:else
-  #:include 'calc_visc_cent.f90.fypp'
-  #:endif
+
+  ! mu is never held in shared memory: `mui = interp(mu)` is read via a
+  ! handful of scalar global-memory reads and computed ONCE (via the
+  ! scalar-argument interp${VISC_ORDER}$_s), then reused unchanged by all 3
+  ! calc_tau_straight/calc_tau_cross calls. Likewise `T` is never stored to
+  ! a register array; diff${VISC_ORDER}$_s is called directly on scalar
+  ! reads. u,v,w and their cross-gradients are loaded once into persistent
+  ! shared buffers by a single load_smem_visc_cent call.
+  ! `valid` gates whether THIS thread's (i,j,k) is in-array-bounds at all;
+  ! `interior` (only meaningful when valid) picks the high-order stencil
+  ! vs. the 2nd-order boundary fallback.
 
 #:for is_koff in [False, True]
   #:set suf = base_suf
   #:if is_koff
     #:set suf = suf + "_koff"
   #:endif
-  attributes(global) subroutine calc_Ev${VISC_ORDER}$${suf}$(nx, ny, nz, dx, dy, dz, Q, T, mu, &
+  attributes(global) subroutine calc_Ev${VISC_ORDER}$${suf}$(nx, ny, nz, dx, dy, dz, Q_2, Q_3, Q_4, T, mu, &
     #:if is_les
       mut, qc2, &
     #:endif
+    vy, wz, &
     #:if is_koff
       k_lo, k_hi, &
     #:endif
@@ -54,14 +52,18 @@ contains
     real(8), intent(in), device, contiguous    :: dx(nx-1)
     real(8), intent(in), device, contiguous    :: dy(ny-1)
     real(8), intent(in), device, contiguous    :: dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Q(nx,5,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: T(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
     #:if is_les
     real(8), intent(in), device, contiguous    :: mut(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: qc2(nx,ny,nz)
     #:endif
-    real(8), intent(inout), device, contiguous :: E(5,nx-1,ny-2,nz-2)
+    real(8), intent(in), device, contiguous    :: vy(nx,ny,nz) !< dv/dy at cell-center, precomputed by calc_div (interior branch only)
+    real(8), intent(in), device, contiguous    :: wz(nx,ny,nz) !< dw/dz at cell-center, precomputed by calc_div (interior branch only)
+    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
     #:if is_koff
     integer, intent(in), value                 :: k_lo
     integer, intent(in), value                 :: k_hi
@@ -78,13 +80,18 @@ contains
     real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared ::  v
     real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared ::  w
     real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: uy
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: vy
     real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: uz
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: wz
-    integer i, j, k, it, jt, kt, ii, idx, offset_yz
-    real(8) :: txx, txy, txz, utxx, vtxy, wtxz, kTx
+    integer i, j, k, it, jt, kt, idx, offset_yz
+    logical :: valid, interior
+    real(8) :: kTx, utau_sum, mui
+    ! only the boundary-path scalars actually needed by a LATER stage persist
+    ! at subroutine scope; everything used within a single stage is declared
+    ! inside that stage's own `block` below to keep its register live range
+    ! short.
+    real(8) :: mx, muy, muz
     #:if is_les
-    real(8) Hsgs
+    real(8) :: Hsgs, mxsgs, muysgs, muzsgs, muti
+    real(8) :: H(2*io_v+2), Hb(2)
     #:endif
     it = threadIdx%x
     jt = threadIdx%y
@@ -96,177 +103,243 @@ contains
     k  = (blockIdx%z-1)*blockDim%z + kt + 1
     #:endif
     offset_yz = (jt-1)*sx + (kt-1)*sx*sy
-    #:if VISC_ORDER == 4
-    call load_smem_visc_cent4_x(it, jt, kt, j, k, nx, ny, nz, dy, dz, Q, u, v, w, uy, vy, uz, wz)
-    #:elif VISC_STENCIL == 'ME4Base'
-    call load_smem_visc_me4_base_x(it, jt, kt, j, k, nx, ny, nz, dy, dz, Q, u, v, w, uy, vy, uz, wz)
-    #:else
-    call load_smem_visc_cent6_x(it, jt, kt, j, k, nx, ny, nz, dy, dz, Q, u, v, w, uy, vy, uz, wz)
-    #:endif
+    call load_smem_visc_cent${VISC_ORDER}$_x(it, jt, kt, j, k, nx, ny, nz, dy(j), dz(k), Q_2, Q_3, Q_4, u, v, w, uy, uz)
     i  = (blockIdx%x-1)*blockDim%x + it
     idx = it + offset_yz
     #:if is_koff
-    if (nx-1 < i .or. ny-1 < j .or. k_hi < k) return
+    valid = .not. (nx-1 < i .or. ny-1 < j .or. k_hi < k)
     #:else
-    if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
+    valid = .not. (nx-1 < i .or. ny-1 < j .or. nz-1 < k)
     #:endif
-    #:if VISC_ORDER == 4
-    if (2 <= i .and. i <= nx-2 .and. 3 <= j .and. j <= ny-2 .and. 3 <= k .and. k <= nz-2) then
+    if (valid) then
+      interior = (io_v+1 <= i .and. i <= nx-io_v-1 .and. io_v+2 <= j .and. j <= ny-io_v-1 .and. io_v+2 <= k .and. k <= nz-io_v-1)
+    endif
+
+    ! ---- straight component -> E(...,2) ----
+    if (valid) then
+    if (interior) then
       block
-        real(8) :: mu4(4)
+        real(8) :: Tx
+        #:if VISC_ORDER == 4
+        mui = interp${VISC_ORDER}$_s(mu(i,j,k)+mu(i+1,j,k), mu(i-1,j,k)+mu(i+2,j,k))
+        Tx  = diff${VISC_ORDER}$_s(dx(i), T(i,j,k)-T(i+1,j,k), T(i-1,j,k)-T(i+2,j,k))
         #:if is_les
-        real(8) :: mut4(4)
-        mut4(:) = mut(i-1:i+2, j, k)
+        muti = interp${VISC_ORDER}$_s(mut(i,j,k)+mut(i+1,j,k), mut(i-1,j,k)+mut(i+2,j,k))
+        H(1) = Cp*T(i-1,j,k) + 0.5d0*u(idx-1)**2 + qc2(i-1,j,k)
+        H(2) = Cp*T(i,  j,k) + 0.5d0*u(idx  )**2 + qc2(i,  j,k)
+        H(3) = Cp*T(i+1,j,k) + 0.5d0*u(idx+1)**2 + qc2(i+1,j,k)
+        H(4) = Cp*T(i+2,j,k) + 0.5d0*u(idx+2)**2 + qc2(i+2,j,k)
         #:endif
-        mu4(:) = mu(i-1:i+2, j, k)
-        kTx = Cp_over_Pr * interp4(mu4) * diff4(dx(i), T(i-1:i+2, j, k))
-        #:if is_les
-        call calc_tau_straight_LES(mu4, mut4, u(idx-1:idx+2), vy(idx-1:idx+2), wz(idx-1:idx+2), dx(i), txx, utxx)
-        call calc_tau_cross_LES(mu4, mut4, v(idx-1:idx+2), uy(idx-1:idx+2), dx(i), txy, vtxy)
-        call calc_tau_cross_LES(mu4, mut4, w(idx-1:idx+2), uz(idx-1:idx+2), dx(i), txz, wtxz)
-        block
-          real(8) :: H(4)
-          H(:) = Cp * T(i-1:i+2,j,k) + 0.5d0 * (u(idx-1:idx+2)**2 + v(idx-1:idx+2)**2 + w(idx-1:idx+2)**2) + qc2(i-1:i+2,j,k)
-          Hsgs = -interp4(mut4) * diff4(dx(i), H) / Prt
-        end block
         #:else
-        call calc_tau_straight(mu4, u(idx-1:idx+2), vy(idx-1:idx+2), wz(idx-1:idx+2), dx(i), txx, utxx)
-        call calc_tau_cross(mu4, v(idx-1:idx+2), uy(idx-1:idx+2), dx(i), txy, vtxy)
-        call calc_tau_cross(mu4, w(idx-1:idx+2), uz(idx-1:idx+2), dx(i), txz, wtxz)
-        #:endif
-      end block
-    #:elif VISC_STENCIL == 'ME4Base'
-    if (3 <= i .and. i <= nx-3 .and. 3 <= j .and. j <= ny-2 .and. 3 <= k .and. k <= nz-2) then
-      block
-        real(8) :: mu3(3)
+        mui = interp${VISC_ORDER}$_s(mu(i-2,j,k)+mu(i+3,j,k), mu(i-1,j,k)+mu(i+2,j,k), mu(i,j,k)+mu(i+1,j,k))
+        Tx  = diff${VISC_ORDER}$_s(dx(i), -T(i-2,j,k)+T(i+3,j,k), T(i-1,j,k)-T(i+2,j,k), -T(i,j,k)+T(i+1,j,k))
         #:if is_les
-        real(8) :: mut3(3)
-        mut3(:) = 0.0625d0 * (9.d0 * (mut(i-1:i+1,j,k) + mut(i:i+2,j,k)) - (mut(i-2:i,j,k) + mut(i+1:i+3,j,k)))
+        muti = interp${VISC_ORDER}$_s(mut(i-2,j,k)+mut(i+3,j,k), mut(i-1,j,k)+mut(i+2,j,k), mut(i,j,k)+mut(i+1,j,k))
+        H(1) = Cp*T(i-2,j,k) + 0.5d0*u(idx-2)**2 + qc2(i-2,j,k)
+        H(2) = Cp*T(i-1,j,k) + 0.5d0*u(idx-1)**2 + qc2(i-1,j,k)
+        H(3) = Cp*T(i,  j,k) + 0.5d0*u(idx  )**2 + qc2(i,  j,k)
+        H(4) = Cp*T(i+1,j,k) + 0.5d0*u(idx+1)**2 + qc2(i+1,j,k)
+        H(5) = Cp*T(i+2,j,k) + 0.5d0*u(idx+2)**2 + qc2(i+2,j,k)
+        H(6) = Cp*T(i+3,j,k) + 0.5d0*u(idx+3)**2 + qc2(i+3,j,k)
         #:endif
-        mu3(:)  = 0.0625d0 * (9.d0 * ( mu(i-1:i+1,j,k) +  mu(i:i+2,j,k)) - ( mu(i-2:i,j,k) +  mu(i+1:i+3,j,k)))
-        block ! dQdx
-          real(8) :: kTx3(3)
-          kTx3(:) = Cp_over_Pr * mu3(:) * &
-                    (1.125d0 * (-T(i-1:i+1,j,k) + T(i:i+2,j,k)) - (-T(i-2:i,j,k) + T(i+1:i+3,j,k)) * one_24) * dx(i)
-          kTx     = flux4(kTx3(:))
-        end block
-        #:if is_les
-        call calc_tau_straight_LES(mu3, mut3, u(idx-2:idx+3), vy(idx-2:idx+3), wz(idx-2:idx+3), dx(i), txx, utxx)
-        call calc_tau_cross_LES(mu3, mut3, v(idx-2:idx+3), uy(idx-2:idx+3), dx(i), txy, vtxy)
-        call calc_tau_cross_LES(mu3, mut3, w(idx-2:idx+3), uz(idx-2:idx+3), dx(i), txz, wtxz)
+        #:endif
+        kTx = Cp_over_Pr * mui * Tx
         block
-          real(8) :: H(4)
-          H(:) = Cp * T(i-1:i+2,j,k) + 0.5d0 * (u(idx-1:idx+2)**2 + v(idx-1:idx+2)**2 + w(idx-1:idx+2)**2) + qc2(i-1:i+2,j,k)
-          Hsgs = -flux4(mut3) * (1.125d0 * (-H(2) + H(3)) - (-H(1) + H(4)) * one_24) * dx(i) / Prt
+          real(8) :: tau, utau
+          #:if is_les
+          call calc_tau_straight_LES(mui, muti, u(idx-io_v:idx+io_v+1), vy(i-io_v:i+io_v+1,j,k), wz(i-io_v:i+io_v+1,j,k), dx(i), tau, utau)
+          #:else
+          call calc_tau_straight(mui, u(idx-io_v:idx+io_v+1), vy(i-io_v:i+io_v+1,j,k), wz(i-io_v:i+io_v+1,j,k), dx(i), tau, utau)
+          #:endif
+          call __stcg(E(i,j-1,k-1,2), __ldlu(E(i,j-1,k-1,2)) - tau)
+          utau_sum = utau
         end block
-        #:else
-        call calc_tau_straight(mu3, u(idx-2:idx+3), vy(idx-2:idx+3), wz(idx-2:idx+3), dx(i), txx, utxx)
-        call calc_tau_cross(mu3, v(idx-2:idx+3), uy(idx-2:idx+3), dx(i), txy, vtxy)
-        call calc_tau_cross(mu3, w(idx-2:idx+3), uz(idx-2:idx+3), dx(i), txz, wtxz)
-        #:endif
       end block
-    #:else
-    if (3 <= i .and. i <= nx-3 .and. 4 <= j .and. j <= ny-3 .and. 4 <= k .and. k <= nz-3) then
-      block
-        real(8) :: mu6(6)
-        #:if is_les
-        real(8) :: mut6(6)
-        mut6(:) = mut(i-2:i+3, j, k)
-        #:endif
-        mu6(:) = mu(i-2:i+3, j, k)
-        kTx = Cp_over_Pr * interp6(mu6) * diff6(dx(i), T(i-2:i+3, j, k))
-        #:if is_les
-        call calc_tau_straight_LES(mu6, mut6, u(idx-2:idx+3), vy(idx-2:idx+3), wz(idx-2:idx+3), dx(i), txx, utxx)
-        call calc_tau_cross_LES(mu6, mut6, v(idx-2:idx+3), uy(idx-2:idx+3), dx(i), txy, vtxy)
-        call calc_tau_cross_LES(mu6, mut6, w(idx-2:idx+3), uz(idx-2:idx+3), dx(i), txz, wtxz)
-        block
-          real(8) :: H(6)
-          H(:) = Cp * T(i-2:i+3,j,k) + 0.5d0 * (u(idx-2:idx+3)**2 + v(idx-2:idx+3)**2 + w(idx-2:idx+3)**2) + qc2(i-2:i+3,j,k)
-          Hsgs = -interp6(mut6) * diff6(dx(i), H) / Prt
-        end block
-        #:else
-        call calc_tau_straight(mu6, u(idx-2:idx+3), vy(idx-2:idx+3), wz(idx-2:idx+3), dx(i), txx, utxx)
-        call calc_tau_cross(mu6, v(idx-2:idx+3), uy(idx-2:idx+3), dx(i), txy, vtxy)
-        call calc_tau_cross(mu6, w(idx-2:idx+3), uz(idx-2:idx+3), dx(i), txz, wtxz)
-        #:endif
-      end block
-    #:endif
     else
       block
-        real(8) mx, mux, mvx, mwx, muy, mvy, muz, mwz
+        real(8) :: mu_c, mu_e, T_c, T_e, mvy, mwz, mux
         #:if is_les
-        real(8) mysgs(2), mzsgs(2)
-        real(8) mxsgs, muxsgs, mvxsgs, mwxsgs, muysgs, mvysgs, muzsgs, mwzsgs
-        mxsgs    = 0.5d0 * (mut(i,j,k) + mut(i+1,j,k))
-        mysgs(:) = (/0.25d0 * (mut(i,j-1,k) + mut(i,j,k) + mut(i+1,j-1,k) + mut(i+1,j,k)), &
-                     0.25d0 * (mut(i,j,k) + mut(i,j+1,k) + mut(i+1,j,k) + mut(i+1,j+1,k))/)
-        mzsgs(:) = (/0.25d0 * (mut(i,j,k-1) + mut(i,j,k) + mut(i+1,j,k-1) + mut(i+1,j,k)), &
-                     0.25d0 * (mut(i,j,k) + mut(i,j,k+1) + mut(i+1,j,k) + mut(i+1,j,k+1))/)
+        real(8) :: mut_c, mut_e, mvysgs, mwzsgs, muxsgs
         #:endif
-        mx       = 0.5d0 * (mu(i,j,k) + mu(i+1,j,k))
-        kTx      = Cp_over_Pr * mx * (-T(i,j,k) + T(i+1,j,k)) * dx(i)
+        mu_c = mu(i,  j,k)
+        mu_e = mu(i+1,j,k)
+        mx   = 0.5d0 * (mu_c + mu_e)
+        T_c  = T(i,  j,k)
+        T_e  = T(i+1,j,k)
+        kTx  = Cp_over_Pr * mx * (T_e - T_c) * dx(i)
+        #:if is_les
+        mut_c = mut(i,  j,k)
+        mut_e = mut(i+1,j,k)
+        mxsgs = 0.5d0 * (mut_c + mut_e)
+        #:endif
         block
-          real(8) :: my(2)
-          my(1) = 0.25d0 * (mu(i,j-1,k) + mu(i,j,  k) + mu(i+1,j-1,k) + mu(i+1,j,  k))
-          my(2) = 0.25d0 * (mu(i,j,  k) + mu(i,j+1,k) + mu(i+1,j,  k) + mu(i+1,j+1,k))
-          muy = 0.25d0 * (my(1) * (-Q(i,2,j-1,k) + Q(i,2,j,k) - Q(i+1,2,j-1,k) + Q(i+1,2,j,k)) &
-                        + my(2) * (-Q(i,2,j,k) + Q(i,2,j+1,k) - Q(i+1,2,j,k) + Q(i+1,2,j+1,k))) * dy(j)
-          mvy = 0.25d0 * (my(1) * (-Q(i,3,j-1,k) + Q(i,3,j,k) - Q(i+1,3,j-1,k) + Q(i+1,3,j,k)) &
-                        + my(2) * (-Q(i,3,j,k) + Q(i,3,j+1,k) - Q(i+1,3,j,k) + Q(i+1,3,j+1,k))) * dy(j)
+          real(8) :: my(2), mu_cjm, mu_cjp, mu_ejm, mu_ejp
           #:if is_les
-          muysgs = 0.25d0 * (mysgs(1) * (-Q(i,2,j-1,k) + Q(i,2,j,k) - Q(i+1,2,j-1,k) + Q(i+1,2,j,k)) &
-                           + mysgs(2) * (-Q(i,2,j,k) + Q(i,2,j+1,k) - Q(i+1,2,j,k) + Q(i+1,2,j+1,k))) * dy(j)
-          mvysgs = 0.25d0 * (mysgs(1) * (-Q(i,3,j-1,k) + Q(i,3,j,k) - Q(i+1,3,j-1,k) + Q(i+1,3,j,k)) &
-                           + mysgs(2) * (-Q(i,3,j,k) + Q(i,3,j+1,k) - Q(i+1,3,j,k) + Q(i+1,3,j+1,k))) * dy(j)
+          real(8) :: mysgs(2), mut_cjm, mut_cjp, mut_ejm, mut_ejp
+          #:endif
+          ! corner neighbours below are each read exactly once by this thread: __ldcs
+          mu_cjm = __ldcs(mu(i,  j-1,k))
+          mu_cjp = __ldcs(mu(i,  j+1,k))
+          mu_ejm = __ldcs(mu(i+1,j-1,k))
+          mu_ejp = __ldcs(mu(i+1,j+1,k))
+          my(1) = 0.25d0 * (mu_cjm + mu_c + mu_ejm + mu_e)
+          my(2) = 0.25d0 * (mu_c + mu_cjp + mu_e + mu_ejp)
+          muy = 0.25d0 * (my(1) * (-Q_2(i,j-1,k) + Q_2(i,j,k) - Q_2(i+1,j-1,k) + Q_2(i+1,j,k)) &
+                        + my(2) * (-Q_2(i,j,k) + Q_2(i,j+1,k) - Q_2(i+1,j,k) + Q_2(i+1,j+1,k))) * dy(j)
+          mvy = 0.25d0 * (my(1) * (-Q_3(i,j-1,k) + Q_3(i,j,k) - Q_3(i+1,j-1,k) + Q_3(i+1,j,k)) &
+                        + my(2) * (-Q_3(i,j,k) + Q_3(i,j+1,k) - Q_3(i+1,j,k) + Q_3(i+1,j+1,k))) * dy(j)
+          #:if is_les
+          mut_cjm = __ldcs(mut(i,  j-1,k))
+          mut_cjp = __ldcs(mut(i,  j+1,k))
+          mut_ejm = __ldcs(mut(i+1,j-1,k))
+          mut_ejp = __ldcs(mut(i+1,j+1,k))
+          mysgs(:) = (/0.25d0 * (mut_cjm + mut_c + mut_ejm + mut_e), &
+                       0.25d0 * (mut_c + mut_cjp + mut_e + mut_ejp)/)
+          muysgs = 0.25d0 * (mysgs(1) * (-Q_2(i,j-1,k) + Q_2(i,j,k) - Q_2(i+1,j-1,k) + Q_2(i+1,j,k)) &
+                           + mysgs(2) * (-Q_2(i,j,k) + Q_2(i,j+1,k) - Q_2(i+1,j,k) + Q_2(i+1,j+1,k))) * dy(j)
+          mvysgs = 0.25d0 * (mysgs(1) * (-Q_3(i,j-1,k) + Q_3(i,j,k) - Q_3(i+1,j-1,k) + Q_3(i+1,j,k)) &
+                           + mysgs(2) * (-Q_3(i,j,k) + Q_3(i,j+1,k) - Q_3(i+1,j,k) + Q_3(i+1,j+1,k))) * dy(j)
           #:endif
         end block
         block
-          real(8) :: mz(2)
-          mz(1) = 0.25d0 * (mu(i,j,k-1) + mu(i,j,k  ) + mu(i+1,j,k-1) + mu(i+1,j,k  ))
-          mz(2) = 0.25d0 * (mu(i,j,k  ) + mu(i,j,k+1) + mu(i+1,j,k  ) + mu(i+1,j,k+1))
-          muz = 0.25d0 * (mz(1) * (-Q(i,2,j,k-1) + Q(i,2,j,k) - Q(i+1,2,j,k-1) + Q(i+1,2,j,k)) &
-                        + mz(2) * (-Q(i,2,j,k) + Q(i,2,j,k+1) - Q(i+1,2,j,k) + Q(i+1,2,j,k+1))) * dz(k)
-          mwz = 0.25d0 * (mz(1) * (-Q(i,4,j,k-1) + Q(i,4,j,k) - Q(i+1,4,j,k-1) + Q(i+1,4,j,k)) &
-                        + mz(2) * (-Q(i,4,j,k) + Q(i,4,j,k+1) - Q(i+1,4,j,k) + Q(i+1,4,j,k+1))) * dz(k)
+          real(8) :: mz(2), mu_ckm, mu_ckp, mu_ekm, mu_ekp
           #:if is_les
-          muzsgs = 0.25d0 * (mzsgs(1) * (-Q(i,2,j,k-1) + Q(i,2,j,k) - Q(i+1,2,j,k-1) + Q(i+1,2,j,k)) &
-                           + mzsgs(2) * (-Q(i,2,j,k) + Q(i,2,j,k+1) - Q(i+1,2,j,k) + Q(i+1,2,j,k+1))) * dz(k)
-          mwzsgs = 0.25d0 * (mzsgs(1) * (-Q(i,4,j,k-1) + Q(i,4,j,k) - Q(i+1,4,j,k-1) + Q(i+1,4,j,k)) &
-                           + mzsgs(2) * (-Q(i,4,j,k) + Q(i,4,j,k+1) - Q(i+1,4,j,k) + Q(i+1,4,j,k+1))) * dz(k)
+          real(8) :: mzsgs(2), mut_ckm, mut_ckp, mut_ekm, mut_ekp
+          #:endif
+          ! corner neighbours below are each read exactly once by this thread: __ldcs
+          mu_ckm = __ldcs(mu(i,  j,k-1))
+          mu_ckp = __ldcs(mu(i,  j,k+1))
+          mu_ekm = __ldcs(mu(i+1,j,k-1))
+          mu_ekp = __ldcs(mu(i+1,j,k+1))
+          mz(1) = 0.25d0 * (mu_ckm + mu_c + mu_ekm + mu_e)
+          mz(2) = 0.25d0 * (mu_c + mu_ckp + mu_e + mu_ekp)
+          muz = 0.25d0 * (mz(1) * (-Q_2(i,j,k-1) + Q_2(i,j,k) - Q_2(i+1,j,k-1) + Q_2(i+1,j,k)) &
+                        + mz(2) * (-Q_2(i,j,k) + Q_2(i,j,k+1) - Q_2(i+1,j,k) + Q_2(i+1,j,k+1))) * dz(k)
+          mwz = 0.25d0 * (mz(1) * (-Q_4(i,j,k-1) + Q_4(i,j,k) - Q_4(i+1,j,k-1) + Q_4(i+1,j,k)) &
+                        + mz(2) * (-Q_4(i,j,k) + Q_4(i,j,k+1) - Q_4(i+1,j,k) + Q_4(i+1,j,k+1))) * dz(k)
+          #:if is_les
+          mut_ckm = __ldcs(mut(i,  j,k-1))
+          mut_ckp = __ldcs(mut(i,  j,k+1))
+          mut_ekm = __ldcs(mut(i+1,j,k-1))
+          mut_ekp = __ldcs(mut(i+1,j,k+1))
+          mzsgs(:) = (/0.25d0 * (mut_ckm + mut_c + mut_ekm + mut_e), &
+                       0.25d0 * (mut_c + mut_ckp + mut_e + mut_ekp)/)
+          muzsgs = 0.25d0 * (mzsgs(1) * (-Q_2(i,j,k-1) + Q_2(i,j,k) - Q_2(i+1,j,k-1) + Q_2(i+1,j,k)) &
+                           + mzsgs(2) * (-Q_2(i,j,k) + Q_2(i,j,k+1) - Q_2(i+1,j,k) + Q_2(i+1,j,k+1))) * dz(k)
+          mwzsgs = 0.25d0 * (mzsgs(1) * (-Q_4(i,j,k-1) + Q_4(i,j,k) - Q_4(i+1,j,k-1) + Q_4(i+1,j,k)) &
+                           + mzsgs(2) * (-Q_4(i,j,k) + Q_4(i,j,k+1) - Q_4(i+1,j,k) + Q_4(i+1,j,k+1))) * dz(k)
           #:endif
         end block
-        mux  = mx * (-u(idx) + u(idx+1)) * dx(i)
-        mvx  = mx * (-v(idx) + v(idx+1)) * dx(i)
-        mwx  = mx * (-w(idx) + w(idx+1)) * dx(i)
-        txx  = two_third * (2.d0 * mux - mvy - mwz)
-        txy  = muy + mvx
-        txz  = mwx + muz
-        utxx = 0.5d0 * (u(idx) + u(idx+1)) * txx
-        vtxy = 0.5d0 * (v(idx) + v(idx+1)) * txy
-        wtxz = 0.5d0 * (w(idx) + w(idx+1)) * txz
+        mux = mx * (-u(idx) + u(idx+1)) * dx(i)
         #:if is_les
         muxsgs = mxsgs * (-u(idx) + u(idx+1)) * dx(i)
-        mvxsgs = mxsgs * (-v(idx) + v(idx+1)) * dx(i)
-        mwxsgs = mxsgs * (-w(idx) + w(idx+1)) * dx(i)
-        txx    = txx + two_third * (2.d0 * muxsgs - mvysgs - mwzsgs)
-        txy    = txy + muysgs + mvxsgs
-        txz    = txz + mwxsgs + muzsgs
-        block
-          real(8) :: H(2)
-          H(:) = Cp * T(i:i+1,j,k) + 0.5d0 * (u(idx:idx+1)**2 + v(idx:idx+1)**2 + w(idx:idx+1)**2) + qc2(i:i+1,j,k)
-          Hsgs = -mxsgs * (-H(1) + H(2)) * dx(i) / Prt
-        end block
+        Hb(1) = Cp*T_c + 0.5d0*u(idx  )**2 + qc2(i,  j,k)
+        Hb(2) = Cp*T_e + 0.5d0*u(idx+1)**2 + qc2(i+1,j,k)
         #:endif
+        block
+          real(8) :: tau, utau
+          tau  = two_third * fma(2.d0, mux, -(mvy + mwz))
+          utau = 0.5d0 * (u(idx) + u(idx+1)) * tau
+          #:if is_les
+          tau = fma(two_third, fma(2.d0, muxsgs, -(mvysgs + mwzsgs)), tau)
+          #:endif
+          call __stcg(E(i,j-1,k-1,2), __ldlu(E(i,j-1,k-1,2)) - tau)
+          utau_sum = utau
+        end block
       end block
     endif
-    E(2,i,j-1,k-1) = E(2,i,j-1,k-1) - txx
-    E(3,i,j-1,k-1) = E(3,i,j-1,k-1) - txy
-    E(4,i,j-1,k-1) = E(4,i,j-1,k-1) - txz
-    E(5,i,j-1,k-1) = E(5,i,j-1,k-1) - (utxx + vtxy + wtxz + kTx &
+    endif
+
+    ! ---- cross component #1 -> E(...,3) ----
+    if (valid) then
+    if (interior) then
+      block
+        real(8) :: tau, utau
+        #:if is_les
+        H(:) = H(:) + 0.5d0*v(idx-io_v:idx+io_v+1)**2
+        call calc_tau_cross_LES(mui, muti, v(idx-io_v:idx+io_v+1), uy(idx-io_v:idx+io_v+1), dx(i), tau, utau)
+        #:else
+        call calc_tau_cross(mui, v(idx-io_v:idx+io_v+1), uy(idx-io_v:idx+io_v+1), dx(i), tau, utau)
+        #:endif
+        call __stcg(E(i,j-1,k-1,3), __ldlu(E(i,j-1,k-1,3)) - tau)
+        utau_sum = utau_sum + utau
+      end block
+    else
+      block
+        real(8) :: tau, utau, mvx
+        #:if is_les
+        real(8) :: mvxsgs
+        #:endif
+        mvx = mx * (-v(idx) + v(idx+1)) * dx(i)
+        #:if is_les
+        mvxsgs = mxsgs * (-v(idx) + v(idx+1)) * dx(i)
+        Hb(1) = Hb(1) + 0.5d0*v(idx  )**2
+        Hb(2) = Hb(2) + 0.5d0*v(idx+1)**2
+        #:endif
+        tau  = muy + mvx
+        utau = 0.5d0 * (v(idx) + v(idx+1)) * tau
+        #:if is_les
+        tau = tau + muysgs + mvxsgs
+        #:endif
+        call __stcg(E(i,j-1,k-1,3), __ldlu(E(i,j-1,k-1,3)) - tau)
+        utau_sum = utau_sum + utau
+      end block
+    endif
+    endif
+
+    ! ---- cross component #2 -> E(...,4) ----
+    if (valid) then
+    if (interior) then
+      block
+        real(8) :: tau, utau
+        #:if is_les
+        H(:) = H(:) + 0.5d0*w(idx-io_v:idx+io_v+1)**2
+        Hsgs = -muti * diff${VISC_ORDER}$_s(dx(i), &
+        #:if VISC_ORDER == 4
+        H(2)-H(3), H(1)-H(4) &
+        #:else
+        -H(1)+H(6), H(2)-H(5), -H(3)+H(4) &
+        #:endif
+        ) / Prt
+        call calc_tau_cross_LES(mui, muti, w(idx-io_v:idx+io_v+1), uz(idx-io_v:idx+io_v+1), dx(i), tau, utau)
+        #:else
+        call calc_tau_cross(mui, w(idx-io_v:idx+io_v+1), uz(idx-io_v:idx+io_v+1), dx(i), tau, utau)
+        #:endif
+        call __stcg(E(i,j-1,k-1,4), __ldlu(E(i,j-1,k-1,4)) - tau)
+        utau_sum = utau_sum + utau
+      end block
+    else
+      block
+        real(8) :: tau, utau, mwx
+        #:if is_les
+        real(8) :: mwxsgs
+        #:endif
+        mwx = mx * (-w(idx) + w(idx+1)) * dx(i)
+        #:if is_les
+        mwxsgs = mxsgs * (-w(idx) + w(idx+1)) * dx(i)
+        Hb(1) = Hb(1) + 0.5d0*w(idx  )**2
+        Hb(2) = Hb(2) + 0.5d0*w(idx+1)**2
+        Hsgs = -mxsgs * (-Hb(1) + Hb(2)) * dx(i) / Prt
+        #:endif
+        tau  = mwx + muz
+        utau = 0.5d0 * (w(idx) + w(idx+1)) * tau
+        #:if is_les
+        tau = tau + mwxsgs + muzsgs
+        #:endif
+        call __stcg(E(i,j-1,k-1,4), __ldlu(E(i,j-1,k-1,4)) - tau)
+        utau_sum = utau_sum + utau
+      end block
+    endif
+    block
+      real(8) :: e5v
+      e5v = __ldlu(E(i,j-1,k-1,5))
+      call __stcg(E(i,j-1,k-1,5), e5v - (utau_sum + kTx &
     #:if is_les
       + Hsgs &
     #:endif
-    )
+      ))
+    end block
+    endif
   end subroutine calc_Ev${VISC_ORDER}$${suf}$
 #:endfor
 
@@ -276,10 +349,11 @@ contains
   #:if is_koff
     #:set suf = suf + "_koff"
   #:endif
-  attributes(global) subroutine calc_Fv${VISC_ORDER}$${suf}$(nx, ny, nz, dx, dy, dz, Q, T, mu, &
+  attributes(global) subroutine calc_Fv${VISC_ORDER}$${suf}$(nx, ny, nz, dx, dy, dz, Q_2, Q_3, Q_4, T, mu, &
     #:if is_les
       mut, qc2, &
     #:endif
+    ux, wz, &
     #:if is_koff
       k_lo, k_hi, &
     #:endif
@@ -290,14 +364,18 @@ contains
     real(8), intent(in), device, contiguous    :: dx(nx-1)
     real(8), intent(in), device, contiguous    :: dy(ny-1)
     real(8), intent(in), device, contiguous    :: dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Q(nx,5,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: T(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
     #:if is_les
     real(8), intent(in), device, contiguous    :: mut(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: qc2(nx,ny,nz)
     #:endif
-    real(8), intent(inout), device, contiguous :: F(5,nx-2,ny-1,nz-2)
+    real(8), intent(in), device, contiguous    :: ux(nx,ny,nz) !< du/dx at cell-center, precomputed by calc_div (interior branch only)
+    real(8), intent(in), device, contiguous    :: wz(nx,ny,nz) !< dw/dz at cell-center, precomputed by calc_div (interior branch only)
+    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
     #:if is_koff
     integer, intent(in), value                 :: k_lo
     integer, intent(in), value                 :: k_hi
@@ -313,14 +391,19 @@ contains
     real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared ::  u
     real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared ::  v
     real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared ::  w
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: ux
     real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: vx
     real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: vz
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: wz
-    integer i, j, k, it, jt, kt, jj, idx, offset_xz
-    real(8) :: tyx, tyy, tyz, utyx, vtyy, wtyz, kTy
+    integer i, j, k, it, jt, kt, idx, offset_xz
+    logical :: valid, interior
+    real(8) :: kTy, utau_sum, mui
+    ! only the boundary-path scalars actually needed by a LATER stage persist
+    ! at subroutine scope; everything used within a single stage is declared
+    ! inside that stage's own `block` below to keep its register live range
+    ! short.
+    real(8) :: my, mvx, mvz
     #:if is_les
-    real(8) Hsgs
+    real(8) :: Hsgs, mysgs, mvxsgs, mvzsgs, muti
+    real(8) :: H(2*io_v+2), Hb(2)
     #:endif
     it = threadIdx%x
     jt = threadIdx%y
@@ -332,179 +415,265 @@ contains
     k  = (blockIdx%z-1)*blockDim%z + kt + 1
     #:endif
     offset_xz = (it-1)*sy + (kt-1)*sy*sx
-    #:if VISC_ORDER == 4
-    call load_smem_visc_cent4_y(it, jt, kt, i, k, nx, ny, nz, dx, dz, Q, u, v, w, ux, vx, vz, wz)
-    #:elif VISC_STENCIL == 'ME4Base'
-    call load_smem_visc_me4_base_y(it, jt, kt, i, k, nx, ny, nz, dx, dz, Q, u, v, w, ux, vx, vz, wz)
-    #:else
-    call load_smem_visc_cent6_y(it, jt, kt, i, k, nx, ny, nz, dx, dz, Q, u, v, w, ux, vx, vz, wz)
-    #:endif
+    call load_smem_visc_cent${VISC_ORDER}$_y(it, jt, kt, i, k, nx, ny, nz, dx(i), dz(k), Q_2, Q_3, Q_4, u, v, w, vx, vz)
     j  = (blockIdx%y-1)*blockDim%y + jt
     idx = jt + offset_xz
     #:if is_koff
-    if (nx-1 < i .or. ny-1 < j .or. k_hi < k) return
+    valid = .not. (nx-1 < i .or. ny-1 < j .or. k_hi < k)
     #:else
-    if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
+    valid = .not. (nx-1 < i .or. ny-1 < j .or. nz-1 < k)
     #:endif
-    #:if VISC_ORDER == 4
-    if (3 <= i .and. i <= nx-2 .and. 2 <= j .and. j <= ny-2 .and. 3 <= k .and. k <= nz-2) then
+    if (valid) then
+      interior = (io_v+2 <= i .and. i <= nx-io_v-1 .and. io_v+1 <= j .and. j <= ny-io_v-1 .and. io_v+2 <= k .and. k <= nz-io_v-1)
+    endif
+
+    ! ---- straight component -> F(...,3) ----
+    if (valid) then
+    if (interior) then
       block
-        real(8) :: mu4(4), T4(4)
+        real(8) :: Tx
+        #:if VISC_ORDER == 4
+        mui = interp${VISC_ORDER}$_s(mu(i,j,k)+mu(i,j+1,k), mu(i,j-1,k)+mu(i,j+2,k))
+        Tx  = diff${VISC_ORDER}$_s(dy(j), T(i,j,k)-T(i,j+1,k), T(i,j-1,k)-T(i,j+2,k))
         #:if is_les
-        real(8) :: mut4(4)
-        mut4(:) = mut(i, j-1:j+2, k)
+        muti = interp${VISC_ORDER}$_s(mut(i,j,k)+mut(i,j+1,k), mut(i,j-1,k)+mut(i,j+2,k))
+        H(1) = Cp*T(i,j-1,k) + 0.5d0*v(idx-1)**2 + qc2(i,j-1,k)
+        H(2) = Cp*T(i,j,  k) + 0.5d0*v(idx  )**2 + qc2(i,j,  k)
+        H(3) = Cp*T(i,j+1,k) + 0.5d0*v(idx+1)**2 + qc2(i,j+1,k)
+        H(4) = Cp*T(i,j+2,k) + 0.5d0*v(idx+2)**2 + qc2(i,j+2,k)
         #:endif
-        mu4(:) = mu(i, j-1:j+2, k)
-        T4(:) = T(i, j-1:j+2, k)
-        kTy = Cp_over_Pr * interp4(mu4) * diff4(dy(j), T4)
-        #:if is_les
-        call calc_tau_straight_LES(mu4, mut4, v(idx-1:idx+2), wz(idx-1:idx+2), ux(idx-1:idx+2), dy(j), tyy, vtyy)
-        call calc_tau_cross_LES(mu4, mut4, u(idx-1:idx+2), vx(idx-1:idx+2), dy(j), tyx, utyx)
-        call calc_tau_cross_LES(mu4, mut4, w(idx-1:idx+2), vz(idx-1:idx+2), dy(j), tyz, wtyz)
-        block
-          real(8) :: H(4)
-          H(:) = Cp * T(i,j-1:j+2,k) + 0.5d0 * (u(idx-1:idx+2)**2 + v(idx-1:idx+2)**2 + w(idx-1:idx+2)**2) + qc2(i,j-1:j+2,k)
-          Hsgs = -interp4(mut4) * diff4(dy(j), H) / Prt
-        end block
         #:else
-        call calc_tau_straight(mu4, v(idx-1:idx+2), wz(idx-1:idx+2), ux(idx-1:idx+2), dy(j), tyy, vtyy)
-        call calc_tau_cross(mu4, u(idx-1:idx+2), vx(idx-1:idx+2), dy(j), tyx, utyx)
-        call calc_tau_cross(mu4, w(idx-1:idx+2), vz(idx-1:idx+2), dy(j), tyz, wtyz)
-        #:endif
-      end block
-    #:elif VISC_STENCIL == 'ME4Base'
-    if (3 <= i .and. i <= nx-2 .and. 3 <= j .and. j <= ny-3 .and. 3 <= k .and. k <= nz-2) then
-      block
-        real(8) :: mu3(3)
+        mui = interp${VISC_ORDER}$_s(mu(i,j-2,k)+mu(i,j+3,k), mu(i,j-1,k)+mu(i,j+2,k), mu(i,j,k)+mu(i,j+1,k))
+        Tx  = diff${VISC_ORDER}$_s(dy(j), -T(i,j-2,k)+T(i,j+3,k), T(i,j-1,k)-T(i,j+2,k), -T(i,j,k)+T(i,j+1,k))
         #:if is_les
-        real(8) :: mut3(3)
-        mut3(:) = 0.0625d0 * (9.d0 * (mut(i,j-1:j+1,k) + mut(i,j:j+2,k)) - (mut(i,j-2:j,k) + mut(i,j+1:j+3,k)))
+        muti = interp${VISC_ORDER}$_s(mut(i,j-2,k)+mut(i,j+3,k), mut(i,j-1,k)+mut(i,j+2,k), mut(i,j,k)+mut(i,j+1,k))
+        H(1) = Cp*T(i,j-2,k) + 0.5d0*v(idx-2)**2 + qc2(i,j-2,k)
+        H(2) = Cp*T(i,j-1,k) + 0.5d0*v(idx-1)**2 + qc2(i,j-1,k)
+        H(3) = Cp*T(i,j,  k) + 0.5d0*v(idx  )**2 + qc2(i,j,  k)
+        H(4) = Cp*T(i,j+1,k) + 0.5d0*v(idx+1)**2 + qc2(i,j+1,k)
+        H(5) = Cp*T(i,j+2,k) + 0.5d0*v(idx+2)**2 + qc2(i,j+2,k)
+        H(6) = Cp*T(i,j+3,k) + 0.5d0*v(idx+3)**2 + qc2(i,j+3,k)
         #:endif
-        mu3(:)  = 0.0625d0 * (9.d0 * ( mu(i,j-1:j+1,k) +  mu(i,j:j+2,k)) - ( mu(i,j-2:j,k) +  mu(i,j+1:j+3,k)))
-        block ! dQdy
-          real(8) :: kTy3(3)
-          kTy3(:) = Cp_over_Pr * mu3(:) * &
-                    (1.125d0 * (-T(i,j-1:j+1,k) + T(i,j:j+2,k)) - (-T(i,j-2:j,k) + T(i,j+1:j+3,k)) * one_24) * dy(j)
-          kTy     = flux4(kTy3(:))
-        end block
-        #:if is_les
-        call calc_tau_straight_LES(mu3, mut3, v(idx-2:idx+3), wz(idx-2:idx+3), ux(idx-2:idx+3), dy(j), tyy, vtyy)
-        call calc_tau_cross_LES(mu3, mut3, u(idx-2:idx+3), vx(idx-2:idx+3), dy(j), tyx, utyx)
-        call calc_tau_cross_LES(mu3, mut3, w(idx-2:idx+3), vz(idx-2:idx+3), dy(j), tyz, wtyz)
+        #:endif
+        kTy = Cp_over_Pr * mui * Tx
         block
-          real(8) :: H(4)
-          H(:) = Cp * T(i,j-1:j+2,k) + 0.5d0 * (u(idx-1:idx+2)**2 + v(idx-1:idx+2)**2 + w(idx-1:idx+2)**2) + qc2(i,j-1:j+2,k)
-          Hsgs = -flux4(mut3) * (1.125d0 * (-H(2) + H(3)) - (-H(1) + H(4)) * one_24) * dy(j) / Prt
+          real(8) :: tau, utau
+          #:if VISC_ORDER == 4
+          #:if is_les
+          call calc_tau_straight_LES_s(mui, muti, v(idx-io_v:idx+io_v+1), &
+               wz(i,j,k)+wz(i,j+1,k), ux(i,j,k)+ux(i,j+1,k), &
+               wz(i,j-1,k)+wz(i,j+2,k), ux(i,j-1,k)+ux(i,j+2,k), &
+               dy(j), tau, utau)
+          #:else
+          call calc_tau_straight_s(mui, v(idx-io_v:idx+io_v+1), &
+               wz(i,j,k)+wz(i,j+1,k), ux(i,j,k)+ux(i,j+1,k), &
+               wz(i,j-1,k)+wz(i,j+2,k), ux(i,j-1,k)+ux(i,j+2,k), &
+               dy(j), tau, utau)
+          #:endif
+          #:else
+          #:if is_les
+          call calc_tau_straight_LES_s(mui, muti, v(idx-io_v:idx+io_v+1), &
+               wz(i,j-2,k)+wz(i,j+3,k), ux(i,j-2,k)+ux(i,j+3,k), &
+               wz(i,j-1,k)+wz(i,j+2,k), ux(i,j-1,k)+ux(i,j+2,k), &
+               wz(i,j,  k)+wz(i,j+1,k), ux(i,j,  k)+ux(i,j+1,k), &
+               dy(j), tau, utau)
+          #:else
+          call calc_tau_straight_s(mui, v(idx-io_v:idx+io_v+1), &
+               wz(i,j-2,k)+wz(i,j+3,k), ux(i,j-2,k)+ux(i,j+3,k), &
+               wz(i,j-1,k)+wz(i,j+2,k), ux(i,j-1,k)+ux(i,j+2,k), &
+               wz(i,j,  k)+wz(i,j+1,k), ux(i,j,  k)+ux(i,j+1,k), &
+               dy(j), tau, utau)
+          #:endif
+          #:endif
+          call __stcg(F(i-1,j,k-1,3), __ldlu(F(i-1,j,k-1,3)) - tau)
+          utau_sum = utau
         end block
-        #:else
-        call calc_tau_straight(mu3, v(idx-2:idx+3), wz(idx-2:idx+3), ux(idx-2:idx+3), dy(j), tyy, vtyy)
-        call calc_tau_cross(mu3, u(idx-2:idx+3), vx(idx-2:idx+3), dy(j), tyx, utyx)
-        call calc_tau_cross(mu3, w(idx-2:idx+3), vz(idx-2:idx+3), dy(j), tyz, wtyz)
-        #:endif
       end block
-    #:else
-    if (4 <= i .and. i <= nx-3 .and. 3 <= j .and. j <= ny-3 .and. 4 <= k .and. k <= nz-3) then
-      block
-        real(8) :: mu6(6), T6(6)
-        #:if is_les
-        real(8) :: mut6(6)
-        mut6(:) = mut(i, j-2:j+3, k)
-        #:endif
-        mu6(:) = mu(i, j-2:j+3, k)
-        T6(:) = T(i, j-2:j+3, k)
-        kTy = Cp_over_Pr * interp6(mu6) * diff6(dy(j), T6)
-        #:if is_les
-        call calc_tau_straight_LES(mu6, mut6, v(idx-2:idx+3), wz(idx-2:idx+3), ux(idx-2:idx+3), dy(j), tyy, vtyy)
-        call calc_tau_cross_LES(mu6, mut6, u(idx-2:idx+3), vx(idx-2:idx+3), dy(j), tyx, utyx)
-        call calc_tau_cross_LES(mu6, mut6, w(idx-2:idx+3), vz(idx-2:idx+3), dy(j), tyz, wtyz)
-        block
-          real(8) :: H(6)
-          H(:) = Cp * T(i,j-2:j+3,k) + 0.5d0 * (u(idx-2:idx+3)**2 + v(idx-2:idx+3)**2 + w(idx-2:idx+3)**2) + qc2(i,j-2:j+3,k)
-          Hsgs = -interp6(mut6) * diff6(dy(j), H) / Prt
-        end block
-        #:else
-        call calc_tau_straight(mu6, v(idx-2:idx+3), wz(idx-2:idx+3), ux(idx-2:idx+3), dy(j), tyy, vtyy)
-        call calc_tau_cross(mu6, u(idx-2:idx+3), vx(idx-2:idx+3), dy(j), tyx, utyx)
-        call calc_tau_cross(mu6, w(idx-2:idx+3), vz(idx-2:idx+3), dy(j), tyz, wtyz)
-        #:endif
-      end block
-    #:endif
     else
       block
-        real(8) my, muy, mvy, mwy, mvz, mwz, mux, mvx
+        real(8) :: mu_c, mu_n, T_c, T_n, mux, mwz, mvy
         #:if is_les
-        real(8) mxsgs(2), mzsgs(2)
-        real(8) mysgs, muysgs, mvysgs, mwysgs, mvzsgs, mwzsgs, muxsgs, mvxsgs
-        mysgs    = 0.5d0 * (mut(i,j,k) + mut(i,j+1,k))
-        mzsgs(:) = (/0.25d0 * (mut(i,j,k-1) + mut(i,j,k) + mut(i,j+1,k-1) + mut(i,j+1,k)), &
-                     0.25d0 * (mut(i,j,k) + mut(i,j,k+1) + mut(i,j+1,k) + mut(i,j+1,k+1))/)
-        mxsgs(:) = (/0.25d0 * (mut(i-1,j,k) + mut(i,j,k) + mut(i-1,j+1,k) + mut(i,j+1,k)), &
-                     0.25d0 * (mut(i,j,k) + mut(i+1,j,k) + mut(i,j+1,k) + mut(i+1,j+1,k))/)
+        real(8) :: mut_c, mut_n, muxsgs, mwzsgs, mvysgs
         #:endif
-        my  = 0.5d0 * (mu(i,j,k) + mu(i,j+1,k))
-        kTy = Cp_over_Pr * my * (-T(i,j,k) + T(i,j+1,k)) * dy(j)
-        block
-          real(8) :: mx(2)
-          mx(1)  = 0.25d0 * (mu(i-1,j,k) + mu(i,  j,k) + mu(i-1,j+1,k) + mu(i,  j+1,k))
-          mx(2)  = 0.25d0 * (mu(i,  j,k) + mu(i+1,j,k) + mu(i,  j+1,k) + mu(i+1,j+1,k))
-          mux    = 0.25d0 * (mx(1) * (-Q(i-1,2,j,k) + Q(i,2,j,k) - Q(i-1,2,j+1,k) + Q(i,2,j+1,k)) &
-                            + mx(2) * (-Q(i,2,j,k) + Q(i+1,2,j,k) - Q(i,2,j+1,k) + Q(i+1,2,j+1,k))) * dx(i)
-          mvx    = 0.25d0 * (mx(1) * (-Q(i-1,3,j,k) + Q(i,3,j,k) - Q(i-1,3,j+1,k) + Q(i,3,j+1,k)) &
-                            + mx(2) * (-Q(i,3,j,k) + Q(i+1,3,j,k) - Q(i,3,j+1,k) + Q(i+1,3,j+1,k))) * dx(i)
-          #:if is_les
-          muxsgs = 0.25d0 * (mxsgs(1) * (-Q(i-1,2,j,k) + Q(i,2,j,k) - Q(i-1,2,j+1,k) + Q(i,2,j+1,k)) &
-                            + mxsgs(2) * (-Q(i,2,j,k) + Q(i+1,2,j,k) - Q(i,2,j+1,k) + Q(i+1,2,j+1,k))) * dx(i)
-          mvxsgs = 0.25d0 * (mxsgs(1) * (-Q(i-1,3,j,k) + Q(i,3,j,k) - Q(i-1,3,j+1,k) + Q(i,3,j+1,k)) &
-                            + mxsgs(2) * (-Q(i,3,j,k) + Q(i+1,3,j,k) - Q(i,3,j+1,k) + Q(i+1,3,j+1,k))) * dx(i)
-          #:endif
-        end block
-        block
-          real(8) :: mz(2)
-          mz(1)  = 0.25d0 * (mu(i,j,k-1) + mu(i,j,k  ) + mu(i,j+1,k-1) + mu(i,j+1,k  ))
-          mz(2)  = 0.25d0 * (mu(i,j,k  ) + mu(i,j,k+1) + mu(i,j+1,k  ) + mu(i,j+1,k+1))
-          mvz    = 0.25d0 * (mz(1) * (-Q(i,3,j,k-1) + Q(i,3,j,k) - Q(i,3,j+1,k-1) + Q(i,3,j+1,k)) &
-                            + mz(2) * (-Q(i,3,j,k) + Q(i,3,j,k+1) - Q(i,3,j+1,k) + Q(i,3,j+1,k+1))) * dz(k)
-          mwz    = 0.25d0 * (mz(1) * (-Q(i,4,j,k-1) + Q(i,4,j,k) - Q(i,4,j+1,k-1) + Q(i,4,j+1,k)) &
-                            + mz(2) * (-Q(i,4,j,k) + Q(i,4,j,k+1) - Q(i,4,j+1,k) + Q(i,4,j+1,k+1))) * dz(k)
-          #:if is_les
-          mvzsgs = 0.25d0 * (mzsgs(1) * (-Q(i,3,j,k-1) + Q(i,3,j,k) - Q(i,3,j+1,k-1) + Q(i,3,j+1,k)) &
-                            + mzsgs(2) * (-Q(i,3,j,k) + Q(i,3,j,k+1) - Q(i,3,j+1,k) + Q(i,3,j+1,k+1))) * dz(k)
-          mwzsgs = 0.25d0 * (mzsgs(1) * (-Q(i,4,j,k-1) + Q(i,4,j,k) - Q(i,4,j+1,k-1) + Q(i,4,j+1,k)) &
-                            + mzsgs(2) * (-Q(i,4,j,k) + Q(i,4,j,k+1) - Q(i,4,j+1,k) + Q(i,4,j+1,k+1))) * dz(k)
-          #:endif
-        end block
-        muy  = my * (-u(idx) + u(idx+1)) * dy(j)
-        mvy  = my * (-v(idx) + v(idx+1)) * dy(j)
-        mwy  = my * (-w(idx) + w(idx+1)) * dy(j)
-        tyx  = muy + mvx
-        tyy  = two_third * (2.d0 * mvy - mwz - mux)
-        tyz  = mvz + mwy
-        utyx = 0.5d0 * (u(idx) + u(idx+1)) * tyx
-        vtyy = 0.5d0 * (v(idx) + v(idx+1)) * tyy
-        wtyz = 0.5d0 * (w(idx) + w(idx+1)) * tyz
+        mu_c = mu(i,j,  k)
+        mu_n = mu(i,j+1,k)
+        my   = 0.5d0 * (mu_c + mu_n)
+        T_c  = T(i,j,  k)
+        T_n  = T(i,j+1,k)
+        kTy  = Cp_over_Pr * my * (T_n - T_c) * dy(j)
         #:if is_les
-        muysgs = mysgs * (-u(idx) + u(idx+1)) * dy(j)
+        mut_c = mut(i,j,  k)
+        mut_n = mut(i,j+1,k)
+        mysgs = 0.5d0 * (mut_c + mut_n)
+        #:endif
+        block
+          real(8) :: mx(2), mu_wc, mu_wn, mu_ec, mu_en
+          #:if is_les
+          real(8) :: mxsgs(2), mut_wc, mut_wn, mut_ec, mut_en
+          #:endif
+          ! corner neighbours below are each read exactly once by this thread: __ldcs
+          mu_wc  = __ldcs(mu(i-1,j,  k))
+          mu_wn  = __ldcs(mu(i-1,j+1,k))
+          mu_ec  = __ldcs(mu(i+1,j,  k))
+          mu_en  = __ldcs(mu(i+1,j+1,k))
+          mx(1)  = 0.25d0 * (mu_wc + mu_c + mu_wn + mu_n)
+          mx(2)  = 0.25d0 * (mu_c + mu_ec + mu_n + mu_en)
+          mux    = 0.25d0 * (mx(1) * (-Q_2(i-1,j,k) + Q_2(i,j,k) - Q_2(i-1,j+1,k) + Q_2(i,j+1,k)) &
+                            + mx(2) * (-Q_2(i,j,k) + Q_2(i+1,j,k) - Q_2(i,j+1,k) + Q_2(i+1,j+1,k))) * dx(i)
+          mvx    = 0.25d0 * (mx(1) * (-Q_3(i-1,j,k) + Q_3(i,j,k) - Q_3(i-1,j+1,k) + Q_3(i,j+1,k)) &
+                            + mx(2) * (-Q_3(i,j,k) + Q_3(i+1,j,k) - Q_3(i,j+1,k) + Q_3(i+1,j+1,k))) * dx(i)
+          #:if is_les
+          mut_wc  = __ldcs(mut(i-1,j,  k))
+          mut_wn  = __ldcs(mut(i-1,j+1,k))
+          mut_ec  = __ldcs(mut(i+1,j,  k))
+          mut_en  = __ldcs(mut(i+1,j+1,k))
+          mxsgs(:) = (/0.25d0 * (mut_wc + mut_c + mut_wn + mut_n), &
+                       0.25d0 * (mut_c + mut_ec + mut_n + mut_en)/)
+          muxsgs = 0.25d0 * (mxsgs(1) * (-Q_2(i-1,j,k) + Q_2(i,j,k) - Q_2(i-1,j+1,k) + Q_2(i,j+1,k)) &
+                            + mxsgs(2) * (-Q_2(i,j,k) + Q_2(i+1,j,k) - Q_2(i,j+1,k) + Q_2(i+1,j+1,k))) * dx(i)
+          mvxsgs = 0.25d0 * (mxsgs(1) * (-Q_3(i-1,j,k) + Q_3(i,j,k) - Q_3(i-1,j+1,k) + Q_3(i,j+1,k)) &
+                            + mxsgs(2) * (-Q_3(i,j,k) + Q_3(i+1,j,k) - Q_3(i,j+1,k) + Q_3(i+1,j+1,k))) * dx(i)
+          #:endif
+        end block
+        block
+          real(8) :: mz(2), mu_ckm, mu_ckp, mu_nkm, mu_nkp
+          #:if is_les
+          real(8) :: mzsgs(2), mut_ckm, mut_ckp, mut_nkm, mut_nkp
+          #:endif
+          ! corner neighbours below are each read exactly once by this thread: __ldcs
+          mu_ckm = __ldcs(mu(i,  j,  k-1))
+          mu_ckp = __ldcs(mu(i,  j,  k+1))
+          mu_nkm = __ldcs(mu(i,  j+1,k-1))
+          mu_nkp = __ldcs(mu(i,  j+1,k+1))
+          mz(1)  = 0.25d0 * (mu_ckm + mu_c + mu_nkm + mu_n)
+          mz(2)  = 0.25d0 * (mu_c + mu_ckp + mu_n + mu_nkp)
+          mvz    = 0.25d0 * (mz(1) * (-Q_3(i,j,k-1) + Q_3(i,j,k) - Q_3(i,j+1,k-1) + Q_3(i,j+1,k)) &
+                            + mz(2) * (-Q_3(i,j,k) + Q_3(i,j,k+1) - Q_3(i,j+1,k) + Q_3(i,j+1,k+1))) * dz(k)
+          mwz    = 0.25d0 * (mz(1) * (-Q_4(i,j,k-1) + Q_4(i,j,k) - Q_4(i,j+1,k-1) + Q_4(i,j+1,k)) &
+                            + mz(2) * (-Q_4(i,j,k) + Q_4(i,j,k+1) - Q_4(i,j+1,k) + Q_4(i,j+1,k+1))) * dz(k)
+          #:if is_les
+          mut_ckm = __ldcs(mut(i,  j,  k-1))
+          mut_ckp = __ldcs(mut(i,  j,  k+1))
+          mut_nkm = __ldcs(mut(i,  j+1,k-1))
+          mut_nkp = __ldcs(mut(i,  j+1,k+1))
+          mzsgs(:) = (/0.25d0 * (mut_ckm + mut_c + mut_nkm + mut_n), &
+                       0.25d0 * (mut_c + mut_ckp + mut_n + mut_nkp)/)
+          mvzsgs = 0.25d0 * (mzsgs(1) * (-Q_3(i,j,k-1) + Q_3(i,j,k) - Q_3(i,j+1,k-1) + Q_3(i,j+1,k)) &
+                            + mzsgs(2) * (-Q_3(i,j,k) + Q_3(i,j,k+1) - Q_3(i,j+1,k) + Q_3(i,j+1,k+1))) * dz(k)
+          mwzsgs = 0.25d0 * (mzsgs(1) * (-Q_4(i,j,k-1) + Q_4(i,j,k) - Q_4(i,j+1,k-1) + Q_4(i,j+1,k)) &
+                            + mzsgs(2) * (-Q_4(i,j,k) + Q_4(i,j,k+1) - Q_4(i,j+1,k) + Q_4(i,j+1,k+1))) * dz(k)
+          #:endif
+        end block
+        mvy = my * (-v(idx) + v(idx+1)) * dy(j)
+        #:if is_les
         mvysgs = mysgs * (-v(idx) + v(idx+1)) * dy(j)
-        mwysgs = mysgs * (-w(idx) + w(idx+1)) * dy(j)
-        tyx    = tyx + muysgs + mvxsgs
-        tyy    = tyy + two_third * (2.d0 * mvysgs - mwzsgs - muxsgs)
-        tyz    = tyz + mvzsgs + mwysgs
-        block
-          real(8) :: H(2)
-          H(:) = Cp * T(i,j:j+1,k) + 0.5d0 * (u(idx:idx+1)**2 + v(idx:idx+1)**2 + w(idx:idx+1)**2) + qc2(i,j:j+1,k)
-          Hsgs = -mysgs * (-H(1) + H(2)) * dy(j) / Prt
-        end block
+        Hb(1) = Cp*T_c + 0.5d0*v(idx  )**2 + qc2(i,j,  k)
+        Hb(2) = Cp*T_n + 0.5d0*v(idx+1)**2 + qc2(i,j+1,k)
         #:endif
+        block
+          real(8) :: tau, utau
+          tau  = two_third * fma(2.d0, mvy, -(mwz + mux))
+          utau = 0.5d0 * (v(idx) + v(idx+1)) * tau
+          #:if is_les
+          tau = fma(two_third, fma(2.d0, mvysgs, -(mwzsgs + muxsgs)), tau)
+          #:endif
+          call __stcg(F(i-1,j,k-1,3), __ldlu(F(i-1,j,k-1,3)) - tau)
+          utau_sum = utau
+        end block
       end block
     endif
-    F(2,i-1,j,k-1) = F(2,i-1,j,k-1) - tyx
-    F(3,i-1,j,k-1) = F(3,i-1,j,k-1) - tyy
-    F(4,i-1,j,k-1) = F(4,i-1,j,k-1) - tyz
-    F(5,i-1,j,k-1) = F(5,i-1,j,k-1) - (utyx + vtyy + wtyz + kTy &
+    endif
+
+    ! ---- cross component #1 -> F(...,2) ----
+    if (valid) then
+    if (interior) then
+      block
+        real(8) :: tau, utau
+        #:if is_les
+        H(:) = H(:) + 0.5d0*u(idx-io_v:idx+io_v+1)**2
+        call calc_tau_cross_LES(mui, muti, u(idx-io_v:idx+io_v+1), vx(idx-io_v:idx+io_v+1), dy(j), tau, utau)
+        #:else
+        call calc_tau_cross(mui, u(idx-io_v:idx+io_v+1), vx(idx-io_v:idx+io_v+1), dy(j), tau, utau)
+        #:endif
+        call __stcg(F(i-1,j,k-1,2), __ldlu(F(i-1,j,k-1,2)) - tau)
+        utau_sum = utau_sum + utau
+      end block
+    else
+      block
+        real(8) :: tau, utau, muy
+        #:if is_les
+        real(8) :: muysgs
+        #:endif
+        muy = my * (-u(idx) + u(idx+1)) * dy(j)
+        #:if is_les
+        muysgs = mysgs * (-u(idx) + u(idx+1)) * dy(j)
+        Hb(1) = Hb(1) + 0.5d0*u(idx  )**2
+        Hb(2) = Hb(2) + 0.5d0*u(idx+1)**2
+        #:endif
+        tau  = muy + mvx
+        utau = 0.5d0 * (u(idx) + u(idx+1)) * tau
+        #:if is_les
+        tau = tau + muysgs + mvxsgs
+        #:endif
+        call __stcg(F(i-1,j,k-1,2), __ldlu(F(i-1,j,k-1,2)) - tau)
+        utau_sum = utau_sum + utau
+      end block
+    endif
+    endif
+
+    ! ---- cross component #2 -> F(...,4) ----
+    if (valid) then
+    if (interior) then
+      block
+        real(8) :: tau, utau
+        #:if is_les
+        H(:) = H(:) + 0.5d0*w(idx-io_v:idx+io_v+1)**2
+        Hsgs = -muti * diff${VISC_ORDER}$_s(dy(j), &
+        #:if VISC_ORDER == 4
+        H(2)-H(3), H(1)-H(4) &
+        #:else
+        -H(1)+H(6), H(2)-H(5), -H(3)+H(4) &
+        #:endif
+        ) / Prt
+        call calc_tau_cross_LES(mui, muti, w(idx-io_v:idx+io_v+1), vz(idx-io_v:idx+io_v+1), dy(j), tau, utau)
+        #:else
+        call calc_tau_cross(mui, w(idx-io_v:idx+io_v+1), vz(idx-io_v:idx+io_v+1), dy(j), tau, utau)
+        #:endif
+        call __stcg(F(i-1,j,k-1,4), __ldlu(F(i-1,j,k-1,4)) - tau)
+        utau_sum = utau_sum + utau
+      end block
+    else
+      block
+        real(8) :: tau, utau, mwy
+        #:if is_les
+        real(8) :: mwysgs
+        #:endif
+        mwy = my * (-w(idx) + w(idx+1)) * dy(j)
+        #:if is_les
+        mwysgs = mysgs * (-w(idx) + w(idx+1)) * dy(j)
+        Hb(1) = Hb(1) + 0.5d0*w(idx  )**2
+        Hb(2) = Hb(2) + 0.5d0*w(idx+1)**2
+        Hsgs = -mysgs * (-Hb(1) + Hb(2)) * dy(j) / Prt
+        #:endif
+        tau  = mvz + mwy
+        utau = 0.5d0 * (w(idx) + w(idx+1)) * tau
+        #:if is_les
+        tau = tau + mvzsgs + mwysgs
+        #:endif
+        call __stcg(F(i-1,j,k-1,4), __ldlu(F(i-1,j,k-1,4)) - tau)
+        utau_sum = utau_sum + utau
+      end block
+    endif
+    block
+      real(8) :: f5v
+      f5v = __ldlu(F(i-1,j,k-1,5))
+      call __stcg(F(i-1,j,k-1,5), f5v - (utau_sum + kTy &
     #:if is_les
       + Hsgs &
     #:endif
-    )
+      ))
+    end block
+    endif
   end subroutine calc_Fv${VISC_ORDER}$${suf}$
 #:endfor
 
@@ -514,10 +683,11 @@ contains
   #:if is_koff
     #:set suf = suf + "_koff"
   #:endif
-  attributes(global) subroutine calc_Gv${VISC_ORDER}$${suf}$(nx, ny, nz, dx, dy, dz, Q, T, mu, &
+  attributes(global) subroutine calc_Gv${VISC_ORDER}$${suf}$(nx, ny, nz, dx, dy, dz, Q_2, Q_3, Q_4, T, mu, &
     #:if is_les
       mut, qc2, &
     #:endif
+    ux, vy, &
     #:if is_koff
       k_lo, k_hi, &
     #:endif
@@ -528,14 +698,18 @@ contains
     real(8), intent(in), device, contiguous    :: dx(nx-1)
     real(8), intent(in), device, contiguous    :: dy(ny-1)
     real(8), intent(in), device, contiguous    :: dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Q(nx,5,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: T(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
     #:if is_les
     real(8), intent(in), device, contiguous    :: mut(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: qc2(nx,ny,nz)
     #:endif
-    real(8), intent(inout), device, contiguous :: G(5,nx-2,ny-2,nz-1)
+    real(8), intent(in), device, contiguous    :: ux(nx,ny,nz) !< du/dx at cell-center, precomputed by calc_div (interior branch only)
+    real(8), intent(in), device, contiguous    :: vy(nx,ny,nz) !< dv/dy at cell-center, precomputed by calc_div (interior branch only)
+    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     #:if is_koff
     integer, intent(in), value                 :: k_lo
     integer, intent(in), value                 :: k_hi
@@ -553,12 +727,17 @@ contains
     real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared ::  w
     real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: wx
     real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: wy
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: ux
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: vy
-    integer i, j, k, it, jt, kt, kk, idx, offset_xy
-    real(8) :: tzx, tzy, tzz, utzx, vtzy, wtzz, kTz
+    integer i, j, k, it, jt, kt, idx, offset_xy
+    logical :: valid, interior
+    real(8) :: kTz, utau_sum, mui
+    ! only the boundary-path scalars actually needed by a LATER stage persist
+    ! at subroutine scope; everything used within a single stage is declared
+    ! inside that stage's own `block` below to keep its register live range
+    ! short.
+    real(8) :: mz, mwx, mwy
     #:if is_les
-    real(8) :: Hsgs
+    real(8) :: Hsgs, mzsgs, mwxsgs, mwysgs, muti
+    real(8) :: H(2*io_v+2), Hb(2)
     #:endif
     it = threadIdx%x
     jt = threadIdx%y
@@ -567,186 +746,266 @@ contains
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
     offset_xy = (jt-1)*sz + (it-1)*sz*sy
     #:if is_koff
-    #:if VISC_ORDER == 4
-    call load_smem_visc_cent4_z_koff(it, jt, kt, i, j, nx, ny, nz, dx, dy, Q, u, v, w, ux, wx, vy, wy, k_lo)
-    #:elif VISC_STENCIL == 'ME4Base'
-    call load_smem_visc_me4_base_z_koff(it, jt, kt, i, j, nx, ny, nz, dx, dy, Q, u, v, w, ux, wx, vy, wy, k_lo)
-    #:else
-    call load_smem_visc_cent6_z_koff(it, jt, kt, i, j, nx, ny, nz, dx, dy, Q, u, v, w, ux, wx, vy, wy, k_lo)
-    #:endif
+    call load_smem_visc_cent${VISC_ORDER}$_z_koff(it, jt, kt, i, j, nx, ny, nz, dx(i), dy(j), Q_2, Q_3, Q_4, u, v, w, wx, wy, k_lo)
     k  = (blockIdx%z-1)*blockDim%z + k_lo - 1 + kt
-    if (nx-1 < i .or. ny-1 < j .or. k_hi < k) return
+    valid = .not. (nx-1 < i .or. ny-1 < j .or. k_hi < k)
     #:else
-    #:if VISC_ORDER == 4
-    call load_smem_visc_cent4_z(it, jt, kt, i, j, nx, ny, nz, dx, dy, Q, u, v, w, ux, wx, vy, wy)
-    #:elif VISC_STENCIL == 'ME4Base'
-    call load_smem_visc_me4_base_z(it, jt, kt, i, j, nx, ny, nz, dx, dy, Q, u, v, w, ux, wx, vy, wy)
-    #:else
-    call load_smem_visc_cent6_z(it, jt, kt, i, j, nx, ny, nz, dx, dy, Q, u, v, w, ux, wx, vy, wy)
-    #:endif
+    call load_smem_visc_cent${VISC_ORDER}$_z(it, jt, kt, i, j, nx, ny, nz, dx(i), dy(j), Q_2, Q_3, Q_4, u, v, w, wx, wy)
     k  = (blockIdx%z-1)*blockDim%z + kt
-    if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
+    valid = .not. (nx-1 < i .or. ny-1 < j .or. nz-1 < k)
     #:endif
     idx = kt + offset_xy
-    #:if VISC_ORDER == 4
-    if (3 <= i .and. i <= nx-2 .and. 3 <= j .and. j <= ny-2 .and. 2 <= k .and. k <= nz-2) then
+    if (valid) then
+      interior = (io_v+2 <= i .and. i <= nx-io_v-1 .and. io_v+2 <= j .and. j <= ny-io_v-1 .and. io_v+1 <= k .and. k <= nz-io_v-1)
+    endif
+
+    ! ---- straight component -> G(...,4) ----
+    if (valid) then
+    if (interior) then
       block
-        real(8) :: mu4(4), T4(4)
+        real(8) :: Tx
+        #:if VISC_ORDER == 4
+        mui = interp${VISC_ORDER}$_s(mu(i,j,k)+mu(i,j,k+1), mu(i,j,k-1)+mu(i,j,k+2))
+        Tx  = diff${VISC_ORDER}$_s(dz(k), T(i,j,k)-T(i,j,k+1), T(i,j,k-1)-T(i,j,k+2))
         #:if is_les
-        real(8) :: mut4(4)
-        mut4(:) = mut(i, j, k-1:k+2)
+        muti = interp${VISC_ORDER}$_s(mut(i,j,k)+mut(i,j,k+1), mut(i,j,k-1)+mut(i,j,k+2))
+        H(1) = Cp*T(i,j,k-1) + 0.5d0*w(idx-1)**2 + qc2(i,j,k-1)
+        H(2) = Cp*T(i,j,k  ) + 0.5d0*w(idx  )**2 + qc2(i,j,k  )
+        H(3) = Cp*T(i,j,k+1) + 0.5d0*w(idx+1)**2 + qc2(i,j,k+1)
+        H(4) = Cp*T(i,j,k+2) + 0.5d0*w(idx+2)**2 + qc2(i,j,k+2)
         #:endif
-        mu4(:) = mu(i, j, k-1:k+2)
-        T4(:) = T(i, j, k-1:k+2)
-        kTz = Cp_over_Pr * interp4(mu4) * diff4(dz(k), T4)
-        #:if is_les
-        call calc_tau_straight_LES(mu4, mut4, w(idx-1:idx+2), ux(idx-1:idx+2), vy(idx-1:idx+2), dz(k), tzz, wtzz)
-        call calc_tau_cross_LES(mu4, mut4, u(idx-1:idx+2), wx(idx-1:idx+2), dz(k), tzx, utzx)
-        call calc_tau_cross_LES(mu4, mut4, v(idx-1:idx+2), wy(idx-1:idx+2), dz(k), tzy, vtzy)
-        block
-          real(8) :: H(4)
-          H(:) = Cp * T(i,j,k-1:k+2) + 0.5d0 * (u(idx-1:idx+2)**2 + v(idx-1:idx+2)**2 + w(idx-1:idx+2)**2) + qc2(i,j,k-1:k+2)
-          Hsgs = -interp4(mut4) * diff4(dz(k), H) / Prt
-        end block
         #:else
-        call calc_tau_straight(mu4, w(idx-1:idx+2), ux(idx-1:idx+2), vy(idx-1:idx+2), dz(k), tzz, wtzz)
-        call calc_tau_cross(mu4, u(idx-1:idx+2), wx(idx-1:idx+2), dz(k), tzx, utzx)
-        call calc_tau_cross(mu4, v(idx-1:idx+2), wy(idx-1:idx+2), dz(k), tzy, vtzy)
-        #:endif
-      end block
-    #:elif VISC_STENCIL == 'ME4Base'
-    if (3 <= i .and. i <= nx-2 .and. 3 <= j .and. j <= ny-2 .and. 3 <= k .and. k <= nz-3) then
-      block
-        real(8) :: mu3(3)
+        mui = interp${VISC_ORDER}$_s(mu(i,j,k-2)+mu(i,j,k+3), mu(i,j,k-1)+mu(i,j,k+2), mu(i,j,k)+mu(i,j,k+1))
+        Tx  = diff${VISC_ORDER}$_s(dz(k), -T(i,j,k-2)+T(i,j,k+3), T(i,j,k-1)-T(i,j,k+2), -T(i,j,k)+T(i,j,k+1))
         #:if is_les
-        real(8) :: mut3(3)
-        mut3(:) = 0.0625d0 * (9.d0 * (mut(i,j,k-1:k+1) + mut(i,j,k:k+2)) - (mut(i,j,k-2:k) + mut(i,j,k+1:k+3)))
+        muti = interp${VISC_ORDER}$_s(mut(i,j,k-2)+mut(i,j,k+3), mut(i,j,k-1)+mut(i,j,k+2), mut(i,j,k)+mut(i,j,k+1))
+        H(1) = Cp*T(i,j,k-2) + 0.5d0*w(idx-2)**2 + qc2(i,j,k-2)
+        H(2) = Cp*T(i,j,k-1) + 0.5d0*w(idx-1)**2 + qc2(i,j,k-1)
+        H(3) = Cp*T(i,j,k  ) + 0.5d0*w(idx  )**2 + qc2(i,j,k  )
+        H(4) = Cp*T(i,j,k+1) + 0.5d0*w(idx+1)**2 + qc2(i,j,k+1)
+        H(5) = Cp*T(i,j,k+2) + 0.5d0*w(idx+2)**2 + qc2(i,j,k+2)
+        H(6) = Cp*T(i,j,k+3) + 0.5d0*w(idx+3)**2 + qc2(i,j,k+3)
         #:endif
-        mu3(:)  = 0.0625d0 * (9.d0 * ( mu(i,j,k-1:k+1) +  mu(i,j,k:k+2)) - ( mu(i,j,k-2:k) +  mu(i,j,k+1:k+3)))
-        block ! dQdz
-          real(8) :: kTz3(3)
-          kTz3(:) = Cp_over_Pr * mu3(:) * &
-                    (1.125d0 * (-T(i,j,k-1:k+1) + T(i,j,k:k+2)) - (-T(i,j,k-2:k) + T(i,j,k+1:k+3)) * one_24) * dz(k)
-          kTz     = flux4(kTz3(:))
-        end block
-        #:if is_les
-        call calc_tau_straight_LES(mu3, mut3, w(idx-2:idx+3), ux(idx-2:idx+3), vy(idx-2:idx+3), dz(k), tzz, wtzz)
-        call calc_tau_cross_LES(mu3, mut3, u(idx-2:idx+3), wx(idx-2:idx+3), dz(k), tzx, utzx)
-        call calc_tau_cross_LES(mu3, mut3, v(idx-2:idx+3), wy(idx-2:idx+3), dz(k), tzy, vtzy)
+        #:endif
+        kTz = Cp_over_Pr * mui * Tx
         block
-          real(8) :: H(4)
-          H(:) = Cp * T(i,j,k-1:k+2) + 0.5d0 * (u(idx-1:idx+2)**2 + v(idx-1:idx+2)**2 + w(idx-1:idx+2)**2) + qc2(i,j,k-1:k+2)
-          Hsgs = -flux4(mut3) * (1.125d0 * (-H(2) + H(3)) - (-H(1) + H(4)) * one_24) * dz(k) / Prt
+          real(8) :: tau, utau
+          #:if VISC_ORDER == 4
+          #:if is_les
+          call calc_tau_straight_LES_s(mui, muti, w(idx-io_v:idx+io_v+1), &
+               ux(i,j,k)+ux(i,j,k+1), vy(i,j,k)+vy(i,j,k+1), &
+               ux(i,j,k-1)+ux(i,j,k+2), vy(i,j,k-1)+vy(i,j,k+2), &
+               dz(k), tau, utau)
+          #:else
+          call calc_tau_straight_s(mui, w(idx-io_v:idx+io_v+1), &
+               ux(i,j,k)+ux(i,j,k+1), vy(i,j,k)+vy(i,j,k+1), &
+               ux(i,j,k-1)+ux(i,j,k+2), vy(i,j,k-1)+vy(i,j,k+2), &
+               dz(k), tau, utau)
+          #:endif
+          #:else
+          #:if is_les
+          call calc_tau_straight_LES_s(mui, muti, w(idx-io_v:idx+io_v+1), &
+               ux(i,j,k-2)+ux(i,j,k+3), vy(i,j,k-2)+vy(i,j,k+3), &
+               ux(i,j,k-1)+ux(i,j,k+2), vy(i,j,k-1)+vy(i,j,k+2), &
+               ux(i,j,k  )+ux(i,j,k+1), vy(i,j,k  )+vy(i,j,k+1), &
+               dz(k), tau, utau)
+          #:else
+          call calc_tau_straight_s(mui, w(idx-io_v:idx+io_v+1), &
+               ux(i,j,k-2)+ux(i,j,k+3), vy(i,j,k-2)+vy(i,j,k+3), &
+               ux(i,j,k-1)+ux(i,j,k+2), vy(i,j,k-1)+vy(i,j,k+2), &
+               ux(i,j,k  )+ux(i,j,k+1), vy(i,j,k  )+vy(i,j,k+1), &
+               dz(k), tau, utau)
+          #:endif
+          #:endif
+          call __stcg(G(i-1,j-1,k,4), __ldlu(G(i-1,j-1,k,4)) - tau)
+          utau_sum = utau
         end block
-        #:else
-        call calc_tau_straight(mu3, w(idx-2:idx+3), ux(idx-2:idx+3), vy(idx-2:idx+3), dz(k), tzz, wtzz)
-        call calc_tau_cross(mu3, u(idx-2:idx+3), wx(idx-2:idx+3), dz(k), tzx, utzx)
-        call calc_tau_cross(mu3, v(idx-2:idx+3), wy(idx-2:idx+3), dz(k), tzy, vtzy)
-        #:endif
       end block
-    #:else
-    if (4 <= i .and. i <= nx-3 .and. 4 <= j .and. j <= ny-3 .and. 3 <= k .and. k <= nz-3) then
-      block
-        real(8) :: mu6(6), T6(6)
-        #:if is_les
-        real(8) :: mut6(6)
-        mut6(:) = mut(i, j, k-2:k+3)
-        #:endif
-        mu6(:) = mu(i, j, k-2:k+3)
-        T6(:) = T(i, j, k-2:k+3)
-        kTz = Cp_over_Pr * interp6(mu6) * diff6(dz(k), T6)
-        #:if is_les
-        call calc_tau_straight_LES(mu6, mut6, w(idx-2:idx+3), ux(idx-2:idx+3), vy(idx-2:idx+3), dz(k), tzz, wtzz)
-        call calc_tau_cross_LES(mu6, mut6, u(idx-2:idx+3), wx(idx-2:idx+3), dz(k), tzx, utzx)
-        call calc_tau_cross_LES(mu6, mut6, v(idx-2:idx+3), wy(idx-2:idx+3), dz(k), tzy, vtzy)
-        block
-          real(8) :: H(6)
-          H(:) = Cp * T(i,j,k-2:k+3) + 0.5d0 * (u(idx-2:idx+3)**2 + v(idx-2:idx+3)**2 + w(idx-2:idx+3)**2) + qc2(i,j,k-2:k+3)
-          Hsgs = -interp6(mut6) * diff6(dz(k), H) / Prt
-        end block
-        #:else
-        call calc_tau_straight(mu6, w(idx-2:idx+3), ux(idx-2:idx+3), vy(idx-2:idx+3), dz(k), tzz, wtzz)
-        call calc_tau_cross(mu6, u(idx-2:idx+3), wx(idx-2:idx+3), dz(k), tzx, utzx)
-        call calc_tau_cross(mu6, v(idx-2:idx+3), wy(idx-2:idx+3), dz(k), tzy, vtzy)
-        #:endif
-      end block
-    #:endif
     else
       block
-        real(8) mz, muz, mvz, mwz, mwx, mux, mvy, mwy
+        real(8) :: mu_c, mu_t, T_c, T_t, mux, mvy, mwz
         #:if is_les
-        real(8) mxsgs(2), mysgs(2)
-        real(8) mzsgs, muzsgs, mvzsgs, mwzsgs, mwxsgs, muxsgs, mvysgs, mwysgs
-        mzsgs    = 0.5d0 * (mut(i,j,k) + mut(i,j,k+1))
-        mxsgs(:) = (/0.25d0 * (mut(i-1,j,k) + mut(i,j,k) + mut(i-1,j,k+1) + mut(i,j,k+1)), &
-                     0.25d0 * (mut(i,j,k) + mut(i+1,j,k) + mut(i,j,k+1) + mut(i+1,j,k+1))/)
-        mysgs(:) = (/0.25d0 * (mut(i,j-1,k) + mut(i,j,k) + mut(i,j-1,k+1) + mut(i,j,k+1)), &
-                     0.25d0 * (mut(i,j,k) + mut(i,j+1,k) + mut(i,j,k+1) + mut(i,j+1,k+1))/)
+        real(8) :: mut_c, mut_t, muxsgs, mvysgs, mwzsgs
+        #:endif
+        mu_c = mu(i,  j,  k)
+        mu_t = mu(i,  j,  k+1)
+        mz   = 0.5d0 * (mu_c + mu_t)
+        T_c  = T(i,j,k  )
+        T_t  = T(i,j,k+1)
+        kTz  = Cp_over_Pr * mz * (T_t - T_c) * dz(k)
+        #:if is_les
+        mut_c = mut(i,  j,  k)
+        mut_t = mut(i,  j,  k+1)
+        mzsgs = 0.5d0 * (mut_c + mut_t)
         #:endif
         block
-          real(8) :: mx(2)
-          mx(1) = 0.25d0 * (mu(i-1,j,k) + mu(i,  j,k) + mu(i-1,j,k+1) + mu(i,  j,k+1))
-          mx(2) = 0.25d0 * (mu(i,  j,k) + mu(i+1,j,k) + mu(i,  j,k+1) + mu(i+1,j,k+1))
-          mux = 0.25d0 * (mx(1) * (-Q(i-1,2,j,k) + Q(i,2,j,k) - Q(i-1,2,j,k+1) + Q(i,2,j,k+1)) &
-                        + mx(2) * (-Q(i,2,j,k) + Q(i+1,2,j,k) - Q(i,2,j,k+1) + Q(i+1,2,j,k+1))) * dx(i)
-          mwx = 0.25d0 * (mx(1) * (-Q(i-1,4,j,k) + Q(i,4,j,k) - Q(i-1,4,j,k+1) + Q(i,4,j,k+1)) &
-                        + mx(2) * (-Q(i,4,j,k) + Q(i+1,4,j,k) - Q(i,4,j,k+1) + Q(i+1,4,j,k+1))) * dx(i)
+          real(8) :: mx(2), mu_wc, mu_wt, mu_ec, mu_et
           #:if is_les
-          muxsgs = 0.25d0 * (mxsgs(1) * (-Q(i-1,2,j,k) + Q(i,2,j,k) - Q(i-1,2,j,k+1) + Q(i,2,j,k+1)) &
-                            + mxsgs(2) * (-Q(i,2,j,k) + Q(i+1,2,j,k) - Q(i,2,j,k+1) + Q(i+1,2,j,k+1))) * dx(i)
-          mwxsgs = 0.25d0 * (mxsgs(1) * (-Q(i-1,4,j,k) + Q(i,4,j,k) - Q(i-1,4,j,k+1) + Q(i,4,j,k+1)) &
-                            + mxsgs(2) * (-Q(i,4,j,k) + Q(i+1,4,j,k) - Q(i,4,j,k+1) + Q(i+1,4,j,k+1))) * dx(i)
+          real(8) :: mxsgs(2), mut_wc, mut_wt, mut_ec, mut_et
+          #:endif
+          ! corner neighbours below are each read exactly once by this thread: __ldcs
+          mu_wc = __ldcs(mu(i-1,j,  k))
+          mu_wt = __ldcs(mu(i-1,j,  k+1))
+          mu_ec = __ldcs(mu(i+1,j,  k))
+          mu_et = __ldcs(mu(i+1,j,  k+1))
+          mx(1) = 0.25d0 * (mu_wc + mu_c + mu_wt + mu_t)
+          mx(2) = 0.25d0 * (mu_c + mu_ec + mu_t + mu_et)
+          mux = 0.25d0 * (mx(1) * (-Q_2(i-1,j,k) + Q_2(i,j,k) - Q_2(i-1,j,k+1) + Q_2(i,j,k+1)) &
+                        + mx(2) * (-Q_2(i,j,k) + Q_2(i+1,j,k) - Q_2(i,j,k+1) + Q_2(i+1,j,k+1))) * dx(i)
+          mwx = 0.25d0 * (mx(1) * (-Q_4(i-1,j,k) + Q_4(i,j,k) - Q_4(i-1,j,k+1) + Q_4(i,j,k+1)) &
+                        + mx(2) * (-Q_4(i,j,k) + Q_4(i+1,j,k) - Q_4(i,j,k+1) + Q_4(i+1,j,k+1))) * dx(i)
+          #:if is_les
+          mut_wc = __ldcs(mut(i-1,j,  k))
+          mut_wt = __ldcs(mut(i-1,j,  k+1))
+          mut_ec = __ldcs(mut(i+1,j,  k))
+          mut_et = __ldcs(mut(i+1,j,  k+1))
+          mxsgs(:) = (/0.25d0 * (mut_wc + mut_c + mut_wt + mut_t), &
+                       0.25d0 * (mut_c + mut_ec + mut_t + mut_et)/)
+          muxsgs = 0.25d0 * (mxsgs(1) * (-Q_2(i-1,j,k) + Q_2(i,j,k) - Q_2(i-1,j,k+1) + Q_2(i,j,k+1)) &
+                            + mxsgs(2) * (-Q_2(i,j,k) + Q_2(i+1,j,k) - Q_2(i,j,k+1) + Q_2(i+1,j,k+1))) * dx(i)
+          mwxsgs = 0.25d0 * (mxsgs(1) * (-Q_4(i-1,j,k) + Q_4(i,j,k) - Q_4(i-1,j,k+1) + Q_4(i,j,k+1)) &
+                            + mxsgs(2) * (-Q_4(i,j,k) + Q_4(i+1,j,k) - Q_4(i,j,k+1) + Q_4(i+1,j,k+1))) * dx(i)
           #:endif
         end block
         block
-          real(8) :: my(2)
-          my(1) = 0.25d0 * (mu(i,j-1,k) + mu(i,j,  k) + mu(i,j-1,k+1) + mu(i,j,  k+1))
-          my(2) = 0.25d0 * (mu(i,j,  k) + mu(i,j+1,k) + mu(i,j,  k+1) + mu(i,j+1,k+1))
-          mvy = 0.25d0 * (my(1) * (-Q(i,3,j-1,k) + Q(i,3,j,k) - Q(i,3,j-1,k+1) + Q(i,3,j,k+1)) &
-                        + my(2) * (-Q(i,3,j,k) + Q(i,3,j+1,k) - Q(i,3,j,k+1) + Q(i,3,j+1,k+1))) * dy(j)
-          mwy = 0.25d0 * (my(1) * (-Q(i,4,j-1,k) + Q(i,4,j,k) - Q(i,4,j-1,k+1) + Q(i,4,j,k+1)) &
-                        + my(2) * (-Q(i,4,j,k) + Q(i,4,j+1,k) - Q(i,4,j,k+1) + Q(i,4,j+1,k+1))) * dy(j)
+          real(8) :: my(2), mu_sc, mu_st, mu_nc, mu_nt
           #:if is_les
-          mvysgs = 0.25d0 * (mysgs(1) * (-Q(i,3,j-1,k) + Q(i,3,j,k) - Q(i,3,j-1,k+1) + Q(i,3,j,k+1)) &
-                            + mysgs(2) * (-Q(i,3,j,k) + Q(i,3,j+1,k) - Q(i,3,j,k+1) + Q(i,3,j+1,k+1))) * dy(j)
-          mwysgs = 0.25d0 * (mysgs(1) * (-Q(i,4,j-1,k) + Q(i,4,j,k) - Q(i,4,j-1,k+1) + Q(i,4,j,k+1)) &
-                            + mysgs(2) * (-Q(i,4,j,k) + Q(i,4,j+1,k) - Q(i,4,j,k+1) + Q(i,4,j+1,k+1))) * dy(j)
+          real(8) :: mysgs(2), mut_sc, mut_st, mut_nc, mut_nt
+          #:endif
+          ! corner neighbours below are each read exactly once by this thread: __ldcs
+          mu_sc = __ldcs(mu(i,  j-1,k))
+          mu_st = __ldcs(mu(i,  j-1,k+1))
+          mu_nc = __ldcs(mu(i,  j+1,k))
+          mu_nt = __ldcs(mu(i,  j+1,k+1))
+          my(1) = 0.25d0 * (mu_sc + mu_c + mu_st + mu_t)
+          my(2) = 0.25d0 * (mu_c + mu_nc + mu_t + mu_nt)
+          mvy = 0.25d0 * (my(1) * (-Q_3(i,j-1,k) + Q_3(i,j,k) - Q_3(i,j-1,k+1) + Q_3(i,j,k+1)) &
+                        + my(2) * (-Q_3(i,j,k) + Q_3(i,j+1,k) - Q_3(i,j,k+1) + Q_3(i,j+1,k+1))) * dy(j)
+          mwy = 0.25d0 * (my(1) * (-Q_4(i,j-1,k) + Q_4(i,j,k) - Q_4(i,j-1,k+1) + Q_4(i,j,k+1)) &
+                        + my(2) * (-Q_4(i,j,k) + Q_4(i,j+1,k) - Q_4(i,j,k+1) + Q_4(i,j+1,k+1))) * dy(j)
+          #:if is_les
+          mut_sc = __ldcs(mut(i,  j-1,k))
+          mut_st = __ldcs(mut(i,  j-1,k+1))
+          mut_nc = __ldcs(mut(i,  j+1,k))
+          mut_nt = __ldcs(mut(i,  j+1,k+1))
+          mysgs(:) = (/0.25d0 * (mut_sc + mut_c + mut_st + mut_t), &
+                       0.25d0 * (mut_c + mut_nc + mut_t + mut_nt)/)
+          mvysgs = 0.25d0 * (mysgs(1) * (-Q_3(i,j-1,k) + Q_3(i,j,k) - Q_3(i,j-1,k+1) + Q_3(i,j,k+1)) &
+                            + mysgs(2) * (-Q_3(i,j,k) + Q_3(i,j+1,k) - Q_3(i,j,k+1) + Q_3(i,j+1,k+1))) * dy(j)
+          mwysgs = 0.25d0 * (mysgs(1) * (-Q_4(i,j-1,k) + Q_4(i,j,k) - Q_4(i,j-1,k+1) + Q_4(i,j,k+1)) &
+                            + mysgs(2) * (-Q_4(i,j,k) + Q_4(i,j+1,k) - Q_4(i,j,k+1) + Q_4(i,j+1,k+1))) * dy(j)
           #:endif
         end block
-        mz   = 0.5d0 * (mu(i,j,k) + mu(i,j,k+1))
-        kTz  = Cp_over_Pr * mz * (-T(i,j,k) + T(i,j,k+1)) * dz(k)
-        muz  = mz * (-u(idx) + u(idx+1)) * dz(k)
-        mvz  = mz * (-v(idx) + v(idx+1)) * dz(k)
-        mwz  = mz * (-w(idx) + w(idx+1)) * dz(k)
-        tzx  = mwx + muz
-        tzy  = mvz + mwy
-        tzz  = two_third * (2.d0 * mwz - mux - mvy)
-        utzx = 0.5d0 * (u(idx) + u(idx+1)) * tzx
-        vtzy = 0.5d0 * (v(idx) + v(idx+1)) * tzy
-        wtzz = 0.5d0 * (w(idx) + w(idx+1)) * tzz
+        mwz = mz * (-w(idx) + w(idx+1)) * dz(k)
         #:if is_les
-        muzsgs = mzsgs * (-u(idx) + u(idx+1)) * dz(k)
-        mvzsgs = mzsgs * (-v(idx) + v(idx+1)) * dz(k)
         mwzsgs = mzsgs * (-w(idx) + w(idx+1)) * dz(k)
-        tzx    = tzx + mwxsgs + muzsgs
-        tzy    = tzy + mvzsgs + mwysgs
-        tzz    = tzz + two_third * (2.d0 * mwzsgs - muxsgs - mvysgs)
-        block
-          real(8) :: H(2)
-          H(:) = Cp * T(i,j,k:k+1) + 0.5d0 * (u(idx:idx+1)**2 + v(idx:idx+1)**2 + w(idx:idx+1)**2) + qc2(i,j,k:k+1)
-          Hsgs = -mzsgs * (-H(1) + H(2)) * dz(k) / Prt
-        end block
+        Hb(1) = Cp*T_c + 0.5d0*w(idx  )**2 + qc2(i,j,k  )
+        Hb(2) = Cp*T_t + 0.5d0*w(idx+1)**2 + qc2(i,j,k+1)
         #:endif
+        block
+          real(8) :: tau, utau
+          tau  = two_third * fma(2.d0, mwz, -(mux + mvy))
+          utau = 0.5d0 * (w(idx) + w(idx+1)) * tau
+          #:if is_les
+          tau = fma(two_third, fma(2.d0, mwzsgs, -(muxsgs + mvysgs)), tau)
+          #:endif
+          call __stcg(G(i-1,j-1,k,4), __ldlu(G(i-1,j-1,k,4)) - tau)
+          utau_sum = utau
+        end block
       end block
     endif
-    G(2,i-1,j-1,k) = G(2,i-1,j-1,k) - tzx
-    G(3,i-1,j-1,k) = G(3,i-1,j-1,k) - tzy
-    G(4,i-1,j-1,k) = G(4,i-1,j-1,k) - tzz
-    G(5,i-1,j-1,k) = G(5,i-1,j-1,k) - (utzx + vtzy + wtzz + kTz &
+    endif
+
+    ! ---- cross component #1 -> G(...,2) ----
+    if (valid) then
+    if (interior) then
+      block
+        real(8) :: tau, utau
+        #:if is_les
+        H(:) = H(:) + 0.5d0*u(idx-io_v:idx+io_v+1)**2
+        call calc_tau_cross_LES(mui, muti, u(idx-io_v:idx+io_v+1), wx(idx-io_v:idx+io_v+1), dz(k), tau, utau)
+        #:else
+        call calc_tau_cross(mui, u(idx-io_v:idx+io_v+1), wx(idx-io_v:idx+io_v+1), dz(k), tau, utau)
+        #:endif
+        call __stcg(G(i-1,j-1,k,2), __ldlu(G(i-1,j-1,k,2)) - tau)
+        utau_sum = utau_sum + utau
+      end block
+    else
+      block
+        real(8) :: tau, utau, muz
+        #:if is_les
+        real(8) :: muzsgs
+        #:endif
+        muz = mz * (-u(idx) + u(idx+1)) * dz(k)
+        #:if is_les
+        muzsgs = mzsgs * (-u(idx) + u(idx+1)) * dz(k)
+        Hb(1) = Hb(1) + 0.5d0*u(idx  )**2
+        Hb(2) = Hb(2) + 0.5d0*u(idx+1)**2
+        #:endif
+        tau  = mwx + muz
+        utau = 0.5d0 * (u(idx) + u(idx+1)) * tau
+        #:if is_les
+        tau = tau + mwxsgs + muzsgs
+        #:endif
+        call __stcg(G(i-1,j-1,k,2), __ldlu(G(i-1,j-1,k,2)) - tau)
+        utau_sum = utau_sum + utau
+      end block
+    endif
+    endif
+
+    ! ---- cross component #2 -> G(...,3) ----
+    if (valid) then
+    if (interior) then
+      block
+        real(8) :: tau, utau
+        #:if is_les
+        H(:) = H(:) + 0.5d0*v(idx-io_v:idx+io_v+1)**2
+        Hsgs = -muti * diff${VISC_ORDER}$_s(dz(k), &
+        #:if VISC_ORDER == 4
+        H(2)-H(3), H(1)-H(4) &
+        #:else
+        -H(1)+H(6), H(2)-H(5), -H(3)+H(4) &
+        #:endif
+        ) / Prt
+        call calc_tau_cross_LES(mui, muti, v(idx-io_v:idx+io_v+1), wy(idx-io_v:idx+io_v+1), dz(k), tau, utau)
+        #:else
+        call calc_tau_cross(mui, v(idx-io_v:idx+io_v+1), wy(idx-io_v:idx+io_v+1), dz(k), tau, utau)
+        #:endif
+        call __stcg(G(i-1,j-1,k,3), __ldlu(G(i-1,j-1,k,3)) - tau)
+        utau_sum = utau_sum + utau
+      end block
+    else
+      block
+        real(8) :: tau, utau, mvz
+        #:if is_les
+        real(8) :: mvzsgs
+        #:endif
+        mvz = mz * (-v(idx) + v(idx+1)) * dz(k)
+        #:if is_les
+        mvzsgs = mzsgs * (-v(idx) + v(idx+1)) * dz(k)
+        Hb(1) = Hb(1) + 0.5d0*v(idx  )**2
+        Hb(2) = Hb(2) + 0.5d0*v(idx+1)**2
+        Hsgs = -mzsgs * (-Hb(1) + Hb(2)) * dz(k) / Prt
+        #:endif
+        tau  = mvz + mwy
+        utau = 0.5d0 * (v(idx) + v(idx+1)) * tau
+        #:if is_les
+        tau = tau + mvzsgs + mwysgs
+        #:endif
+        call __stcg(G(i-1,j-1,k,3), __ldlu(G(i-1,j-1,k,3)) - tau)
+        utau_sum = utau_sum + utau
+      end block
+    endif
+    block
+      real(8) :: g5v
+      g5v = __ldlu(G(i-1,j-1,k,5))
+      call __stcg(G(i-1,j-1,k,5), g5v - (utau_sum + kTz &
     #:if is_les
       + Hsgs &
     #:endif
-    )
+      ))
+    end block
+    endif
   end subroutine calc_Gv${VISC_ORDER}$${suf}$
 #:endfor
 end module calc_visc_high

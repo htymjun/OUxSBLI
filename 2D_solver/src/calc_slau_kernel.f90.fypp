@@ -4,6 +4,7 @@ module calc_slau_kernel
   use mod_constant, only : over_gamma_1, id_slau
   use calc_muscl
   use calc_hybrid
+  use libm
   implicit none
   private
   public calc_slau_x, calc_slau_y

@@ -1,0 +1,536 @@
+#:include 'config.fypp'
+#:if not defined('VISC_ORDER')
+  #:set VISC_ORDER = ORDER
+#:endif
+#:set io_v_val = 1 if VISC_ORDER == 4 else 2
+#:set D_MIN = 3 if VISC_ORDER == 4 else 4
+#:set D_SFX = 2 if VISC_ORDER == 4 else 3
+
+module load_smem_visc_cent${VISC_ORDER}$
+  use mod_globals, only : threadsEv, threadsFv, threadsGv
+  #:if VISC_ORDER == 4
+  use mod_constant, only : two_third, one_twelfth
+  #:else
+  use mod_constant, only : one_sixty
+  #:endif
+  implicit none
+  private
+  public load_smem_visc_cent${VISC_ORDER}$_x_stage1, load_smem_visc_cent${VISC_ORDER}$_x_stage2, &
+         load_smem_visc_cent${VISC_ORDER}$_x_stage3, &
+         load_smem_visc_cent${VISC_ORDER}$_y_stage1, load_smem_visc_cent${VISC_ORDER}$_y_stage2, &
+         load_smem_visc_cent${VISC_ORDER}$_y_stage3, &
+         load_smem_visc_cent${VISC_ORDER}$_z_stage1, load_smem_visc_cent${VISC_ORDER}$_z_stage2, &
+         load_smem_visc_cent${VISC_ORDER}$_z_stage3, &
+         load_smem_visc_cent${VISC_ORDER}$_z_koff_stage1, load_smem_visc_cent${VISC_ORDER}$_z_koff_stage2, &
+         load_smem_visc_cent${VISC_ORDER}$_z_koff_stage3
+contains
+  !===================================================================
+  ! x direction (calc_Ev): straight={u,vy,wz}  cross1={v,uy}  cross2={w,uz}
+  ! Each stage loads the ONE velocity component it needs (plain copy) into
+  ! the reused `uvw` buffer, alongside that stage's gradient(s) -- no
+  ! separate _uvw call/syncthreads().
+  !===================================================================
+  attributes(device) subroutine load_smem_visc_cent${VISC_ORDER}$_x_stage1(it, jt, kt, j, k, &
+                                                       nx, ny, nz, inv_dy_j, inv_dz_k, Q_2, Q_3, Q_4, grad_a, grad_b, uvw)
+    integer, intent(in), value              :: it, jt, kt
+    integer, intent(in), value              :: j, k
+    integer, intent(in), value              :: nx, ny, nz
+    real(8), intent(in), value              :: inv_dy_j
+    real(8), intent(in), value              :: inv_dz_k
+    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    integer, parameter :: io_v = ${io_v_val}$
+    integer, parameter :: sx = threadsEv%x + 2*io_v + 1
+    integer, parameter :: sy = threadsEv%y
+    integer, parameter :: sz = threadsEv%z
+    real(8), intent(inout) :: grad_a(-(io_v-1):sx*sy*sz-io_v)  ! vy
+    real(8), intent(inout) :: grad_b(-(io_v-1):sx*sy*sz-io_v)  ! wz
+    real(8), intent(inout) :: uvw(-(io_v-1):sx*sy*sz-io_v)     ! u
+    integer i_base, ii, i, idx, offset_yz
+    logical :: jk_in_range, jk_in_range_grad_y, jk_in_range_grad_z
+    i_base = (blockIdx%x-1)*blockDim%x
+    offset_yz = (jt-1)*sx + (kt-1)*sx*sy
+    jk_in_range = (j <= ny .and. k <= nz)
+    jk_in_range_grad_y = (${D_MIN}$ <= j .and. j <= ny-${D_SFX}$ .and. k <= nz)
+    jk_in_range_grad_z = (j <= ny .and. ${D_MIN}$ <= k .and. k <= nz-${D_SFX}$)
+    do ii = it-io_v, threadsEv%x+io_v+1, blockDim%x
+      i = i_base + ii
+      idx = ii + offset_yz
+      if (1 <= i .and. i <= nx .and. jk_in_range) then
+        uvw(idx) = Q_2(i,j,k)
+      endif
+      if (1 <= i .and. i <= nx .and. jk_in_range_grad_y) then
+#:if VISC_ORDER == 4
+        grad_a(idx) = (two_third * (-Q_3(i,j-1,k) + Q_3(i,j+1,k)) - one_twelfth * (-Q_3(i,j-2,k) + Q_3(i,j+2,k))) * inv_dy_j
+#:else
+        grad_a(idx) = (one_sixty * (-Q_3(i,j-3,k) + Q_3(i,j+3,k)) + 0.15d0 * (Q_3(i,j-2,k) - Q_3(i,j+2,k)) + 0.75d0 * (-Q_3(i,j-1,k) + Q_3(i,j+1,k))) * inv_dy_j
+#:endif
+      endif
+      if (1 <= i .and. i <= nx .and. jk_in_range_grad_z) then
+#:if VISC_ORDER == 4
+        grad_b(idx) = (two_third * (-Q_4(i,j,k-1) + Q_4(i,j,k+1)) - one_twelfth * (-Q_4(i,j,k-2) + Q_4(i,j,k+2))) * inv_dz_k
+#:else
+        grad_b(idx) = (one_sixty * (-Q_4(i,j,k-3) + Q_4(i,j,k+3)) + 0.15d0 * (Q_4(i,j,k-2) - Q_4(i,j,k+2)) + 0.75d0 * (-Q_4(i,j,k-1) + Q_4(i,j,k+1))) * inv_dz_k
+#:endif
+      endif
+    enddo
+    call syncthreads()
+  end subroutine load_smem_visc_cent${VISC_ORDER}$_x_stage1
+
+  attributes(device) subroutine load_smem_visc_cent${VISC_ORDER}$_x_stage2(it, jt, kt, j, k, &
+                                                       nx, ny, nz, inv_dy_j, Q_2, Q_3, grad_a, uvw)
+    integer, intent(in), value              :: it, jt, kt
+    integer, intent(in), value              :: j, k
+    integer, intent(in), value              :: nx, ny, nz
+    real(8), intent(in), value              :: inv_dy_j
+    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    integer, parameter :: io_v = ${io_v_val}$
+    integer, parameter :: sx = threadsEv%x + 2*io_v + 1
+    integer, parameter :: sy = threadsEv%y
+    integer, parameter :: sz = threadsEv%z
+    real(8), intent(inout) :: grad_a(-(io_v-1):sx*sy*sz-io_v)  ! uy
+    real(8), intent(inout) :: uvw(-(io_v-1):sx*sy*sz-io_v)     ! v
+    integer i_base, ii, i, idx, offset_yz
+    logical :: jk_in_range, jk_in_range_grad_y
+    i_base = (blockIdx%x-1)*blockDim%x
+    offset_yz = (jt-1)*sx + (kt-1)*sx*sy
+    jk_in_range = (j <= ny .and. k <= nz)
+    jk_in_range_grad_y = (${D_MIN}$ <= j .and. j <= ny-${D_SFX}$ .and. k <= nz)
+    do ii = it-io_v, threadsEv%x+io_v+1, blockDim%x
+      i = i_base + ii
+      idx = ii + offset_yz
+      if (1 <= i .and. i <= nx .and. jk_in_range) then
+        uvw(idx) = Q_3(i,j,k)
+      endif
+      if (1 <= i .and. i <= nx .and. jk_in_range_grad_y) then
+#:if VISC_ORDER == 4
+        grad_a(idx) = (two_third * (-Q_2(i,j-1,k) + Q_2(i,j+1,k)) - one_twelfth * (-Q_2(i,j-2,k) + Q_2(i,j+2,k))) * inv_dy_j
+#:else
+        grad_a(idx) = (one_sixty * (-Q_2(i,j-3,k) + Q_2(i,j+3,k)) + 0.15d0 * (Q_2(i,j-2,k) - Q_2(i,j+2,k)) + 0.75d0 * (-Q_2(i,j-1,k) + Q_2(i,j+1,k))) * inv_dy_j
+#:endif
+      endif
+    enddo
+    call syncthreads()
+  end subroutine load_smem_visc_cent${VISC_ORDER}$_x_stage2
+
+  attributes(device) subroutine load_smem_visc_cent${VISC_ORDER}$_x_stage3(it, jt, kt, j, k, &
+                                                       nx, ny, nz, inv_dz_k, Q_2, Q_4, grad_a, uvw)
+    integer, intent(in), value              :: it, jt, kt
+    integer, intent(in), value              :: j, k
+    integer, intent(in), value              :: nx, ny, nz
+    real(8), intent(in), value              :: inv_dz_k
+    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    integer, parameter :: io_v = ${io_v_val}$
+    integer, parameter :: sx = threadsEv%x + 2*io_v + 1
+    integer, parameter :: sy = threadsEv%y
+    integer, parameter :: sz = threadsEv%z
+    real(8), intent(inout) :: grad_a(-(io_v-1):sx*sy*sz-io_v)  ! uz
+    real(8), intent(inout) :: uvw(-(io_v-1):sx*sy*sz-io_v)     ! w
+    integer i_base, ii, i, idx, offset_yz
+    logical :: jk_in_range, jk_in_range_grad_z
+    i_base = (blockIdx%x-1)*blockDim%x
+    offset_yz = (jt-1)*sx + (kt-1)*sx*sy
+    jk_in_range = (j <= ny .and. k <= nz)
+    jk_in_range_grad_z = (j <= ny .and. ${D_MIN}$ <= k .and. k <= nz-${D_SFX}$)
+    do ii = it-io_v, threadsEv%x+io_v+1, blockDim%x
+      i = i_base + ii
+      idx = ii + offset_yz
+      if (1 <= i .and. i <= nx .and. jk_in_range) then
+        uvw(idx) = Q_4(i,j,k)
+      endif
+      if (1 <= i .and. i <= nx .and. jk_in_range_grad_z) then
+#:if VISC_ORDER == 4
+        grad_a(idx) = (two_third * (-Q_2(i,j,k-1) + Q_2(i,j,k+1)) - one_twelfth * (-Q_2(i,j,k-2) + Q_2(i,j,k+2))) * inv_dz_k
+#:else
+        grad_a(idx) = (one_sixty * (-Q_2(i,j,k-3) + Q_2(i,j,k+3)) + 0.15d0 * (Q_2(i,j,k-2) - Q_2(i,j,k+2)) + 0.75d0 * (-Q_2(i,j,k-1) + Q_2(i,j,k+1))) * inv_dz_k
+#:endif
+      endif
+    enddo
+    call syncthreads()
+  end subroutine load_smem_visc_cent${VISC_ORDER}$_x_stage3
+
+
+  !===================================================================
+  ! y direction (calc_Fv): straight={v,wz,ux}  cross1={u,vx}  cross2={w,vz}
+  !===================================================================
+  attributes(device) subroutine load_smem_visc_cent${VISC_ORDER}$_y_stage1(it, jt, kt, i, k, &
+                                                       nx, ny, nz, inv_dx_i, inv_dz_k, Q_2, Q_3, Q_4, grad_a, grad_b, uvw)
+    integer, intent(in), value              :: it, jt, kt
+    integer, intent(in), value              :: i, k
+    integer, intent(in), value              :: nx, ny, nz
+    real(8), intent(in), value              :: inv_dx_i
+    real(8), intent(in), value              :: inv_dz_k
+    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    integer, parameter :: io_v = ${io_v_val}$
+    integer, parameter :: sx = threadsFv%x
+    integer, parameter :: sy = threadsFv%y + 2*io_v + 1
+    integer, parameter :: sz = threadsFv%z
+    real(8), intent(inout) :: grad_a(-(io_v-1):sx*sy*sz-io_v)  ! ux
+    real(8), intent(inout) :: grad_b(-(io_v-1):sx*sy*sz-io_v)  ! wz
+    real(8), intent(inout) :: uvw(-(io_v-1):sx*sy*sz-io_v)     ! v
+    integer j_base, jj, j, idx, offset_xz
+    logical :: ik_in_range, ik_in_range_grad_x, ik_in_range_grad_z
+    j_base = (blockIdx%y-1)*blockDim%y
+    offset_xz = (it-1)*sy + (kt-1)*sy*sx
+    ik_in_range = (i <= nx .and. k <= nz)
+    ik_in_range_grad_x = (${D_MIN}$ <= i .and. i <= nx-${D_SFX}$ .and. k <= nz)
+    ik_in_range_grad_z = (i <= nx .and. ${D_MIN}$ <= k .and. k <= nz-${D_SFX}$)
+    do jj = jt-io_v, threadsFv%y+io_v+1, blockDim%y
+      j = j_base + jj
+      idx = jj + offset_xz
+      if (ik_in_range .and. 1 <= j .and. j <= ny) then
+        uvw(idx) = Q_3(i,j,k)
+      endif
+      if (ik_in_range_grad_x .and. 1 <= j .and. j <= ny) then
+#:if VISC_ORDER == 4
+        grad_a(idx) = (two_third * (-Q_2(i-1,j,k) + Q_2(i+1,j,k)) - one_twelfth * (-Q_2(i-2,j,k) + Q_2(i+2,j,k))) * inv_dx_i
+#:else
+        grad_a(idx) = (one_sixty * (-Q_2(i-3,j,k) + Q_2(i+3,j,k)) + 0.15d0 * (Q_2(i-2,j,k) - Q_2(i+2,j,k)) + 0.75d0 * (-Q_2(i-1,j,k) + Q_2(i+1,j,k))) * inv_dx_i
+#:endif
+      endif
+      if (ik_in_range_grad_z .and. 1 <= j .and. j <= ny) then
+#:if VISC_ORDER == 4
+        grad_b(idx) = (two_third * (-Q_4(i,j,k-1) + Q_4(i,j,k+1)) - one_twelfth * (-Q_4(i,j,k-2) + Q_4(i,j,k+2))) * inv_dz_k
+#:else
+        grad_b(idx) = (one_sixty * (-Q_4(i,j,k-3) + Q_4(i,j,k+3)) + 0.15d0 * (Q_4(i,j,k-2) - Q_4(i,j,k+2)) + 0.75d0 * (-Q_4(i,j,k-1) + Q_4(i,j,k+1))) * inv_dz_k
+#:endif
+      endif
+    enddo
+    call syncthreads()
+  end subroutine load_smem_visc_cent${VISC_ORDER}$_y_stage1
+
+  attributes(device) subroutine load_smem_visc_cent${VISC_ORDER}$_y_stage2(it, jt, kt, i, k, &
+                                                       nx, ny, nz, inv_dx_i, Q_2, Q_3, grad_a, uvw)
+    integer, intent(in), value              :: it, jt, kt
+    integer, intent(in), value              :: i, k
+    integer, intent(in), value              :: nx, ny, nz
+    real(8), intent(in), value              :: inv_dx_i
+    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    integer, parameter :: io_v = ${io_v_val}$
+    integer, parameter :: sx = threadsFv%x
+    integer, parameter :: sy = threadsFv%y + 2*io_v + 1
+    integer, parameter :: sz = threadsFv%z
+    real(8), intent(inout) :: grad_a(-(io_v-1):sx*sy*sz-io_v)  ! vx
+    real(8), intent(inout) :: uvw(-(io_v-1):sx*sy*sz-io_v)     ! u
+    integer j_base, jj, j, idx, offset_xz
+    logical :: ik_in_range, ik_in_range_grad_x
+    j_base = (blockIdx%y-1)*blockDim%y
+    offset_xz = (it-1)*sy + (kt-1)*sy*sx
+    ik_in_range = (i <= nx .and. k <= nz)
+    ik_in_range_grad_x = (${D_MIN}$ <= i .and. i <= nx-${D_SFX}$ .and. k <= nz)
+    do jj = jt-io_v, threadsFv%y+io_v+1, blockDim%y
+      j = j_base + jj
+      idx = jj + offset_xz
+      if (ik_in_range .and. 1 <= j .and. j <= ny) then
+        uvw(idx) = Q_2(i,j,k)
+      endif
+      if (ik_in_range_grad_x .and. 1 <= j .and. j <= ny) then
+#:if VISC_ORDER == 4
+        grad_a(idx) = (two_third * (-Q_3(i-1,j,k) + Q_3(i+1,j,k)) - one_twelfth * (-Q_3(i-2,j,k) + Q_3(i+2,j,k))) * inv_dx_i
+#:else
+        grad_a(idx) = (one_sixty * (-Q_3(i-3,j,k) + Q_3(i+3,j,k)) + 0.15d0 * (Q_3(i-2,j,k) - Q_3(i+2,j,k)) + 0.75d0 * (-Q_3(i-1,j,k) + Q_3(i+1,j,k))) * inv_dx_i
+#:endif
+      endif
+    enddo
+    call syncthreads()
+  end subroutine load_smem_visc_cent${VISC_ORDER}$_y_stage2
+
+  attributes(device) subroutine load_smem_visc_cent${VISC_ORDER}$_y_stage3(it, jt, kt, i, k, &
+                                                       nx, ny, nz, inv_dz_k, Q_3, Q_4, grad_a, uvw)
+    integer, intent(in), value              :: it, jt, kt
+    integer, intent(in), value              :: i, k
+    integer, intent(in), value              :: nx, ny, nz
+    real(8), intent(in), value              :: inv_dz_k
+    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    integer, parameter :: io_v = ${io_v_val}$
+    integer, parameter :: sx = threadsFv%x
+    integer, parameter :: sy = threadsFv%y + 2*io_v + 1
+    integer, parameter :: sz = threadsFv%z
+    real(8), intent(inout) :: grad_a(-(io_v-1):sx*sy*sz-io_v)  ! vz
+    real(8), intent(inout) :: uvw(-(io_v-1):sx*sy*sz-io_v)     ! w
+    integer j_base, jj, j, idx, offset_xz
+    logical :: ik_in_range, ik_in_range_grad_z
+    j_base = (blockIdx%y-1)*blockDim%y
+    offset_xz = (it-1)*sy + (kt-1)*sy*sx
+    ik_in_range = (i <= nx .and. k <= nz)
+    ik_in_range_grad_z = (i <= nx .and. ${D_MIN}$ <= k .and. k <= nz-${D_SFX}$)
+    do jj = jt-io_v, threadsFv%y+io_v+1, blockDim%y
+      j = j_base + jj
+      idx = jj + offset_xz
+      if (ik_in_range .and. 1 <= j .and. j <= ny) then
+        uvw(idx) = Q_4(i,j,k)
+      endif
+      if (ik_in_range_grad_z .and. 1 <= j .and. j <= ny) then
+#:if VISC_ORDER == 4
+        grad_a(idx) = (two_third * (-Q_3(i,j,k-1) + Q_3(i,j,k+1)) - one_twelfth * (-Q_3(i,j,k-2) + Q_3(i,j,k+2))) * inv_dz_k
+#:else
+        grad_a(idx) = (one_sixty * (-Q_3(i,j,k-3) + Q_3(i,j,k+3)) + 0.15d0 * (Q_3(i,j,k-2) - Q_3(i,j,k+2)) + 0.75d0 * (-Q_3(i,j,k-1) + Q_3(i,j,k+1))) * inv_dz_k
+#:endif
+      endif
+    enddo
+    call syncthreads()
+  end subroutine load_smem_visc_cent${VISC_ORDER}$_y_stage3
+
+
+  !===================================================================
+  ! z direction (calc_Gv): straight={w,ux,vy}  cross1={u,wx}  cross2={v,wy}
+  !===================================================================
+  attributes(device) subroutine load_smem_visc_cent${VISC_ORDER}$_z_stage1(it, jt, kt, i, j, &
+                                                       nx, ny, nz, inv_dx_i, inv_dy_j, Q_2, Q_3, Q_4, grad_a, grad_b, uvw)
+    integer, intent(in), value              :: it, jt, kt
+    integer, intent(in), value              :: i, j
+    integer, intent(in), value              :: nx, ny, nz
+    real(8), intent(in), value              :: inv_dx_i
+    real(8), intent(in), value              :: inv_dy_j
+    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    integer, parameter :: io_v = ${io_v_val}$
+    integer, parameter :: sx = threadsGv%x
+    integer, parameter :: sy = threadsGv%y
+    integer, parameter :: sz = threadsGv%z + 2*io_v + 1
+    real(8), intent(inout) :: grad_a(-(io_v-1):sx*sy*sz-io_v)  ! ux
+    real(8), intent(inout) :: grad_b(-(io_v-1):sx*sy*sz-io_v)  ! vy
+    real(8), intent(inout) :: uvw(-(io_v-1):sx*sy*sz-io_v)     ! w
+    integer k_base, kk, k, idx, offset_xy
+    logical :: ij_in_range, ij_in_range_grad_x, ij_in_range_grad_y
+    k_base = (blockIdx%z-1)*blockDim%z
+    offset_xy = (jt-1)*sz + (it-1)*sz*sy
+    ij_in_range = (i <= nx .and. j <= ny)
+    ij_in_range_grad_x = (${D_MIN}$ <= i .and. i <= nx-${D_SFX}$ .and. j <= ny)
+    ij_in_range_grad_y = (i <= nx .and. ${D_MIN}$ <= j .and. j <= ny-${D_SFX}$)
+    do kk = kt-io_v, threadsGv%z+io_v+1, blockDim%z
+      k = k_base + kk
+      idx = kk + offset_xy
+      if (ij_in_range .and. 1 <= k .and. k <= nz) then
+        uvw(idx) = Q_4(i,j,k)
+      endif
+      if (ij_in_range_grad_x .and. 1 <= k .and. k <= nz) then
+#:if VISC_ORDER == 4
+        grad_a(idx) = (two_third * (-Q_2(i-1,j,k) + Q_2(i+1,j,k)) - one_twelfth * (-Q_2(i-2,j,k) + Q_2(i+2,j,k))) * inv_dx_i
+#:else
+        grad_a(idx) = (one_sixty * (-Q_2(i-3,j,k) + Q_2(i+3,j,k)) + 0.15d0 * (Q_2(i-2,j,k) - Q_2(i+2,j,k)) + 0.75d0 * (-Q_2(i-1,j,k) + Q_2(i+1,j,k))) * inv_dx_i
+#:endif
+      endif
+      if (ij_in_range_grad_y .and. 1 <= k .and. k <= nz) then
+#:if VISC_ORDER == 4
+        grad_b(idx) = (two_third * (-Q_3(i,j-1,k) + Q_3(i,j+1,k)) - one_twelfth * (-Q_3(i,j-2,k) + Q_3(i,j+2,k))) * inv_dy_j
+#:else
+        grad_b(idx) = (one_sixty * (-Q_3(i,j-3,k) + Q_3(i,j+3,k)) + 0.15d0 * (Q_3(i,j-2,k) - Q_3(i,j+2,k)) + 0.75d0 * (-Q_3(i,j-1,k) + Q_3(i,j+1,k))) * inv_dy_j
+#:endif
+      endif
+    enddo
+    call syncthreads()
+  end subroutine load_smem_visc_cent${VISC_ORDER}$_z_stage1
+
+  attributes(device) subroutine load_smem_visc_cent${VISC_ORDER}$_z_stage2(it, jt, kt, i, j, &
+                                                       nx, ny, nz, inv_dx_i, Q_2, Q_4, grad_a, uvw)
+    integer, intent(in), value              :: it, jt, kt
+    integer, intent(in), value              :: i, j
+    integer, intent(in), value              :: nx, ny, nz
+    real(8), intent(in), value              :: inv_dx_i
+    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    integer, parameter :: io_v = ${io_v_val}$
+    integer, parameter :: sx = threadsGv%x
+    integer, parameter :: sy = threadsGv%y
+    integer, parameter :: sz = threadsGv%z + 2*io_v + 1
+    real(8), intent(inout) :: grad_a(-(io_v-1):sx*sy*sz-io_v)  ! wx
+    real(8), intent(inout) :: uvw(-(io_v-1):sx*sy*sz-io_v)     ! u
+    integer k_base, kk, k, idx, offset_xy
+    logical :: ij_in_range, ij_in_range_grad_x
+    k_base = (blockIdx%z-1)*blockDim%z
+    offset_xy = (jt-1)*sz + (it-1)*sz*sy
+    ij_in_range = (i <= nx .and. j <= ny)
+    ij_in_range_grad_x = (${D_MIN}$ <= i .and. i <= nx-${D_SFX}$ .and. j <= ny)
+    do kk = kt-io_v, threadsGv%z+io_v+1, blockDim%z
+      k = k_base + kk
+      idx = kk + offset_xy
+      if (ij_in_range .and. 1 <= k .and. k <= nz) then
+        uvw(idx) = Q_2(i,j,k)
+      endif
+      if (ij_in_range_grad_x .and. 1 <= k .and. k <= nz) then
+#:if VISC_ORDER == 4
+        grad_a(idx) = (two_third * (-Q_4(i-1,j,k) + Q_4(i+1,j,k)) - one_twelfth * (-Q_4(i-2,j,k) + Q_4(i+2,j,k))) * inv_dx_i
+#:else
+        grad_a(idx) = (one_sixty * (-Q_4(i-3,j,k) + Q_4(i+3,j,k)) + 0.15d0 * (Q_4(i-2,j,k) - Q_4(i+2,j,k)) + 0.75d0 * (-Q_4(i-1,j,k) + Q_4(i+1,j,k))) * inv_dx_i
+#:endif
+      endif
+    enddo
+    call syncthreads()
+  end subroutine load_smem_visc_cent${VISC_ORDER}$_z_stage2
+
+  attributes(device) subroutine load_smem_visc_cent${VISC_ORDER}$_z_stage3(it, jt, kt, i, j, &
+                                                       nx, ny, nz, inv_dy_j, Q_3, Q_4, grad_a, uvw)
+    integer, intent(in), value              :: it, jt, kt
+    integer, intent(in), value              :: i, j
+    integer, intent(in), value              :: nx, ny, nz
+    real(8), intent(in), value              :: inv_dy_j
+    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    integer, parameter :: io_v = ${io_v_val}$
+    integer, parameter :: sx = threadsGv%x
+    integer, parameter :: sy = threadsGv%y
+    integer, parameter :: sz = threadsGv%z + 2*io_v + 1
+    real(8), intent(inout) :: grad_a(-(io_v-1):sx*sy*sz-io_v)  ! wy
+    real(8), intent(inout) :: uvw(-(io_v-1):sx*sy*sz-io_v)     ! v
+    integer k_base, kk, k, idx, offset_xy
+    logical :: ij_in_range, ij_in_range_grad_y
+    k_base = (blockIdx%z-1)*blockDim%z
+    offset_xy = (jt-1)*sz + (it-1)*sz*sy
+    ij_in_range = (i <= nx .and. j <= ny)
+    ij_in_range_grad_y = (i <= nx .and. ${D_MIN}$ <= j .and. j <= ny-${D_SFX}$)
+    do kk = kt-io_v, threadsGv%z+io_v+1, blockDim%z
+      k = k_base + kk
+      idx = kk + offset_xy
+      if (ij_in_range .and. 1 <= k .and. k <= nz) then
+        uvw(idx) = Q_3(i,j,k)
+      endif
+      if (ij_in_range_grad_y .and. 1 <= k .and. k <= nz) then
+#:if VISC_ORDER == 4
+        grad_a(idx) = (two_third * (-Q_4(i,j-1,k) + Q_4(i,j+1,k)) - one_twelfth * (-Q_4(i,j-2,k) + Q_4(i,j+2,k))) * inv_dy_j
+#:else
+        grad_a(idx) = (one_sixty * (-Q_4(i,j-3,k) + Q_4(i,j+3,k)) + 0.15d0 * (Q_4(i,j-2,k) - Q_4(i,j+2,k)) + 0.75d0 * (-Q_4(i,j-1,k) + Q_4(i,j+1,k))) * inv_dy_j
+#:endif
+      endif
+    enddo
+    call syncthreads()
+  end subroutine load_smem_visc_cent${VISC_ORDER}$_z_stage3
+
+
+  !===================================================================
+  ! z_koff variant (k-range-restricted, for COMMZ overlap) — identical to
+  ! _z above except k_base is offset by k_lo.
+  !===================================================================
+  attributes(device) subroutine load_smem_visc_cent${VISC_ORDER}$_z_koff_stage1(it, jt, kt, i, j, &
+                                                       nx, ny, nz, inv_dx_i, inv_dy_j, Q_2, Q_3, Q_4, grad_a, grad_b, uvw, k_lo)
+    integer, intent(in), value              :: it, jt, kt
+    integer, intent(in), value              :: i, j
+    integer, intent(in), value              :: nx, ny, nz
+    real(8), intent(in), value              :: inv_dx_i
+    real(8), intent(in), value              :: inv_dy_j
+    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    integer, intent(in), value              :: k_lo
+    integer, parameter :: io_v = ${io_v_val}$
+    integer, parameter :: sx = threadsGv%x
+    integer, parameter :: sy = threadsGv%y
+    integer, parameter :: sz = threadsGv%z + 2*io_v + 1
+    real(8), intent(inout) :: grad_a(-(io_v-1):sx*sy*sz-io_v)  ! ux
+    real(8), intent(inout) :: grad_b(-(io_v-1):sx*sy*sz-io_v)  ! vy
+    real(8), intent(inout) :: uvw(-(io_v-1):sx*sy*sz-io_v)     ! w
+    integer k_base, kk, k, idx, offset_xy
+    logical :: ij_in_range, ij_in_range_grad_x, ij_in_range_grad_y
+    k_base = (blockIdx%z-1)*blockDim%z + k_lo - 1
+    offset_xy = (jt-1)*sz + (it-1)*sz*sy
+    ij_in_range = (i <= nx .and. j <= ny)
+    ij_in_range_grad_x = (${D_MIN}$ <= i .and. i <= nx-${D_SFX}$ .and. j <= ny)
+    ij_in_range_grad_y = (i <= nx .and. ${D_MIN}$ <= j .and. j <= ny-${D_SFX}$)
+    do kk = kt-io_v, threadsGv%z+io_v+1, blockDim%z
+      k = k_base + kk
+      idx = kk + offset_xy
+      if (ij_in_range .and. 1 <= k .and. k <= nz) then
+        uvw(idx) = Q_4(i,j,k)
+      endif
+      if (ij_in_range_grad_x .and. 1 <= k .and. k <= nz) then
+#:if VISC_ORDER == 4
+        grad_a(idx) = (two_third * (-Q_2(i-1,j,k) + Q_2(i+1,j,k)) - one_twelfth * (-Q_2(i-2,j,k) + Q_2(i+2,j,k))) * inv_dx_i
+#:else
+        grad_a(idx) = (one_sixty * (-Q_2(i-3,j,k) + Q_2(i+3,j,k)) + 0.15d0 * (Q_2(i-2,j,k) - Q_2(i+2,j,k)) + 0.75d0 * (-Q_2(i-1,j,k) + Q_2(i+1,j,k))) * inv_dx_i
+#:endif
+      endif
+      if (ij_in_range_grad_y .and. 1 <= k .and. k <= nz) then
+#:if VISC_ORDER == 4
+        grad_b(idx) = (two_third * (-Q_3(i,j-1,k) + Q_3(i,j+1,k)) - one_twelfth * (-Q_3(i,j-2,k) + Q_3(i,j+2,k))) * inv_dy_j
+#:else
+        grad_b(idx) = (one_sixty * (-Q_3(i,j-3,k) + Q_3(i,j+3,k)) + 0.15d0 * (Q_3(i,j-2,k) - Q_3(i,j+2,k)) + 0.75d0 * (-Q_3(i,j-1,k) + Q_3(i,j+1,k))) * inv_dy_j
+#:endif
+      endif
+    enddo
+    call syncthreads()
+  end subroutine load_smem_visc_cent${VISC_ORDER}$_z_koff_stage1
+
+  attributes(device) subroutine load_smem_visc_cent${VISC_ORDER}$_z_koff_stage2(it, jt, kt, i, j, &
+                                                       nx, ny, nz, inv_dx_i, Q_2, Q_4, grad_a, uvw, k_lo)
+    integer, intent(in), value              :: it, jt, kt
+    integer, intent(in), value              :: i, j
+    integer, intent(in), value              :: nx, ny, nz
+    real(8), intent(in), value              :: inv_dx_i
+    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    integer, intent(in), value              :: k_lo
+    integer, parameter :: io_v = ${io_v_val}$
+    integer, parameter :: sx = threadsGv%x
+    integer, parameter :: sy = threadsGv%y
+    integer, parameter :: sz = threadsGv%z + 2*io_v + 1
+    real(8), intent(inout) :: grad_a(-(io_v-1):sx*sy*sz-io_v)  ! wx
+    real(8), intent(inout) :: uvw(-(io_v-1):sx*sy*sz-io_v)     ! u
+    integer k_base, kk, k, idx, offset_xy
+    logical :: ij_in_range, ij_in_range_grad_x
+    k_base = (blockIdx%z-1)*blockDim%z + k_lo - 1
+    offset_xy = (jt-1)*sz + (it-1)*sz*sy
+    ij_in_range = (i <= nx .and. j <= ny)
+    ij_in_range_grad_x = (${D_MIN}$ <= i .and. i <= nx-${D_SFX}$ .and. j <= ny)
+    do kk = kt-io_v, threadsGv%z+io_v+1, blockDim%z
+      k = k_base + kk
+      idx = kk + offset_xy
+      if (ij_in_range .and. 1 <= k .and. k <= nz) then
+        uvw(idx) = Q_2(i,j,k)
+      endif
+      if (ij_in_range_grad_x .and. 1 <= k .and. k <= nz) then
+#:if VISC_ORDER == 4
+        grad_a(idx) = (two_third * (-Q_4(i-1,j,k) + Q_4(i+1,j,k)) - one_twelfth * (-Q_4(i-2,j,k) + Q_4(i+2,j,k))) * inv_dx_i
+#:else
+        grad_a(idx) = (one_sixty * (-Q_4(i-3,j,k) + Q_4(i+3,j,k)) + 0.15d0 * (Q_4(i-2,j,k) - Q_4(i+2,j,k)) + 0.75d0 * (-Q_4(i-1,j,k) + Q_4(i+1,j,k))) * inv_dx_i
+#:endif
+      endif
+    enddo
+    call syncthreads()
+  end subroutine load_smem_visc_cent${VISC_ORDER}$_z_koff_stage2
+
+  attributes(device) subroutine load_smem_visc_cent${VISC_ORDER}$_z_koff_stage3(it, jt, kt, i, j, &
+                                                       nx, ny, nz, inv_dy_j, Q_3, Q_4, grad_a, uvw, k_lo)
+    integer, intent(in), value              :: it, jt, kt
+    integer, intent(in), value              :: i, j
+    integer, intent(in), value              :: nx, ny, nz
+    real(8), intent(in), value              :: inv_dy_j
+    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    integer, intent(in), value              :: k_lo
+    integer, parameter :: io_v = ${io_v_val}$
+    integer, parameter :: sx = threadsGv%x
+    integer, parameter :: sy = threadsGv%y
+    integer, parameter :: sz = threadsGv%z + 2*io_v + 1
+    real(8), intent(inout) :: grad_a(-(io_v-1):sx*sy*sz-io_v)  ! wy
+    real(8), intent(inout) :: uvw(-(io_v-1):sx*sy*sz-io_v)     ! v
+    integer k_base, kk, k, idx, offset_xy
+    logical :: ij_in_range, ij_in_range_grad_y
+    k_base = (blockIdx%z-1)*blockDim%z + k_lo - 1
+    offset_xy = (jt-1)*sz + (it-1)*sz*sy
+    ij_in_range = (i <= nx .and. j <= ny)
+    ij_in_range_grad_y = (i <= nx .and. ${D_MIN}$ <= j .and. j <= ny-${D_SFX}$)
+    do kk = kt-io_v, threadsGv%z+io_v+1, blockDim%z
+      k = k_base + kk
+      idx = kk + offset_xy
+      if (ij_in_range .and. 1 <= k .and. k <= nz) then
+        uvw(idx) = Q_3(i,j,k)
+      endif
+      if (ij_in_range_grad_y .and. 1 <= k .and. k <= nz) then
+#:if VISC_ORDER == 4
+        grad_a(idx) = (two_third * (-Q_4(i,j-1,k) + Q_4(i,j+1,k)) - one_twelfth * (-Q_4(i,j-2,k) + Q_4(i,j+2,k))) * inv_dy_j
+#:else
+        grad_a(idx) = (one_sixty * (-Q_4(i,j-3,k) + Q_4(i,j+3,k)) + 0.15d0 * (Q_4(i,j-2,k) - Q_4(i,j+2,k)) + 0.75d0 * (-Q_4(i,j-1,k) + Q_4(i,j+1,k))) * inv_dy_j
+#:endif
+      endif
+    enddo
+    call syncthreads()
+  end subroutine load_smem_visc_cent${VISC_ORDER}$_z_koff_stage3
+end module load_smem_visc_cent${VISC_ORDER}$

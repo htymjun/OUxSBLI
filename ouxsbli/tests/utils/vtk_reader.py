@@ -51,17 +51,6 @@ def getGrid_Str(file_path):
   return Nx, Ny, Nz, points[:,:,:,0], points[:,:,:,1], points[:,:,:,2]
 
 
-def getGrid(file_path):
-  ext = get_ext(file_path)
-  if ext == 'vtr':
-    Nx, Ny, Nz, x, y, z = getGrid_Rect(file_path)
-  elif ext == 'vts':
-    Nx, Ny, Nz, x, y, z = getGrid_Str(file_path)
-  else:
-    raise ValueError("Invalid file type:", file_path)
-  return Nx, Ny, Nz, x, y, z
-
-
 def getVector(file_path, Nx, Ny, Nz, name):
   reader = vtk.vtkXMLRectilinearGridReader()
   reader.SetFileName(str(file_path))

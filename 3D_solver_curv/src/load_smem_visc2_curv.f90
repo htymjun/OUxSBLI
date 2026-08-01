@@ -5,7 +5,7 @@ module load_smem_visc2_curv
   private
   public load_smem_visc2_curv_x, load_smem_visc2_curv_y, load_smem_visc2_curv_z
 contains
-  attributes(device) subroutine load_smem_visc2_curv_x(it, jt, kt, j, k, idx, nx, ny, nz, Q, u, v, w)
+  attributes(device) subroutine load_smem_visc2_curv_x(it, jt, kt, j, k, idx, nx, ny, nz, Q_2, Q_3, Q_4, u, v, w)
     integer, intent(in), value              :: it            !< local idx for x direction
     integer, intent(in), value              :: jt            !< local idx for y direction
     integer, intent(in), value              :: kt            !< local idx for z direction
@@ -15,7 +15,9 @@ contains
     integer, intent(in), value              :: nx            !< number of grid points in x direction
     integer, intent(in), value              :: ny            !< number of grid points in y direction
     integer, intent(in), value              :: nz            !< number of grid points in z direction
-    real(8), intent(in), device, contiguous :: Q(nx,5,ny,nz) !< conservative variables
+    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz) !< conservative variables (rho*u)
+    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz) !< conservative variables (rho*v)
+    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz) !< conservative variables (rho*w)
     integer, parameter :: sx = threadsEv%x + 1
     integer, parameter :: sy = threadsEv%y
     integer, parameter :: sz = threadsEv%z
@@ -29,9 +31,9 @@ contains
       i = i_base + ii
       idx_l = (ii-1) + offset_yz
       if (1 <= i .and. i <= nx .and. j <= ny .and. k <= nz) then
-        call pipelineMemcpyAsync(u(idx_l), Q(i,2,j,k))
-        call pipelineMemcpyAsync(v(idx_l), Q(i,3,j,k))
-        call pipelineMemcpyAsync(w(idx_l), Q(i,4,j,k))
+        call pipelineMemcpyAsync(u(idx_l), Q_2(i,j,k))
+        call pipelineMemcpyAsync(v(idx_l), Q_3(i,j,k))
+        call pipelineMemcpyAsync(w(idx_l), Q_4(i,j,k))
       else
         u(idx_l) = 0.d0
         v(idx_l) = 0.d0
@@ -44,7 +46,7 @@ contains
   end subroutine load_smem_visc2_curv_x
 
 
-  attributes(device) subroutine load_smem_visc2_curv_y(it, jt, kt, i, k, idx, nx, ny, nz, Q, u, v, w)
+  attributes(device) subroutine load_smem_visc2_curv_y(it, jt, kt, i, k, idx, nx, ny, nz, Q_2, Q_3, Q_4, u, v, w)
     integer, intent(in), value              :: it            !< local idx for x direction
     integer, intent(in), value              :: jt            !< local idx for y direction
     integer, intent(in), value              :: kt            !< local idx for z direction
@@ -54,7 +56,9 @@ contains
     integer, intent(in), value              :: nx            !< number of grid points in x direction
     integer, intent(in), value              :: ny            !< number of grid points in y direction
     integer, intent(in), value              :: nz            !< number of grid points in z direction
-    real(8), intent(in), device, contiguous :: Q(nx,5,ny,nz) !< conservative variables
+    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz) !< conservative variables (rho*u)
+    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz) !< conservative variables (rho*v)
+    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz) !< conservative variables (rho*w)
     integer, parameter :: sx = threadsFv%x
     integer, parameter :: sy = threadsFv%y + 1
     integer, parameter :: sz = threadsFv%z
@@ -68,9 +72,9 @@ contains
       j = j_base + jj
       idx_l = (jj-1) + offset_xz
       if (i <= nx .and. 1 <= j .and. j <= ny .and. k <= nz) then
-        call pipelineMemcpyAsync(u(idx_l), Q(i,2,j,k))
-        call pipelineMemcpyAsync(v(idx_l), Q(i,3,j,k))
-        call pipelineMemcpyAsync(w(idx_l), Q(i,4,j,k))
+        call pipelineMemcpyAsync(u(idx_l), Q_2(i,j,k))
+        call pipelineMemcpyAsync(v(idx_l), Q_3(i,j,k))
+        call pipelineMemcpyAsync(w(idx_l), Q_4(i,j,k))
       else
         u(idx_l) = 0.d0
         v(idx_l) = 0.d0
@@ -83,7 +87,7 @@ contains
   end subroutine load_smem_visc2_curv_y
 
 
-  attributes(device) subroutine load_smem_visc2_curv_z(it, jt, kt, i, j, idx, nx, ny, nz, Q, u, v, w)
+  attributes(device) subroutine load_smem_visc2_curv_z(it, jt, kt, i, j, idx, nx, ny, nz, Q_2, Q_3, Q_4, u, v, w)
     integer, intent(in), value              :: it            !< local idx for x direction
     integer, intent(in), value              :: jt            !< local idx for y direction
     integer, intent(in), value              :: kt            !< local idx for z direction
@@ -93,7 +97,9 @@ contains
     integer, intent(in), value              :: nx            !< number of grid points in x direction
     integer, intent(in), value              :: ny            !< number of grid points in y direction
     integer, intent(in), value              :: nz            !< number of grid points in z direction
-    real(8), intent(in), device, contiguous :: Q(nx,5,ny,nz) !< conservative variables
+    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz) !< conservative variables (rho*u)
+    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz) !< conservative variables (rho*v)
+    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz) !< conservative variables (rho*w)
     integer, parameter :: sx = threadsGv%x
     integer, parameter :: sy = threadsGv%y
     integer, parameter :: sz = threadsGv%z + 1
@@ -107,9 +113,9 @@ contains
       k = k_base + kk
       idx_l = (kk-1) + offset_xy
       if (i <= nx .and. j <= ny .and. 1 <= k .and. k <= nz) then
-        call pipelineMemcpyAsync(u(idx_l), Q(i,2,j,k))
-        call pipelineMemcpyAsync(v(idx_l), Q(i,3,j,k))
-        call pipelineMemcpyAsync(w(idx_l), Q(i,4,j,k))
+        call pipelineMemcpyAsync(u(idx_l), Q_2(i,j,k))
+        call pipelineMemcpyAsync(v(idx_l), Q_3(i,j,k))
+        call pipelineMemcpyAsync(w(idx_l), Q_4(i,j,k))
       else
         u(idx_l) = 0.d0
         v(idx_l) = 0.d0

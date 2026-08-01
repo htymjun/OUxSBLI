@@ -1,4 +1,7 @@
 #:include 'config.fypp'
+#:if not defined('MIXED_FORK')
+  #:set MIXED_FORK = False
+#:endif
 module preprocess
   use cudafor
   use mpi
@@ -18,23 +21,32 @@ contains
   end subroutine check_gpu
 
 
-  subroutine allocate_device_mem(myrank, nx, ny, nz, dtdxdy, dtdydz, dtdzdx, xix, etay, zetaz, Jacobian, ruvwp, T, mu, mut, qc2, E, F, G)
+  subroutine allocate_device_mem(myrank, nx, ny, nz, dtdxdy, dtdydz, dtdzdx, xix, etay, zetaz, Jacobian, &
+                                 Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
     integer, intent(in)                       :: myrank, nx, ny, nz
     real(8), intent(out), allocatable, device :: dtdxdy(:,:), dtdydz(:,:), dtdzdx(:,:)
     real(8), intent(out), allocatable, device :: xix(:), etay(:), zetaz(:)
     real(8), intent(out), allocatable, device :: Jacobian(:,:)
-    real(8), intent(out), allocatable, device :: ruvwp(:,:,:,:)
+    real(8), intent(out), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
     real(8), intent(out), allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
+    real(8), intent(out), allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
     real(8), intent(out), allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
     integer ierr
-    allocate(ruvwp(5,nx,ny,nz), E(5,nx-1,ny-2,nz-2), F(5,nx-2,ny-1,nz-2), G(5,nx-2,ny-2,nz-1), stat=ierr)
+    allocate(Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), &
+             E(nx-1,ny-2,nz-2,5), F(nx-2,ny-1,nz-2,5), G(nx-2,ny-2,nz-1,5), stat=ierr)
     allocate(dtdxdy(nx-2,ny-2), dtdydz(ny-2,nz-2), dtdzdx(nx-2,nz-2), xix(nx-1), etay(ny-1), zetaz(nz-1), Jacobian(nx,ny), stat=ierr)
+    #:if MIXED_FORK
+    allocate(xix_r4(nx-1), etay_r4(ny-1), zetaz_r4(nz-1), stat=ierr)
+    #:endif
 #:if VISC == 'Euler'
     allocate(T(nx,ny,nz), mu(1,1,1), mut(1,1,1), qc2(1,1,1), stat=ierr)
+    allocate(ux(1,1,1), vy(1,1,1), wz(1,1,1), stat=ierr)
 #:elif VISC == 'NS'
     allocate(T(nx,ny,nz), mu(nx,ny,nz), mut(1,1,1), qc2(1,1,1), stat=ierr)
+    allocate(ux(nx,ny,nz), vy(nx,ny,nz), wz(nx,ny,nz), stat=ierr)
 #:elif VISC == 'LES'
     allocate(T(nx,ny,nz), mu(nx,ny,nz), mut(nx,ny,nz), qc2(nx,ny,nz), stat=ierr)
+    allocate(ux(nx,ny,nz), vy(nx,ny,nz), wz(nx,ny,nz), stat=ierr)
 #:endif
     call init_sensor(nx, ny, nz)
     if (ierr /= 0) then
@@ -46,26 +58,37 @@ contains
 
 
   subroutine pre_calc(nx, ny, nz, myrank, nranks, x, dx_cpu, y, dy_cpu, z, dz_cpu, Jacobian_cpu, Q, &
-                      dtdxdy, dtdydz, dtdzdx, xix, etay, zetaz, Jacobian, QJ, ke0, entropy0)
+                      dtdxdy, dtdydz, dtdzdx, xix, etay, zetaz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, ke0, entropy0 &
+                      #:if MIXED_FORK
+                      , xix_r4, etay_r4, zetaz_r4 &
+                      #:endif
+                      )
     use mod_globals, only : dt
     integer, intent(in)                      :: nx, ny, nz, myrank, nranks
     real(8), intent(in)                      :: x(nx), dx_cpu(nx-1), y(ny), dy_cpu(ny-1)
     real(8), intent(in)                      :: z(nz), dz_cpu(nz-1), Jacobian_cpu(nx,ny)
-    real(8), intent(inout)                   :: Q(nx,5,ny,nz)
+    real(8), intent(inout)                   :: Q(nx,ny,nz,5)
     real(8), intent(out), device, contiguous :: dtdxdy(nx-2,ny-2), dtdydz(ny-2,nz-2), dtdzdx(nx-2,nz-2)
     real(8), intent(out), device, contiguous :: xix(nx-1), etay(ny-1), zetaz(nz-1)
     real(8), intent(out), device, contiguous :: Jacobian(nx,ny)
-    real(8), intent(out), device, contiguous :: QJ(nx,5,ny,nz)
+    real(8), intent(out), device, contiguous :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
+    real(8), intent(out), device, contiguous :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(4), intent(inout)                   :: ke0, entropy0
+    #:if MIXED_FORK
+    real(4), intent(out), device, contiguous :: xix_r4(nx-1), etay_r4(ny-1), zetaz_r4(nz-1)
+    #:endif
     real(8) xix_cpu(nx-1), etay_cpu(ny-1), zetaz_cpu(nz-1)
     real(8) dtdxdy_cpu(nx-2,ny-2), dtdydz_cpu(ny-2,nz-2), dtdzdx_cpu(nx-2,nz-2)
     real(4) rho_flat(nx*ny*nz), p_flat(nx*ny*nz), vel_flat(nx*ny*nz*3)
+    #:if MIXED_FORK
+    real(4) xix_r4_cpu(nx-1), etay_r4_cpu(ny-1), zetaz_r4_cpu(nz-1)
+    #:endif
     integer i, j, k, l, ierr, ireq3(3), istat3(MPI_STATUS_SIZE, 3)
-    do k = 1, nz
-      do j = 1, ny
-        do l = 1, 5
+    do l = 1, 5
+      do k = 1, nz
+        do j = 1, ny
           do i = 1, nx
-            Q(i,l,j,k) = Q(i,l,j,k) / Jacobian_cpu(i,j)
+            Q(i,j,k,l) = Q(i,j,k,l) / Jacobian_cpu(i,j)
           enddo
         enddo
       enddo
@@ -92,7 +115,19 @@ contains
     etay     = etay_cpu
     zetaz    = zetaz_cpu
     Jacobian = Jacobian_cpu
-    QJ = Q
+    #:if MIXED_FORK
+    xix_r4_cpu = real(xix_cpu, 4)
+    etay_r4_cpu = real(etay_cpu, 4)
+    zetaz_r4_cpu = real(zetaz_cpu, 4)
+    xix_r4 = xix_r4_cpu
+    etay_r4 = etay_r4_cpu
+    zetaz_r4 = zetaz_r4_cpu
+    #:endif
+    QJ_1 = Q(:,:,:,1)
+    QJ_2 = Q(:,:,:,2)
+    QJ_3 = Q(:,:,:,3)
+    QJ_4 = Q(:,:,:,4)
+    QJ_5 = Q(:,:,:,5)
     call make_1d_for_print(nx, ny, nz, Jacobian_cpu, Q, rho_flat, p_flat, vel_flat)
     call MPI_SEND(ke0,      1, MPI_REAL4, myrank+1, myrank+1, MPI_COMM_WORLD, ierr)
     call MPI_SEND(entropy0, 1, MPI_REAL4, myrank+1, myrank+1, MPI_COMM_WORLD, ierr)
@@ -103,12 +138,14 @@ contains
   end subroutine pre_calc
 
 
-  subroutine pre_rescale(myrank, flag_re, flag_req, ny, nz, Qre, Qm, Qm_cpu)
+  subroutine pre_rescale(myrank, flag_re, flag_req, ny, nz, Qre_1, Qre_2, Qre_3, Qre_4, Qre_5, &
+                          Qm_1, Qm_2, Qm_3, Qm_4, Qm_5, Qm_cpu_1, Qm_cpu_2, Qm_cpu_3, Qm_cpu_4, Qm_cpu_5)
     use mod_globals, only : rerank
     integer, intent(in)                         :: myrank, ny, nz
     integer, intent(inout)                      :: flag_re, flag_req
-    real(8), intent(inout), allocatable, device :: Qre(:), Qm(:)
-    real(8), intent(inout), allocatable         :: Qm_cpu(:)
+    real(8), intent(inout), allocatable, device :: Qre_1(:), Qre_2(:), Qre_3(:), Qre_4(:), Qre_5(:)
+    real(8), intent(inout), allocatable, device :: Qm_1(:), Qm_2(:), Qm_3(:), Qm_4(:), Qm_5(:)
+    real(8), intent(inout), allocatable         :: Qm_cpu_1(:), Qm_cpu_2(:), Qm_cpu_3(:), Qm_cpu_4(:), Qm_cpu_5(:)
     character(len=40) filename
     logical exists
     integer j, stat, ilen, ireq, ierr, errorcode
@@ -117,8 +154,13 @@ contains
       call MPI_IRECV(flag_re, 1, MPI_INTEGER, rerank+1, 1001, MPI_COMM_WORLD, flag_req, ierr)
     endif
     if (mod(myrank,2) == 0) then
-      allocate(Qre(ny*(nz-6)*5), Qm(ny*5), stat=ierr)
-      Qm(:) = 0.d0
+      allocate(Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6)), &
+               Qm_1(ny), Qm_2(ny), Qm_3(ny), Qm_4(ny), Qm_5(ny), stat=ierr)
+      Qm_1(:) = 0.d0
+      Qm_2(:) = 0.d0
+      Qm_3(:) = 0.d0
+      Qm_4(:) = 0.d0
+      Qm_5(:) = 0.d0
       if (ierr /= 0) then
         print *, "myrank is ", myrank, " memory allocation failed (Qm)", ierr
       else
@@ -129,19 +171,20 @@ contains
       stat = cudaGetDeviceProperties(prop, 0)
       ilen = verify(prop%name, ' ', .true.)
       print '(1x, a, a, i1, a)', prop%name(1:ilen), " (GPU", 0, ") calculates rescaling"
-      allocate(Qm_cpu(ny*5))
+      allocate(Qm_cpu_1(ny), Qm_cpu_2(ny), Qm_cpu_3(ny), Qm_cpu_4(ny), Qm_cpu_5(ny))
 #:if RESTART
       write(filename, "(a)") "recal/Qm.dat"
       inquire(file=filename, exist=exists)
       if (exists) then
         open(10, file=filename, status='old', action='read', form='unformatted', access='stream')
-        read(10) Qm_cpu
+        read(10) Qm_cpu_1, Qm_cpu_2, Qm_cpu_3, Qm_cpu_4, Qm_cpu_5
         close(10)
 #:if not RESCALE
         print *, "Qm exists (not fixed value)"
 #:endif
-        do j = 1, 5*ny
-          if (Qm_cpu(j) /= Qm_cpu(j)) then
+        do j = 1, ny
+          if (Qm_cpu_1(j) /= Qm_cpu_1(j) .or. Qm_cpu_2(j) /= Qm_cpu_2(j) .or. Qm_cpu_3(j) /= Qm_cpu_3(j) .or. &
+              Qm_cpu_4(j) /= Qm_cpu_4(j) .or. Qm_cpu_5(j) /= Qm_cpu_5(j)) then
             print *, "Qm is NaN"
             call MPI_ABORT(MPI_COMM_WORLD, errorcode, ierr)
           endif
@@ -151,7 +194,11 @@ contains
         print *, "Qm is required but doesn't exist"
         call MPI_ABORT(MPI_COMM_WORLD, errorcode, ierr)
 #:endif
-        Qm_cpu(:) = 0.d0
+        Qm_cpu_1(:) = 0.d0
+        Qm_cpu_2(:) = 0.d0
+        Qm_cpu_3(:) = 0.d0
+        Qm_cpu_4(:) = 0.d0
+        Qm_cpu_5(:) = 0.d0
         print *, "Qm doesn't exist"
       endif
 #:endif

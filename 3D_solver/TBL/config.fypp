@@ -1,11 +1,11 @@
 
-#:set VISC = 'LES'
-#:set SCHEME = 'Hybrid'
-#:set ORDER = 6
+#:set VISC = 'NS'
+#:set SCHEME = 'KEEP'
+#:set ORDER = 2
 #:set BC_X = True
 #:set BC_Y = True
 #:set BC_Z = False
-#:set RESCALE = False
+#:set RESCALE = True
 #:set RK = 3
 #:set COMMZ = False
 #:set RESTART = False

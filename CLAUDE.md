@@ -88,8 +88,10 @@ Source files with the `.f90.fypp` extension are **templates**; CMake runs `fypp 
 | `3D_solver/src/calc_roe_kernel_internal.f90.fypp` | Interior-only Roe variant |
 | `3D_solver/src/calc_hybrid_kernel_internal.f90.fypp` | Interior-only Hybrid variant |
 | `3D_solver/src/calc_visc2.f90.fypp` | 2nd-order viscous kernels |
-| `3D_solver/src/calc_visc4.f90.fypp` | 4th-order viscous kernels |
-| `3D_solver/src/calc_visc4_internal.f90.fypp` | Interior-only 4th-order viscous |
+| `3D_solver/src/calc_visc_high.f90.fypp` | 4th/6th-order viscous kernels (`VISC_ORDER`-controlled), boundary-aware (interior/fallback branch per point) |
+| `3D_solver/src/calc_visc_high_internal.f90.fypp` | Interior-only 4th/6th-order viscous variant (used where a direction has no BC, i.e. periodic) |
+| `3D_solver/src/calc_visc_cent.f90.fypp` | Shared `interp`/`diff`/`calc_tau_straight`/`calc_tau_cross` helpers, `#:include`d into both `calc_visc_high[_internal].f90.fypp` |
+| `3D_solver/src/load_smem_visc_cent.f90.fypp` | Shared-memory loaders for `calc_visc_high[_internal]`'s `calc_Ev/Fv/Gv` |
 | `3D_solver/src/preprocess.f90.fypp` | Device memory allocation helpers |
 
 The 2D solver uses CMake (like 3D); `2D_solver/src/calc_flux_base.f90.fypp` is preprocessed by the per-case CMakeLists.txt using the same `fypp -I<case-dir>` pattern.
@@ -196,7 +198,36 @@ Available cases:
 | Roe | `calc_roe_kernel.f90.fypp`, `calc_roe_kernel_internal.f90.fypp` | Supersonic/hypersonic discontinuities |
 | Hybrid (KEEP↔SLAU via Ducros sensor) | `calc_hybrid_kernel.f90.fypp`, `calc_hybrid_kernel_internal.f90.fypp` | Mixed smooth/shocked regions |
 
-Viscous discretization: `calc_visc2.f90.fypp` (Gaitonde & Visbal 2nd-order) or `calc_visc4.f90.fypp` + `calc_visc4_internal.f90.fypp` (4th-order compact).
+Viscous discretization: `calc_visc2.f90.fypp` (Gaitonde & Visbal 2nd-order, `VISC_ORDER=2`) or `calc_visc_high.f90.fypp` + `calc_visc_high_internal.f90.fypp` (4th/6th-order, `VISC_ORDER=4` or `6`).
+
+### Cell-Center Velocity Gradients (`ux`, `vy`, `wz`)
+
+For `VISC_ORDER > 2` (NS/LES), `calc_div.f90` precomputes the three diagonal
+velocity gradients `ux=∂u/∂x`, `vy=∂v/∂y`, `wz=∂w/∂z` at cell centers once per
+RK stage (`calc_div_${VISC_ORDER}$_in`, called from `calc_flux_base.f90.fypp`
+right after `calc_quantities_T_3D`) and stores them to DRAM. `calc_Ev/Fv/Gv`
+(in both `calc_visc_high.f90.fypp` and `calc_visc_high_internal.f90.fypp`)
+then read the two gradients they don't own directly from these arrays instead
+of each direction's kernel recomputing the other two independently in shared
+memory — e.g. `calc_Ev` needs `vy,wz` (not `ux`, which it derives locally from
+its own `u` shared-memory tile); it reads them straight from DRAM rather than
+via `load_smem_visc_cent`, which now only loads the two cross-derivatives
+unique to that direction (e.g. `uy,uz` for `calc_Ev`). Non-contiguous
+(y/z-sweep) reads use scalar `calc_tau_straight_s`/`interp2_${N}$_s` helpers
+in `calc_visc_cent.f90.fypp` (same pattern as the existing `mu`/`T` scalar
+reads) rather than gathering into a local array.
+Each of `ux,vy,wz` only needs a margin in its own direction (see
+`calc_div_4_in`/`calc_div_6_in`'s independent per-component gating), which is
+why one un-specialized `calc_div` kernel serves every consumer regardless of
+that direction's `BC_X/Y/Z` setting. `calc_div_2` is not currently wired to
+any consumer (`calc_visc2.f90.fypp` computes its trace terms directly from
+`Q` via face differences, not a cell-centered gradient) — it's kept for a
+possible future reuse by `calc_hybrid`'s `calc_Ducros` shock sensor at 2nd
+order (see the `calc_Ducros` note in Notice below).
+**Known limitation:** only wired into `calc_flux_base.f90.fypp`'s non-`COMMZ`
+path; no current case combines `COMMZ=True` with `VISC in ('NS','LES')` at
+`VISC_ORDER>2` (the only `COMMZ=True` case, STZ, is Euler-only), so
+`calc_EFG_halo` still uses the old per-kernel recompute path.
 
 ## Configuration
 
@@ -209,7 +240,7 @@ All compile-time scheme/method choices live in `<CASE>/config.fypp`. The fypp pr
 | `VISC` | `'Euler'`, `'NS'`, `'LES'` | Physics model |
 | `SCHEME` | `'KEEP'`, `'SLAU'`, `'Roe'`, `'Hybrid'` | Convective flux scheme |
 | `ORDER` | `2`, `4`, `6` | Spatial accuracy (convective + viscous) |
-| `VISC_ORDER` | `2`, `4` | Override viscous stencil order (defaults to `ORDER`) |
+| `VISC_ORDER` | `2`, `4`, `6` | Override viscous stencil order (defaults to `ORDER`) |
 | `TVD` | `'none'`, `'tvd'`, `'hybrid'` | TVD limiter for reconstruction |
 | `SLAU_VARIANT` | `'SLAU'`, `'HRSLAU2'` | SLAU flux variant |
 | `RESCALE` | `True`, `False` | SBLI reference-state rescaling |
@@ -305,13 +336,15 @@ For 2D cases:
 ## Notice
 * From an occupancy perspective, the subroutines invoked within `calc_flux_base.f90` should not be executed on separate streams.
 * `calc_flux_base.f90` and `calc_steps.f90` are the main bottleneck. You should optimize them.
-* `calc_flux_base.f90` calls `calc_*_kernel.f90`, `calc_*_kernel_internal.f90`, and `calc_visc*.f90`. They are the main bottleneck.
+* `calc_flux_base.f90` calls `calc_*_kernel.f90`, `calc_*_kernel_internal.f90`, `calc_visc*.f90`, and `calc_div.f90` (runs once per RK stage, right after `calc_quantities_T_3D`, for `VISC_ORDER>2`). They are the main bottleneck.
 * Roe scheme is not used. KEEP, SLAU, Hybrid schemes should be optimized.
 * `id_accuracy` controls ghost-cell count for both convective and viscous stencils.
 * Do not add `contiguous` and `shared` attributes when passing shared memory as an argument.
 * `cpu_gpu_mpi.f90` will be modified in the future.
 * STZ case exists specifically to validate the z-direction halo exchange (COMMZ=True, BC_Z=True); more validation and 6-point stencil support are still required.
-* When modifying `.f90.fypp` templates, always verify the generated output in `build/` for all affected cases — a fypp condition that looks correct may silently produce wrong code for one combination of config variables.
+* When modifying `.f90.fypp` templates, always verify the generated output in `build/` for all affected cases — a fypp condition that looks correct may silently produce wrong code for one combination of config variables. In particular, no current case sets `VISC_ORDER=4` for an NS/LES build (all NS/LES cases use `ORDER=6` or `2`), so that branch of every viscous-kernel template only gets exercised by deliberately overriding `VISC_ORDER` in a case's `config.fypp` and rebuilding — do this before trusting changes to the `VISC_ORDER==4` branches.
+* `calc_hybrid.f90`'s `calc_Ducros` shock sensor (used by SLAU/Roe/Hybrid schemes) recomputes its own full velocity-gradient tensor via always-2nd-order central differences, independent of `calc_div`'s higher-order `ux,vy,wz` — reusing `calc_div`'s output there would change the sensor's numerical values (mixed-order dilatation vs. vorticity) and needs a fallback for the edge band `calc_div` doesn't cover, so it hasn't been done; flagged here as a known optimization candidate for SLAU/Hybrid NS/LES cases (currently: SBLI).
+* Nsight Compute profiling captures live in `3D_solver/nsys_ncu/*.ncu-rep` (open with `ncu --import <file> --print-summary per-kernel`, or the `.csv` triage exports); use these before speculating about kernel performance.
 
 ## Strict Tooling Rules
 - MCP servers are strictly prohibited.

@@ -7,7 +7,7 @@ module set_init_dhit
 contains
   subroutine init_spectral_velocity(nx, ny, nz, Q)
     integer, intent(in)  :: nx, ny, nz
-    real(8), intent(out) :: Q(nx,5,ny,nz)
+    real(8), intent(out) :: Q(nx,ny,nz,5)
     !===========================================================
     ! parameters
     !===========================================================
@@ -208,11 +208,11 @@ contains
           v = vel_r(i,j,k,2)*norm*uscale
           w = vel_r(i,j,k,3)*norm*uscale
           
-          Q(i+offset,1,j+offset,k+offset) = RHO0
-          Q(i+offset,2,j+offset,k+offset) = RHO0 * u
-          Q(i+offset,3,j+offset,k+offset) = RHO0 * v
-          Q(i+offset,4,j+offset,k+offset) = RHO0 * w
-          Q(i+offset,5,j+offset,k+offset) = p0 / (gamma-1.d0) + 0.5d0 * RHO0 * (u*u + v*v + w*w)
+          Q(i+offset,j+offset,k+offset,1) = RHO0
+          Q(i+offset,j+offset,k+offset,2) = RHO0 * u
+          Q(i+offset,j+offset,k+offset,3) = RHO0 * v
+          Q(i+offset,j+offset,k+offset,4) = RHO0 * w
+          Q(i+offset,j+offset,k+offset,5) = p0 / (gamma-1.d0) + 0.5d0 * RHO0 * (u*u + v*v + w*w)
     enddo;enddo;enddo
     !===========================================================
     ! cleanup
@@ -224,4 +224,3 @@ contains
     deallocate(seed_arr)
   end subroutine init_spectral_velocity
 end module set_init_dhit
-

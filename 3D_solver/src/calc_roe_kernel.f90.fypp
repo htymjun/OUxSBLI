@@ -28,12 +28,12 @@ contains
   ! ============================================================================
   !  X-DIRECTION KERNEL (UNIFIED)
   ! ============================================================================
-  attributes(global) subroutine calc_roe_x_templated(id_accuracy, nx, ny, nz, Q, sensor, E)
+  attributes(global) subroutine calc_roe_x_templated(id_accuracy, nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, sensor, E)
     integer(kind=8), intent(in), value        :: id_accuracy
     integer, intent(in), value                :: nx, ny, nz
-    real(8), intent(in), device, contiguous   :: Q(nx,5,ny,nz)
+    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: E(5,nx-1,ny-2,nz-2)
+    real(8), intent(out), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
     ! io=2: 0 : threadsE%x+1
     ! io=4: -1 : threadsE%x+2
     ! io=6: -2 : threadsE%x+3
@@ -52,11 +52,11 @@ contains
     do ii = it + istart, iend, blockDim%x
       i = i_base + ii
       if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny .and. k >= 1 .and. k <= nz) then
-        rho(ii,jt,kt) = Q(i,1,j,k)
-        u(ii,jt,kt)   = Q(i,2,j,k)
-        v(ii,jt,kt)   = Q(i,3,j,k)
-        w(ii,jt,kt)   = Q(i,4,j,k)
-        p(ii,jt,kt)   = Q(i,5,j,k)
+        rho(ii,jt,kt) = Q_1(i,j,k)
+        u(ii,jt,kt)   = Q_2(i,j,k)
+        v(ii,jt,kt)   = Q_3(i,j,k)
+        w(ii,jt,kt)   = Q_4(i,j,k)
+        p(ii,jt,kt)   = Q_5(i,j,k)
       endif
     enddo
     call syncthreads()
@@ -92,11 +92,11 @@ contains
     if (io >= 4) then
       call Roe(rho(it,jt,kt), rhor(it,jt,kt), u(it,jt,kt), ur(it,jt,kt), v(it,jt,kt), vr(it,jt,kt), &
                w(it,jt,kt), wr(it,jt,kt), p(it,jt,kt), pr(it,jt,kt), &
-               E(1,i,j-1,k-1), E(2,i,j-1,k-1), E(3,i,j-1,k-1), E(4,i,j-1,k-1), E(5,i,j-1,k-1))
+               E(i,j-1,k-1,1), E(i,j-1,k-1,2), E(i,j-1,k-1,3), E(i,j-1,k-1,4), E(i,j-1,k-1,5))
     else
       call Roe(rho(it,jt,kt), rho(it+1,jt,kt), u(it,jt,kt), u(it+1,jt,kt), v(it,jt,kt), v(it+1,jt,kt), &
                w(it,jt,kt), w(it+1,jt,kt), p(it,jt,kt), p(it+1,jt,kt), &
-               E(1,i,j-1,k-1), E(2,i,j-1,k-1), E(3,i,j-1,k-1), E(4,i,j-1,k-1), E(5,i,j-1,k-1))
+               E(i,j-1,k-1,1), E(i,j-1,k-1,2), E(i,j-1,k-1,3), E(i,j-1,k-1,4), E(i,j-1,k-1,5))
     endif
   end subroutine calc_roe_x_templated
 
@@ -104,12 +104,12 @@ contains
   ! ============================================================================
   !  Y-DIRECTION KERNEL (UNIFIED)
   ! ============================================================================
-  attributes(global) subroutine calc_roe_y_templated(id_accuracy, nx, ny, nz, Q, sensor, F)
+  attributes(global) subroutine calc_roe_y_templated(id_accuracy, nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, sensor, F)
     integer(kind=8), intent(in), value        :: id_accuracy
     integer, intent(in), value                :: nx, ny, nz
-    real(8), intent(in), device, contiguous   :: Q(nx,5,ny,nz)
+    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: F(5,nx-2,ny-1,nz-2)
+    real(8), intent(out), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
     integer, parameter :: jstart = -(io / 2 - 1)
     integer, parameter :: jend   = threadsF%y + (io / 2)
     real(8), dimension(jstart:jend,threadsF%x,threadsF%z), shared :: rho, u, v, w, p
@@ -125,11 +125,11 @@ contains
     do jj = jt + jstart, jend, blockDim%y
       j = j_base + jj
       if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny .and. k >= 1 .and. k <= nz) then
-        rho(jj,it,kt) = Q(i,1,j,k)
-        u(jj,it,kt)   = Q(i,2,j,k)
-        v(jj,it,kt)   = Q(i,3,j,k)
-        w(jj,it,kt)   = Q(i,4,j,k)
-        p(jj,it,kt)   = Q(i,5,j,k)
+        rho(jj,it,kt) = Q_1(i,j,k)
+        u(jj,it,kt)   = Q_2(i,j,k)
+        v(jj,it,kt)   = Q_3(i,j,k)
+        w(jj,it,kt)   = Q_4(i,j,k)
+        p(jj,it,kt)   = Q_5(i,j,k)
       endif
     enddo
     call syncthreads()
@@ -165,11 +165,11 @@ contains
     if (io >= 4) then
       call Roe(rho(jt,it,kt), rhor(jt,it,kt), v(jt,it,kt), vr(jt,it,kt), w(jt,it,kt), wr(jt,it,kt), &
                u(jt,it,kt), ur(jt,it,kt), p(jt,it,kt), pr(jt,it,kt), &
-               F(1,i-1,j,k-1), F(3,i-1,j,k-1), F(4,i-1,j,k-1), F(2,i-1,j,k-1), F(5,i-1,j,k-1))
+               F(i-1,j,k-1,1), F(i-1,j,k-1,3), F(i-1,j,k-1,4), F(i-1,j,k-1,2), F(i-1,j,k-1,5))
     else
       call Roe(rho(jt,it,kt), rho(jt+1,it,kt), v(jt,it,kt), v(jt+1,it,kt), w(jt,it,kt), w(jt+1,it,kt), &
                u(jt,it,kt), u(jt+1,it,kt), p(jt,it,kt), p(jt+1,it,kt), &
-               F(1,i-1,j,k-1), F(3,i-1,j,k-1), F(4,i-1,j,k-1), F(2,i-1,j,k-1), F(5,i-1,j,k-1))
+               F(i-1,j,k-1,1), F(i-1,j,k-1,3), F(i-1,j,k-1,4), F(i-1,j,k-1,2), F(i-1,j,k-1,5))
     endif
   end subroutine calc_roe_y_templated
 
@@ -177,12 +177,12 @@ contains
   ! ============================================================================
   !  Z-DIRECTION KERNEL (UNIFIED)
   ! ============================================================================
-  attributes(global) subroutine calc_roe_z_templated(id_accuracy, nx, ny, nz, Q, sensor, G)
+  attributes(global) subroutine calc_roe_z_templated(id_accuracy, nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, sensor, G)
     integer(kind=8), intent(in), value        :: id_accuracy
     integer, intent(in), value                :: nx, ny, nz
-    real(8), intent(in), device, contiguous   :: Q(nx,5,ny,nz)
+    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: G(5,nx-2,ny-2,nz-1)
+    real(8), intent(out), device, contiguous  :: G(nx-2,ny-2,nz-1,5)
     integer, parameter :: kstart = -(io / 2 - 1)
     integer, parameter :: kend   = threadsG%z + (io / 2)
     real(8), dimension(kstart:kend,threadsG%y,threadsG%x), shared :: rho, u, v, w, p
@@ -198,11 +198,11 @@ contains
     do kk = kt + kstart, kend, blockDim%z
       k = k_base + kk
       if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny .and. k >= 1 .and. k <= nz) then
-        rho(kk,jt,it) = Q(i,1,j,k)
-        u(kk,jt,it)   = Q(i,2,j,k)
-        v(kk,jt,it)   = Q(i,3,j,k)
-        w(kk,jt,it)   = Q(i,4,j,k)
-        p(kk,jt,it)   = Q(i,5,j,k)
+        rho(kk,jt,it) = Q_1(i,j,k)
+        u(kk,jt,it)   = Q_2(i,j,k)
+        v(kk,jt,it)   = Q_3(i,j,k)
+        w(kk,jt,it)   = Q_4(i,j,k)
+        p(kk,jt,it)   = Q_5(i,j,k)
       endif
     enddo
     call syncthreads()
@@ -238,11 +238,11 @@ contains
     if (io >= 4) then
       call Roe(rho(kt,jt,it), rhor(kt,jt,it), w(kt,jt,it), wr(kt,jt,it), u(kt,jt,it), ur(kt,jt,it), &
                v(kt,jt,it), vr(kt,jt,it), p(kt,jt,it), pr(kt,jt,it), &
-               G(1,i-1,j-1,k), G(4,i-1,j-1,k), G(2,i-1,j-1,k), G(3,i-1,j-1,k), G(5,i-1,j-1,k))
+               G(i-1,j-1,k,1), G(i-1,j-1,k,4), G(i-1,j-1,k,2), G(i-1,j-1,k,3), G(i-1,j-1,k,5))
     else
       call Roe(rho(kt,jt,it), rho(kt+1,jt,it), w(kt,jt,it), w(kt+1,jt,it), u(kt,jt,it), u(kt+1,jt,it), &
                v(kt,jt,it), v(kt+1,jt,it), p(kt,jt,it), p(kt+1,jt,it), &
-               G(1,i-1,j-1,k), G(4,i-1,j-1,k), G(2,i-1,j-1,k), G(3,i-1,j-1,k), G(5,i-1,j-1,k))
+               G(i-1,j-1,k,1), G(i-1,j-1,k,4), G(i-1,j-1,k,2), G(i-1,j-1,k,3), G(i-1,j-1,k,5))
     endif
   end subroutine calc_roe_z_templated
 end module calc_roe_kernel

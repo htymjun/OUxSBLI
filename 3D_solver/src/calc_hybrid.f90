@@ -8,12 +8,12 @@ contains
   !> Compute Ducros shock sensor for hybrid scheme
   !> Uses ratio of dilatation (divergence) to vorticity to detect shocks
   !> Values closer to 1 indicate shock regions, close to 0 indicates smooth flow
-  attributes(global) subroutine calc_Ducros(nx, ny, nz, dx, dy, dz, Q, fd)
+  attributes(global) subroutine calc_Ducros(nx, ny, nz, dx, dy, dz, Q_2, Q_3, Q_4, fd)
     integer, intent(in), value                         :: nx, ny, nz
     real(8), intent(in), dimension(nx-1), device       :: dx ! 1 / dx
     real(8), intent(in), dimension(ny-1), device       :: dy ! 1 / dy
     real(8), intent(in), dimension(nz-1), device       :: dz ! 1 / dz
-    real(8), intent(in), dimension(nx,5,ny,nz), device :: Q
+    real(8), intent(in), dimension(nx,ny,nz), device   :: Q_2, Q_3, Q_4
     real(sp), intent(out), device                      :: fd(nx,ny,nz)
     integer i, j, k
     real(8) dudx, dudy, dudz, dvdx, dvdy, dvdz, dwdx, dwdy, dwdz
@@ -27,15 +27,15 @@ contains
     dx_tmp = 0.25d0 * (dx(i-1) + dx(i))
     dy_tmp = 0.25d0 * (dy(j-1) + dy(j))
     dz_tmp = 0.25d0 * (dz(k-1) + dz(k))
-    dudx = (-Q(i-1,2,j,k) + Q(i+1,2,j,k)) * dx_tmp
-    dvdx = (-Q(i-1,3,j,k) + Q(i+1,3,j,k)) * dx_tmp
-    dwdx = (-Q(i-1,4,j,k) + Q(i+1,4,j,k)) * dx_tmp
-    dudy = (-Q(i,2,j-1,k) + Q(i,2,j+1,k)) * dy_tmp
-    dvdy = (-Q(i,3,j-1,k) + Q(i,3,j+1,k)) * dy_tmp
-    dwdy = (-Q(i,4,j-1,k) + Q(i,4,j+1,k)) * dy_tmp
-    dudz = (-Q(i,2,j,k-1) + Q(i,2,j,k+1)) * dz_tmp
-    dvdz = (-Q(i,3,j,k-1) + Q(i,3,j,k+1)) * dz_tmp
-    dwdz = (-Q(i,4,j,k-1) + Q(i,4,j,k+1)) * dz_tmp
+    dudx = (-Q_2(i-1,j,k) + Q_2(i+1,j,k)) * dx_tmp
+    dvdx = (-Q_3(i-1,j,k) + Q_3(i+1,j,k)) * dx_tmp
+    dwdx = (-Q_4(i-1,j,k) + Q_4(i+1,j,k)) * dx_tmp
+    dudy = (-Q_2(i,j-1,k) + Q_2(i,j+1,k)) * dy_tmp
+    dvdy = (-Q_3(i,j-1,k) + Q_3(i,j+1,k)) * dy_tmp
+    dwdy = (-Q_4(i,j-1,k) + Q_4(i,j+1,k)) * dy_tmp
+    dudz = (-Q_2(i,j,k-1) + Q_2(i,j,k+1)) * dz_tmp
+    dvdz = (-Q_3(i,j,k-1) + Q_3(i,j,k+1)) * dz_tmp
+    dwdz = (-Q_4(i,j,k-1) + Q_4(i,j,k+1)) * dz_tmp
     ! Ducros shock sensor: detector based on dilatation vs. vorticity
     div = real(dudx + dvdy + dwdz, kind=sp) ! Divergence: ∇·u
     

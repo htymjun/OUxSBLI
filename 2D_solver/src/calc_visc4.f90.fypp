@@ -5,6 +5,7 @@
 module calc_visc4
   use mod_globals, only : gamma, R, Pr, Prt, dt, threadsEv, threadsFv
   use mod_constant, only : Cp, gamma_1, Cp_over_Pr, one_third, two_third, one_twelfth, id_visc
+  use libm
   use load_smem_visc4
   implicit none
   private
@@ -151,4 +152,3 @@ contains
     F(4,i-1,j) = F(4,i-1,j) - (utyx + vtyy + kTy)
   end subroutine calc_Fv4
 end module calc_visc4
-

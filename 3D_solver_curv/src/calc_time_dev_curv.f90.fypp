@@ -29,12 +29,14 @@ contains
     real(8), intent(in)    :: n_eta_x_cpu(nx-2,ny-1), n_eta_y_cpu(nx-2,ny-1)
     real(8), intent(in)    :: xi_x_cpu(nx,ny), xi_y_cpu(nx,ny)
     real(8), intent(in)    :: eta_x_cpu(nx,ny), eta_y_cpu(nx,ny)
-    real(8), intent(inout) :: Q(nx,5,ny,nz)
+    real(8), intent(inout) :: Q(nx,ny,nz,5)
     integer :: i, j, k, l, t1, t2, overlap, ierr, nranks, ndevices, stat
     integer :: istat(MPI_STATUS_SIZE)
     real(8) :: dt_xi, dt_eta
     ! GPU device arrays
-    real(8), allocatable, device :: ruvwp(:,:,:,:), QJ(:,:,:,:), QJ2(:,:,:,:)
+    real(8), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
+    real(8), allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
+    real(8), allocatable, device :: QJ2_1(:,:,:), QJ2_2(:,:,:), QJ2_3(:,:,:), QJ2_4(:,:,:), QJ2_5(:,:,:)
     real(8), allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
     real(8), allocatable, device :: T(:,:,:), mu(:,:,:)
     real(8), allocatable, device :: dt_Szeta(:,:)
@@ -55,8 +57,9 @@ contains
       call allocate_device_mem_curv(myrank, nx, ny, nz, &
           dt_Szeta, n_xi_x, n_xi_y, n_eta_x, n_eta_y, &
           xi_x, xi_y, eta_x, eta_y, Jacobian, &
-          ruvwp, T, mu, E, F, G)
-      allocate(QJ(nx,5,ny,nz), QJ2(nx,5,ny,nz), stat=ierr)
+          Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, E, F, G)
+      allocate(QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz), &
+               QJ2_1(nx,ny,nz), QJ2_2(nx,ny,nz), QJ2_3(nx,ny,nz), QJ2_4(nx,ny,nz), QJ2_5(nx,ny,nz), stat=ierr)
       if (ierr /= 0) then
         print *, "myrank is ", myrank, " memory allocation failed", ierr
       else
@@ -68,7 +71,7 @@ contains
           xi_x_cpu, xi_y_cpu, eta_x_cpu, eta_y_cpu, &
           x_phys, y_phys, z, Q, overlap, &
           dt_Szeta, n_xi_x, n_xi_y, n_eta_x, n_eta_y, &
-          xi_x, xi_y, eta_x, eta_y, Jacobian, QJ, ke0, entropy0)
+          xi_x, xi_y, eta_x, eta_y, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, ke0, entropy0)
     else
       call MPI_RECV(ke0,      1, MPI_REAL4, myrank-1, 3*myrank+1, MPI_COMM_WORLD, istat, ierr)
       call MPI_RECV(entropy0, 1, MPI_REAL4, myrank-1, 3*myrank+2, MPI_COMM_WORLD, istat, ierr)
@@ -87,44 +90,44 @@ contains
           ! Stage 1: Compute E, F, G from current state QJ
           call calc_EFG_curv(nx, ny, nz, dz_val, &
               n_xi_x, n_xi_y, n_eta_x, n_eta_y, xi_x, xi_y, eta_x, eta_y, Jacobian, &
-              QJ, ruvwp, T, mu, E, F, G)
+              QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, E, F, G)
 
           ! TVD RK3 Stage 1: Q(1) = Q^n - (dt/J) * flux_div
-          call calc_step1_curv<<<blocks,threads>>>(nx, ny, nz, 1.d0, dt_xi, dt_eta, dt_Szeta, E, F, G, QJ, QJ2)
-          call set_bc(myrank, nx, ny, nz, Jacobian, eta_x, eta_y, QJ2)
+          call calc_step1_curv<<<blocks,threads>>>(nx, ny, nz, 1.d0, dt_xi, dt_eta, dt_Szeta, E, F, G, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
+          call set_bc(myrank, nx, ny, nz, Jacobian, eta_x, eta_y, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
 
           ! Stage 2: Compute E, F, G from Q(1)
           call calc_EFG_curv(nx, ny, nz, dz_val, &
               n_xi_x, n_xi_y, n_eta_x, n_eta_y, xi_x, xi_y, eta_x, eta_y, Jacobian, &
-              QJ2, ruvwp, T, mu, E, F, G)
+              QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, E, F, G)
 
           ! TVD RK3 Stage 2: Q(2) = (3/4)*Q^n + (1/4)*Q(1) - (1/4)*(dt/J)*flux_div
           call calc_step2_3_curv<<<blocks,threads>>>(nx, ny, nz, 0.75d0, 0.25d0, 0.25d0, 1.d0, &
-              dt_xi, dt_eta, dt_Szeta, E, F, G, QJ, QJ2)
-          call set_bc(myrank, nx, ny, nz, Jacobian, eta_x, eta_y, QJ2)
+              dt_xi, dt_eta, dt_Szeta, E, F, G, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
+          call set_bc(myrank, nx, ny, nz, Jacobian, eta_x, eta_y, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
 
           ! Stage 3: Compute E, F, G from Q(2)
           call calc_EFG_curv(nx, ny, nz, dz_val, &
               n_xi_x, n_xi_y, n_eta_x, n_eta_y, xi_x, xi_y, eta_x, eta_y, Jacobian, &
-              QJ2, ruvwp, T, mu, E, F, G)
+              QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, E, F, G)
 
           ! TVD RK3 Stage 3: Q^(n+1) = (1/3)*Q^n + (2/3)*Q(2) - (2/3)*(dt/J)*flux_div
           call calc_step2_3_curv<<<blocks,threads>>>(nx, ny, nz, 2.d0, 1.d0, 2.d0, one_third, &
-              dt_xi, dt_eta, dt_Szeta, E, F, G, QJ2, QJ)
-          call set_bc(myrank, nx, ny, nz, Jacobian, eta_x, eta_y, QJ)
+              dt_xi, dt_eta, dt_Szeta, E, F, G, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
+          call set_bc(myrank, nx, ny, nz, Jacobian, eta_x, eta_y, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
         enddo
       endif
 
       ! I/O synchronization
       if (mod(myrank, 2) == 0) then
-        call send_recv_for_print_even_curv(myrank, nranks, t2, nx, ny, nz, x_phys, y_phys, z, Jac_cpu, QJ, Q, ke0, entropy0)
+        call send_recv_for_print_even_curv(myrank, nranks, t2, nx, ny, nz, x_phys, y_phys, z, Jac_cpu, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q, ke0, entropy0)
       else
         call send_recv_for_print_odd_curv(myrank, nranks, t2, nx, ny, nz, x_phys, y_phys, z, Jac_cpu, Q, ke0, entropy0)
       endif
     enddo
 
     if (mod(myrank,2) == 0) then
-      deallocate(ruvwp, T, mu, QJ, QJ2, E, F, G)
+      deallocate(Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, E, F, G)
       deallocate(dt_Szeta, n_xi_x, n_xi_y, n_eta_x, n_eta_y, xi_x, xi_y, eta_x, eta_y, Jacobian)
     endif
     print *, "myrank is ", myrank, " deallocate GPU memory"
@@ -148,12 +151,14 @@ contains
     real(8), intent(in)    :: n_eta_x_cpu(nx-2,ny-1), n_eta_y_cpu(nx-2,ny-1)
     real(8), intent(in)    :: xi_x_cpu(nx,ny), xi_y_cpu(nx,ny)
     real(8), intent(in)    :: eta_x_cpu(nx,ny), eta_y_cpu(nx,ny)
-    real(8), intent(inout) :: Q(nx,5,ny,nz)
+    real(8), intent(inout) :: Q(nx,ny,nz,5)
     integer :: i, j, k, l, t1, t2, overlap, ierr, nranks, ndevices, stat
     integer :: istat(MPI_STATUS_SIZE)
     real(8) :: dt_xi, dt_eta
     ! GPU device arrays
-    real(8), allocatable, device :: ruvwp(:,:,:,:), QJ(:,:,:,:), QJ2(:,:,:,:)
+    real(8), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
+    real(8), allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
+    real(8), allocatable, device :: QJ2_1(:,:,:), QJ2_2(:,:,:), QJ2_3(:,:,:), QJ2_4(:,:,:), QJ2_5(:,:,:)
     real(8), allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
     real(8), allocatable, device :: T(:,:,:), mu(:,:,:)
     real(8), allocatable, device :: dt_Szeta(:,:)
@@ -176,8 +181,9 @@ contains
       call allocate_device_mem_curv(myrank, nx, ny, nz, &
           dt_Szeta, n_xi_x, n_xi_y, n_eta_x, n_eta_y, &
           xi_x, xi_y, eta_x, eta_y, Jacobian, &
-          ruvwp, T, mu, E, F, G)
-      allocate(QJ(nx,5,ny,nz), QJ2(nx,5,ny,nz), stat=ierr)
+          Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, E, F, G)
+      allocate(QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz), &
+               QJ2_1(nx,ny,nz), QJ2_2(nx,ny,nz), QJ2_3(nx,ny,nz), QJ2_4(nx,ny,nz), QJ2_5(nx,ny,nz), stat=ierr)
       if (ierr /= 0) then
         print *, "myrank is ", myrank, " memory allocation failed", ierr
       else
@@ -189,7 +195,7 @@ contains
           xi_x_cpu, xi_y_cpu, eta_x_cpu, eta_y_cpu, &
           x_phys, y_phys, z, Q, overlap, &
           dt_Szeta, n_xi_x, n_xi_y, n_eta_x, n_eta_y, &
-          xi_x, xi_y, eta_x, eta_y, Jacobian, QJ, ke0, entropy0)
+          xi_x, xi_y, eta_x, eta_y, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, ke0, entropy0)
     else
       call MPI_RECV(ke0,      1, MPI_REAL4, myrank-1, 3*myrank+1, MPI_COMM_WORLD, istat, ierr)
       call MPI_RECV(entropy0, 1, MPI_REAL4, myrank-1, 3*myrank+2, MPI_COMM_WORLD, istat, ierr)
@@ -205,35 +211,35 @@ contains
       do t2 = 1, np
         do t1 = 1, nt
           ! Stage 1
-          call exchange_z_curv(myrank, nranks, overlap, nx, ny, nz, QJ)
+          call exchange_z_curv(myrank, nranks, overlap, nx, ny, nz, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
           call calc_EFG_curv(nx, ny, nz, dz_val, &
               n_xi_x, n_xi_y, n_eta_x, n_eta_y, xi_x, xi_y, eta_x, eta_y, Jacobian, &
-              QJ, ruvwp, T, mu, E, F, G)
-          call calc_step1_curv<<<blocks,threads>>>(nx, ny, nz, 1.d0, dt_xi, dt_eta, dt_Szeta, E, F, G, QJ, QJ2)
-          call set_bc(myrank, nx, ny, nz, Jacobian, eta_x, eta_y, QJ2)
+              QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, E, F, G)
+          call calc_step1_curv<<<blocks,threads>>>(nx, ny, nz, 1.d0, dt_xi, dt_eta, dt_Szeta, E, F, G, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
+          call set_bc(myrank, nx, ny, nz, Jacobian, eta_x, eta_y, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
 
           ! Stage 2
-          call exchange_z_curv(myrank, nranks, overlap, nx, ny, nz, QJ2)
+          call exchange_z_curv(myrank, nranks, overlap, nx, ny, nz, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
           call calc_EFG_curv(nx, ny, nz, dz_val, &
               n_xi_x, n_xi_y, n_eta_x, n_eta_y, xi_x, xi_y, eta_x, eta_y, Jacobian, &
-              QJ2, ruvwp, T, mu, E, F, G)
+              QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, E, F, G)
           call calc_step2_3_curv<<<blocks,threads>>>(nx, ny, nz, 0.75d0, 0.25d0, 0.25d0, 1.d0, &
-              dt_xi, dt_eta, dt_Szeta, E, F, G, QJ, QJ2)
-          call set_bc(myrank, nx, ny, nz, Jacobian, eta_x, eta_y, QJ2)
+              dt_xi, dt_eta, dt_Szeta, E, F, G, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
+          call set_bc(myrank, nx, ny, nz, Jacobian, eta_x, eta_y, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
 
           ! Stage 3
-          call exchange_z_curv(myrank, nranks, overlap, nx, ny, nz, QJ2)
+          call exchange_z_curv(myrank, nranks, overlap, nx, ny, nz, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
           call calc_EFG_curv(nx, ny, nz, dz_val, &
               n_xi_x, n_xi_y, n_eta_x, n_eta_y, xi_x, xi_y, eta_x, eta_y, Jacobian, &
-              QJ2, ruvwp, T, mu, E, F, G)
+              QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, E, F, G)
           call calc_step2_3_curv<<<blocks,threads>>>(nx, ny, nz, 2.d0, 1.d0, 2.d0, one_third, &
-              dt_xi, dt_eta, dt_Szeta, E, F, G, QJ2, QJ)
-          call set_bc(myrank, nx, ny, nz, Jacobian, eta_x, eta_y, QJ)
+              dt_xi, dt_eta, dt_Szeta, E, F, G, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
+          call set_bc(myrank, nx, ny, nz, Jacobian, eta_x, eta_y, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
         enddo
-        call send_recv_for_print_even_curv(myrank, nranks, t2, nx, ny, nz, x_phys, y_phys, z, Jac_cpu, QJ, Q, ke0, entropy0)
+        call send_recv_for_print_even_curv(myrank, nranks, t2, nx, ny, nz, x_phys, y_phys, z, Jac_cpu, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q, ke0, entropy0)
       enddo
 
-      deallocate(ruvwp, T, mu, QJ, QJ2, E, F, G)
+      deallocate(Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, E, F, G)
       deallocate(dt_Szeta, n_xi_x, n_xi_y, n_eta_x, n_eta_y, xi_x, xi_y, eta_x, eta_y, Jacobian)
     else
       call send_recv_for_print_odd_curv(myrank, nranks, 0, nx, ny, nz, x_phys, y_phys, z, Jac_cpu, Q, ke0, entropy0)
@@ -245,5 +251,4 @@ contains
     print *, "myrank is ", myrank, " deallocate GPU memory"
   end subroutine RungeKutta_curv
 #:endif
-
 end module calc_time_dev_curv

@@ -21,6 +21,9 @@ module calc_flux_base
   use calc_visc_high
   use calc_visc_high_internal
   #:endif
+  #:if VISC in ('NS', 'LES') and VISC_ORDER > 2
+  use calc_div, only : calc_div_ux_${VISC_ORDER}$_in, calc_div_vy_${VISC_ORDER}$_in, calc_div_wz_${VISC_ORDER}$_in
+  #:endif
   #:if VISC == 'LES'
   use calc_les
   #:endif
@@ -41,54 +44,57 @@ contains
   end subroutine init_sensor
 
 
-  subroutine calc_conv(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, T, E, F, G)
+  subroutine calc_conv(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, E, F, G)
     integer, intent(in), value               :: nx, ny, nz
     real(8), intent(in), device, contiguous  :: inv_dx(nx-1), inv_dy(ny-1), inv_dz(nz-1)
-    real(8), intent(in), device, contiguous  :: Q(nx,5,ny,nz), T(nx,ny,nz)
-    real(8), intent(out), device, contiguous :: E(5,nx-1,ny-2,nz-2)
-    real(8), intent(out), device, contiguous :: F(5,nx-2,ny-1,nz-2)
-    real(8), intent(out), device, contiguous :: G(5,nx-2,ny-2,nz-1)
+    real(8), intent(in), device, contiguous  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous  :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    real(8), intent(out), device, contiguous :: E(nx-1,ny-2,nz-2,5)
+    real(8), intent(out), device, contiguous :: F(nx-2,ny-1,nz-2,5)
+    real(8), intent(out), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     ! set fypp
     #:set scheme_name = SCHEME.lower()
     #:set args_t = ", T" if SCHEME in ('KEEP', 'Hybrid') else ""
     #:set args_sensor = ", sensor" if SCHEME in ('SLAU', 'Roe', 'Hybrid') else ""
     ! shock sensor
     #:if SCHEME in ('SLAU', 'Roe', 'Hybrid')
-    call calc_Ducros<<<blocks,threads>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, sensor)
+    call calc_Ducros<<<blocks,threads>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, sensor)
     #:endif
     ! flux
-    call calc_${scheme_name}$_x${'' if BC_X else '_in'}$<<<blocksE,threadsE>>>(nx, ny, nz, Q${args_t}$${args_sensor}$, E)
-    call calc_${scheme_name}$_y${'' if BC_Y else '_in'}$<<<blocksF,threadsF>>>(nx, ny, nz, Q${args_t}$${args_sensor}$, F)
-    call calc_${scheme_name}$_z${'' if BC_Z else '_in'}$<<<blocksG,threadsG>>>(nx, ny, nz, Q${args_t}$${args_sensor}$, G)
+    call calc_${scheme_name}$_x${'' if BC_X else '_in'}$<<<blocksE,threadsE>>>(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5${args_t}$${args_sensor}$, E)
+    call calc_${scheme_name}$_y${'' if BC_Y else '_in'}$<<<blocksF,threadsF>>>(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5${args_t}$${args_sensor}$, F)
+    call calc_${scheme_name}$_z${'' if BC_Z else '_in'}$<<<blocksG,threadsG>>>(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5${args_t}$${args_sensor}$, G)
   end subroutine calc_conv
 
 
 #:if COMMZ
-  subroutine calc_conv_EF(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, T, E, F)
+  subroutine calc_conv_EF(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, E, F)
     integer, intent(in), value                 :: nx, ny, nz
     real(8), intent(in), device, contiguous    :: inv_dx(nx-1), inv_dy(ny-1), inv_dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Q(nx,5,ny,nz), T(nx,ny,nz)
-    real(8), intent(out), device, contiguous   :: E(5,nx-1,ny-2,nz-2)
-    real(8), intent(out), device, contiguous   :: F(5,nx-2,ny-1,nz-2)
+    real(8), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    real(8), intent(out), device, contiguous   :: E(nx-1,ny-2,nz-2,5)
+    real(8), intent(out), device, contiguous   :: F(nx-2,ny-1,nz-2,5)
     ! set fypp
     #:set scheme_name = SCHEME.lower()
     #:set args_t = ", T" if SCHEME in ('KEEP', 'Hybrid') else ""
     #:set args_sensor = ", sensor" if SCHEME in ('SLAU', 'Roe', 'Hybrid') else ""
     ! shock sensor
     #:if SCHEME in ('SLAU', 'Roe', 'Hybrid')
-    call calc_Ducros<<<blocks,threads>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, sensor)
+    call calc_Ducros<<<blocks,threads>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, sensor)
     #:endif
     ! flux
-    call calc_${scheme_name}$_x${'' if BC_X else '_in'}$<<<blocksE,threadsE>>>(nx, ny, nz, Q${args_t}$${args_sensor}$, E)
-    call calc_${scheme_name}$_y${'' if BC_Y else '_in'}$<<<blocksF,threadsF>>>(nx, ny, nz, Q${args_t}$${args_sensor}$, F)
+    call calc_${scheme_name}$_x${'' if BC_X else '_in'}$<<<blocksE,threadsE>>>(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5${args_t}$${args_sensor}$, E)
+    call calc_${scheme_name}$_y${'' if BC_Y else '_in'}$<<<blocksF,threadsF>>>(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5${args_t}$${args_sensor}$, F)
   end subroutine calc_conv_EF
 
 
-  subroutine calc_conv_G_koff(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, T, G, k_lo, k_hi)
+  subroutine calc_conv_G_koff(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, G, k_lo, k_hi)
     integer, intent(in), value                 :: nx, ny, nz, k_lo, k_hi
     real(8), intent(in), device, contiguous    :: inv_dx(nx-1), inv_dy(ny-1), inv_dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Q(nx,5,ny,nz), T(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: G(5,nx-2,ny-2,nz-1)
+    real(8), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     integer :: n_G
     type(dim3) :: bG
     n_G = k_hi - k_lo + 1
@@ -99,28 +105,35 @@ contains
     #:set args_sensor = ", sensor" if SCHEME in ('SLAU', 'Roe', 'Hybrid') else ""
     ! shock sensor
     #:if SCHEME in ('SLAU', 'Roe', 'Hybrid')
-    call calc_Ducros<<<blocks,threads>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, sensor)
+    call calc_Ducros<<<blocks,threads>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, sensor)
     #:endif
-    call calc_${scheme_name}$_z_in_koff<<<bG,threadsG>>>(nx, ny, nz, Q${args_t}$${args_sensor}$, G, k_lo, k_hi)
+    call calc_${scheme_name}$_z_in_koff<<<bG,threadsG>>>(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5${args_t}$${args_sensor}$, G, k_lo, k_hi)
   end subroutine calc_conv_G_koff
 #:endif
 
 
-  subroutine calc_EFG(nx, ny, nz, inv_dx, inv_dy, inv_dz, Jacobian, QJ, Q, T, mu, mut, qc2, E, F, G, k_lo_G, k_hi_G)
+  subroutine calc_EFG(nx, ny, nz, inv_dx, inv_dy, inv_dz, Jacobian, &
+                       QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G, k_lo_G, k_hi_G)
     integer, intent(in), value                 :: nx, ny, nz
     real(8), intent(in), device, contiguous    :: inv_dx(nx-1), inv_dy(ny-1), inv_dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Jacobian(nx,ny), QJ(nx,5,ny,nz)
-    real(8), intent(inout), device, contiguous :: Q(nx,5,ny,nz), T(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Jacobian(nx,ny)
+    real(8), intent(in), device, contiguous    :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(8), intent(inout), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
+    real(8), intent(inout), device, contiguous :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     #:if VISC == 'Euler'
     real(8), intent(inout), device, contiguous :: mu(1,1,1), mut(1,1,1), qc2(1,1,1)
+    real(8), intent(inout), device, contiguous :: ux(1,1,1), vy(1,1,1), wz(1,1,1)
     #:elif VISC == 'NS'
     real(8), intent(inout), device, contiguous :: mu(nx,ny,nz)
     real(8), intent(inout), device, contiguous :: mut(1,1,1), qc2(1,1,1)
+    real(8), intent(inout), device, contiguous :: ux(nx,ny,nz), vy(nx,ny,nz), wz(nx,ny,nz)
     #:elif VISC == 'LES'
     real(8), intent(inout), device, contiguous :: mu(nx,ny,nz), mut(nx,ny,nz), qc2(nx,ny,nz)
+    real(8), intent(inout), device, contiguous :: ux(nx,ny,nz), vy(nx,ny,nz), wz(nx,ny,nz)
     #:endif
-    real(8), intent(inout), device, contiguous :: E(5,nx-1,ny-2,nz-2), F(5,nx-2,ny-1,nz-2)
-    real(8), intent(inout), device, contiguous :: G(5,nx-2,ny-2,nz-1)
+    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5), F(nx-2,ny-1,nz-2,5)
+    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     integer, intent(in)                        :: k_lo_G, k_hi_G
     #:if VISC == 'NS' or VISC == 'LES'
     type(dim3) :: blocksGv_int, blocksEv_int, blocksFv_int
@@ -130,12 +143,12 @@ contains
     ! main part (Euler)
     ! ===================================================================
   #:if VISC == 'Euler'
-    call calc_quantities_3D(nx, ny, nz, Jacobian, QJ, Q, T, 1, nz)
+    call calc_quantities_3D(nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, 1, nz)
     #:if not COMMZ
-      call calc_conv(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, T, E, F, G)
+      call calc_conv(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, E, F, G)
     #:else
-      call calc_conv_EF(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, T, E, F)
-      call calc_conv_G_koff(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, T, G, k_lo_G, k_hi_G)
+      call calc_conv_EF(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, E, F)
+      call calc_conv_G_koff(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, G, k_lo_G, k_hi_G)
     #:endif
   #:else
     ! ===================================================================
@@ -147,9 +160,9 @@ contains
     ! axis
     ! ===================================================================
     #:set dirs = [ &
-      {'dir': 'E', 'is_bc': BC_X, 'ov': 'overlap_fb+2'}, &
-      {'dir': 'F', 'is_bc': BC_Y, 'ov': 'overlap_fb+2'}, &
-      {'dir': 'G', 'is_bc': BC_Z, 'ov': 'overlap_fb+1'} &
+      {'dir': 'E', 'is_bc': BC_X, 'ov': 'overlap_fb+2', 'grad': 'vy, wz'}, &
+      {'dir': 'F', 'is_bc': BC_Y, 'ov': 'overlap_fb+2', 'grad': 'ux, wz'}, &
+      {'dir': 'G', 'is_bc': BC_Z, 'ov': 'overlap_fb+1', 'grad': 'ux, vy'} &
     ]
     #:if is_les
     mut = 0.d0
@@ -158,27 +171,43 @@ contains
     ! ===================================================================
     ! main part (NS and LES)
     ! ===================================================================
-    call calc_quantities_T_3D(nx, ny, nz, Jacobian, QJ, Q, T, mu, 1, nz)
+    call calc_quantities_T_3D(nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, 1, nz)
+    #:if VISC_ORDER > 2
+    ! ux/vy/wz (cell-center velocity gradients) are precomputed once here and
+    ! reused by calc_Ev/Fv/Gv below instead of each direction independently
+    ! recomputing the other two -- see calc_div.f90. Split into 3
+    ! single-component kernels (each with a directly-bounded loop in its own
+    ! margin direction, no branching) rather than one combined kernel, to
+    ! keep each kernel's register footprint to just the one component it
+    ! computes. Only wired into the non-COMMZ path below: no current case
+    ! combines COMMZ with NS/LES (the only COMMZ=True case, STZ, is
+    ! Euler-only), so the COMMZ branch below is left on the old per-kernel
+    ! recompute path as a known follow-up.
+    call calc_div_ux_${VISC_ORDER}$_in(nx, ny, nz, inv_dx, Q_2, ux)
+    call calc_div_vy_${VISC_ORDER}$_in(nx, ny, nz, inv_dy, Q_3, vy)
+    call calc_div_wz_${VISC_ORDER}$_in(nx, ny, nz, inv_dz, Q_4, wz)
+    #:endif
     ! ===================================================================
     ! whole domain or koff
     ! ===================================================================
     #:if not COMMZ
-      call calc_conv(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, T, E, F, G)
+      call calc_conv(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, E, F, G)
       #:if is_les
-      call calc_mut<<<blocks,threads>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, mut, qc2)
+      call calc_mut<<<blocks,threads>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, mut, qc2)
       call set_bc_mut(nx, ny, nz, mut, qc2)
       #:endif
-      
+
       #:for d in dirs
       #:set in_sfx = '_in' if (not d['is_bc'] and ORDER == 6) else ''
+      #:set grad_args = ', ' + d['grad'] if VISC_ORDER > 2 else ''
       call calc_${d['dir']}$v${VISC_ORDER}$${in_sfx}$<<<blocks${d['dir']}$v,threads${d['dir']}$v>>>&
-           &(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, T, mu${les_args}$, ${d['dir']}$)
+           &(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, T, mu${les_args}$${grad_args}$, ${d['dir']}$)
       #:endfor
     #:else
-      call calc_conv_EF(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, T, E, F)
-      call calc_conv_G_koff(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, T, G, k_lo_G, k_hi_G)
+      call calc_conv_EF(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, E, F)
+      call calc_conv_G_koff(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, G, k_lo_G, k_hi_G)
       #:if is_les
-      call calc_mut<<<blocks,threads>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, mut, qc2)
+      call calc_mut<<<blocks,threads>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, mut, qc2)
       call set_bc_mut(nx, ny, nz, mut, qc2)
       #:endif
 
@@ -191,7 +220,7 @@ contains
       #:for d in dirs
       #:set in_sfx = '_in' if (not d['is_bc'] and ORDER == 6) else ''
       call calc_${d['dir']}$v${VISC_ORDER}$_koff${in_sfx}$<<<blocks${d['dir']}$v,threads${d['dir']}$v>>>&           ! exchange "${in_sfx}$" and " _koff "
-           &(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, T, mu${les_args}$,  ${d['ov']}$, nz-overlap_fb-1, ${d['dir']}$) ! moved "${d['dir']}$" 
+           &(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, T, mu${les_args}$,  ${d['ov']}$, nz-overlap_fb-1, ${d['dir']}$) ! moved "${d['dir']}$"
       #:endfor
     #:endif
   #:endif
@@ -200,11 +229,14 @@ contains
 
 #:if COMMZ
   subroutine calc_EFG_halo(nx, ny, nz, inv_dx, inv_dy, inv_dz, &
-                             Jacobian, QJ, Q, T, mu, mut, qc2, E, F, G)
+                             Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, E, F, G)
     integer, intent(in), value                 :: nx, ny, nz
     real(8), intent(in), device, contiguous    :: inv_dx(nx-1), inv_dy(ny-1), inv_dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Jacobian(nx,ny), QJ(nx,5,ny,nz)
-    real(8), intent(inout), device, contiguous :: Q(nx,5,ny,nz), T(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Jacobian(nx,ny)
+    real(8), intent(in), device, contiguous    :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(8), intent(inout), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
+    real(8), intent(inout), device, contiguous :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     #:if VISC == 'Euler'
     real(8), intent(inout), device, contiguous :: mu(1,1,1), mut(1,1,1), qc2(1,1,1)
     #:elif VISC == 'NS'
@@ -213,9 +245,9 @@ contains
     #:elif VISC == 'LES'
     real(8), intent(inout), device, contiguous :: mu(nx,ny,nz), mut(nx,ny,nz), qc2(nx,ny,nz)
     #:endif
-    real(8), intent(inout), device, contiguous :: E(5,nx-1,ny-2,nz-2)
-    real(8), intent(inout), device, contiguous :: F(5,nx-2,ny-1,nz-2)
-    real(8), intent(inout), device, contiguous :: G(5,nx-2,ny-2,nz-1)
+    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
+    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
+    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     #:if VISC == 'NS' or VISC == 'LES'
     type(dim3) :: blocksGv_halo, blocksEv_halo, blocksFv_halo
     integer :: n_halo
@@ -224,10 +256,10 @@ contains
     ! main part (Euler)
     ! ===================================================================
   #:if VISC == 'Euler'
-    call calc_quantities_3D(nx, ny, nz, Jacobian, QJ, Q, T, 1, overlap_fb)
-    call calc_quantities_3D(nx, ny, nz, Jacobian, QJ, Q, T, nz-overlap_fb+1, nz)
-    call calc_conv_G_koff(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, T, G, overlap_fb, 2*overlap_fb-1)
-    call calc_conv_G_koff(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, T, G, nz-2*overlap_fb+1, nz-overlap_fb)
+    call calc_quantities_3D(nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, 1, overlap_fb)
+    call calc_quantities_3D(nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, nz-overlap_fb+1, nz)
+    call calc_conv_G_koff(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, G, overlap_fb, 2*overlap_fb-1)
+    call calc_conv_G_koff(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, G, nz-2*overlap_fb+1, nz-overlap_fb)
   #:else
     ! ===================================================================
     ! NS and LES
@@ -243,23 +275,23 @@ contains
       {'dir': 'G', 'is_bc': BC_Z, 'has_in': False, 'b_lo': ('overlap_fb', '2*overlap_fb-1') &
       if (is_les and ORDER < 4) else ('1', 'overlap_fb'), 'b_hi': ('nz-overlap_fb', 'nz-1')} &
     ]
-    call calc_quantities_T_3D(nx, ny, nz, Jacobian, QJ, Q, T, mu, 1, overlap_fb)
-    call calc_quantities_T_3D(nx, ny, nz, Jacobian, QJ, Q, T, mu, nz-overlap_fb+1, nz)
+    call calc_quantities_T_3D(nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, 1, overlap_fb)
+    call calc_quantities_T_3D(nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, nz-overlap_fb+1, nz)
     n_halo = overlap_fb
     blocksEv_halo = dim3(blocksEv%x, blocksEv%y, (n_halo + threadsEv%z - 1) / threadsEv%z)
     blocksFv_halo = dim3(blocksFv%x, blocksFv%y, (n_halo + threadsFv%z - 1) / threadsFv%z)
     blocksGv_halo = dim3(blocksGv%x, blocksGv%y, (n_halo + threadsGv%z - 1) / threadsGv%z)
-    call calc_conv_G_koff(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, T, G, overlap_fb, 2*overlap_fb-1)
-    call calc_conv_G_koff(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, T, G, nz-2*overlap_fb+1, nz-overlap_fb)
+    call calc_conv_G_koff(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, G, overlap_fb, 2*overlap_fb-1)
+    call calc_conv_G_koff(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, G, nz-2*overlap_fb+1, nz-overlap_fb)
 
     #:for d in dirs
     #:set in_sfx = '_in' if (d['has_in'] and not d['is_bc'] and ORDER == 6) else ''
     ! Low-index side
     call calc_${d['dir']}$v${VISC_ORDER}$_koff${in_sfx}$<<<blocks${d['dir']}$v,threads${d['dir']}$v>>>&          ! exchange ${in_sfx}$ and _koff
-           &(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, T, mu${les_args}$,  ${d['b_lo'][0]}$, ${d['b_lo'][1]}$ , ${d['dir']}$) ! moved "${d['dir']}$"
+           &(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, T, mu${les_args}$,  ${d['b_lo'][0]}$, ${d['b_lo'][1]}$ , ${d['dir']}$) ! moved "${d['dir']}$"
     ! High-index side
     call calc_${d['dir']}$v${VISC_ORDER}$_koff${in_sfx}$<<<blocks${d['dir']}$v,threads${d['dir']}$v>>>&           ! exchange ${in_sfx}$ and _koff
-           &(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q, T, mu${les_args}$, ${d['b_hi'][0]}$, ${d['b_hi'][1]}$ , ${d['dir']}$)  ! moved "${d['dir']}$"
+           &(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, T, mu${les_args}$, ${d['b_hi'][0]}$, ${d['b_hi'][1]}$ , ${d['dir']}$)  ! moved "${d['dir']}$"
     #:endfor
   #:endif
   end subroutine calc_EFG_halo

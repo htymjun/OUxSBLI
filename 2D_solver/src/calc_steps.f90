@@ -2,6 +2,7 @@ module calc_steps
   use cudafor
   use mod_globals, only : dt
   use mod_constant, only : one_sixth
+  use libm
   implicit none
 contains
   !$dir inline
@@ -14,16 +15,19 @@ contains
     real(8), intent(in), device, contiguous :: E(4,nx-1,ny-2) !< Flux in x direction
     real(8), intent(in), device, contiguous :: F(4,nx-2,ny-1) !< Flux in y direction
     real(8), intent(out), contiguous        :: R(4)
+    real(8) v0, v1
     ! x direction
-    R(1) = dtdy * (-E(1,i,j) + E(1,i+1,j)) 
-    R(2) = dtdy * (-E(2,i,j) + E(2,i+1,j)) 
-    R(3) = dtdy * (-E(3,i,j) + E(3,i+1,j)) 
-    R(4) = dtdy * (-E(4,i,j) + E(4,i+1,j)) 
+    !R(1) = dtdy * (-E(1,i,j) + E(1,i+1,j))
+    v0 = E(1,i,j); v1 = E(1,i+1,j); R(1) = dtdy * (v1 - v0)
+    v0 = E(2,i,j); v1 = E(2,i+1,j); R(2) = dtdy * (v1 - v0)
+    v0 = E(3,i,j); v1 = E(3,i+1,j); R(3) = dtdy * (v1 - v0)
+    v0 = E(4,i,j); v1 = E(4,i+1,j); R(4) = dtdy * (v1 - v0)
     ! y direction
-    R(1) = R(1) + dtdx * (-F(1,i,j) + F(1,i,j+1))
-    R(2) = R(2) + dtdx * (-F(2,i,j) + F(2,i,j+1))
-    R(3) = R(3) + dtdx * (-F(3,i,j) + F(3,i,j+1))
-    R(4) = R(4) + dtdx * (-F(4,i,j) + F(4,i,j+1))
+    !R(1) = R(1) + dtdx * (-F(1,i,j) + F(1,i,j+1))
+    v0 = F(1,i,j); v1 = F(1,i,j+1); R(1) = fma(dtdx, v1 - v0, R(1))
+    v0 = F(2,i,j); v1 = F(2,i,j+1); R(2) = fma(dtdx, v1 - v0, R(2))
+    v0 = F(3,i,j); v1 = F(3,i,j+1); R(3) = fma(dtdx, v1 - v0, R(3))
+    v0 = F(4,i,j); v1 = F(4,i,j+1); R(4) = fma(dtdx, v1 - v0, R(4))
   end subroutine calc_R
 
 
@@ -49,7 +53,8 @@ contains
     coef_dtdy = coef * dtdy(j)
     call calc_R(nx, ny, i, j, coef_dtdx, coef_dtdy, E, F, R)
     do l = 1, 4  ! Loop over all conserved variables (rho, rhou, rhov, E)
-      Q2(i+1,l,j+1) = Q(i+1,l,j+1) - R(l)
+      ! Q2 is write-once here and only consumed by the next kernel launch: __stcs
+      call __stcs(Q2(i+1,l,j+1), Q(i+1,l,j+1) - R(l))
     enddo
   end subroutine calc_step1
 
@@ -79,8 +84,10 @@ contains
     dtdy_tmp = dtdy(j)
     call calc_R(nx, ny, i, j, dtdx_tmp, dtdy_tmp, E, F, R)
     do l = 1, 4
-      Q2(i+1,l,j+1) = Q(i+1,l,j+1) - coef1 * R(l) ! Intermediate Q for next stage
-      Rs(i,l,j) = Rs(i,l,j) + coef2 * R(l)        ! Accumulate weighted residual
+      !Q2(i+1,l,j+1) = Q(i+1,l,j+1) - coef1 * R(l) ! Intermediate Q for next stage
+      ! Q2 is write-once here, not re-read until the next kernel launch: __stcs
+      call __stcs(Q2(i+1,l,j+1), fma(-coef1, R(l), Q(i+1,l,j+1)))
+      Rs(i,l,j) = fma(coef2, R(l), Rs(i,l,j))     ! Accumulate weighted residual
     enddo
   end subroutine calc_step
  
@@ -114,7 +121,15 @@ contains
     call calc_R(nx, ny, i, j, coef3_dtdx, coef3_dtdy, E, F, R)
     do l = 1, 4  ! All conserved variables
       ! Convex combination: weighted average of Qin and Qout minus scaled residual
-      Qout(i+1,l,j+1) = (coef1 * Qin(i+1,l,j+1) + coef2 * Qout(i+1,l,j+1) - R(l)) * coef4_inv
+      !Qout(i+1,l,j+1) = (coef1 * Qin(i+1,l,j+1) + coef2 * Qout(i+1,l,j+1) - R(l)) * coef4_inv
+      ! Qout is write-once here, not re-read until the next kernel launch: __stcs
+      block
+        real(8) qin_val, qout_val, val
+        qin_val  = Qin(i+1,l,j+1)
+        qout_val = Qout(i+1,l,j+1)
+        val      = fma(coef1, qin_val, fma(coef2, qout_val, -R(l))) * coef4_inv
+        call __stcs(Qout(i+1,l,j+1), val)
+      end block
     enddo
   end subroutine calc_step2_3
   
@@ -146,10 +161,11 @@ contains
       ! Accumulate 4th stage residual (not multiplied by coefficient yet)
       R(l) = Rs(i,l,j) + R(l)
       ! Apply full RK4 update with (1/6) weighting to final solution
-      Q(i+1,l,j+1) = Q(i+1,l,j+1) - R(l) * one_sixth
+      !Q(i+1,l,j+1) = Q(i+1,l,j+1) - R(l) * one_sixth
+      ! Q is write-once here, not re-read until the next kernel launch: __stcs
+      call __stcs(Q(i+1,l,j+1), fma(-one_sixth, R(l), Q(i+1,l,j+1)))
       ! Clear residual accumulator for next time step
       Rs(i,l,j) = 0.d0
     enddo
   end subroutine calc_step4
 end module calc_steps
-

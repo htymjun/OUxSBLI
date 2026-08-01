@@ -24,7 +24,7 @@ macro(add_ouxsbli_curv_case)
   endif()
   set(FYPP_FLAGS "-I${_CASE_DIR}")
 
-  set(_PARENT_FYPP "mod_constant")
+  set(_PARENT_FYPP "mod_constant" "calc_muscl")
   set(_SHARED_FYPP
       "calc_flux_base_curv"
       "preprocess_curv"
@@ -58,7 +58,6 @@ macro(add_ouxsbli_curv_case)
       "${CMAKE_CURRENT_SOURCE_DIR}/../../src/cpu_gpu_mpi.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../../src/set_coordinate.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../../src/calc_physical_quantities.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../../src/calc_muscl.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../../src/print.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../../src/print_curv.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../../3D_solver/src/calc_hybrid.f90"
