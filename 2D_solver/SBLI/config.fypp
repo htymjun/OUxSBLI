@@ -1,7 +1,7 @@
 #:set VISC          = 'NS'
 #:set SCHEME        = 'SLAU'
 #:set ORDER         = 6
-#:set TVD           = 'muscl4'
+#:set TVD           = 'hybrid'
 #:set SLAU_VARIANT  = 'HRSLAU2'
 #:set RESCALE       = False
 #:set RESTART       = False
@@ -10,3 +10,4 @@
 #:set BC_Y          = True
 #:set COMMZ         = False
 #:set ORDER_IO = ORDER // 2 - 1
+#:set OUTPUT_PRECISION = 4

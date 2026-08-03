@@ -1,6 +1,6 @@
 #:include 'config.fypp'
 module calc_keep_kernel_internal
-  use mod_globals, only : threadsE, threadsF, threadsG
+  use mod_globals, only : gamma, threadsE, threadsF, threadsG
   use mod_constant, only : R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
   use libm
   implicit none
@@ -26,7 +26,7 @@ module calc_keep_kernel_internal
     module procedure KEEP2, KEEP4, KEEP6
   end interface KEEP
 contains
-  include 'calc_keep_3d.f90'
+  include 'calc_scheme_math.f90'
 
   attributes(global) subroutine calc_keep_x_in(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, E)
     use mod_constant, only : Normal_x

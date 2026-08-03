@@ -5,6 +5,10 @@ import vtk
 from vtk.util import numpy_support
 
 
+def get_ext(file_path):
+  return os.path.splitext(str(file_path))[1].lstrip('.')
+
+
 def extract_number(filename, ext='vtr'):
   match = re.search(r'Q(\d+)\.' + ext + r'$', filename)
   if match:

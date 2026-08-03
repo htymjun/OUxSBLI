@@ -66,7 +66,7 @@ contains
   subroutine set_init(myrank, nx, ny, xs, ys, Q)
     integer, intent(in)  :: myrank, nx, ny
     real(8), intent(in)  :: xs(nx), ys(ny)
-    real(8), intent(out) :: Q(nx,4,ny)
+    real(8), intent(out) :: Q(nx,ny,4)
     character(len=40) filename
     integer j, nyi, filesize, ios
     real(8) rho, u, v, p
@@ -92,41 +92,40 @@ contains
       rho = Qp(1,j)
       u   = Qp(2,j)
       v   = Qp(3,j)
-      Q(:,1,j) = rho
-      Q(:,2,j) = rho * u
-      Q(:,3,j) = rho * v
-      Q(:,4,j) = ptbl * over_gamma_1 + 0.5d0 * rho * (u**2 + v**2)
+      Q(:,j,1) = rho
+      Q(:,j,2) = rho * u
+      Q(:,j,3) = rho * v
+      Q(:,j,4) = ptbl * over_gamma_1 + 0.5d0 * rho * (u**2 + v**2)
     enddo
     deallocate(Qi, Qp)
   end subroutine set_init
 
 
-  subroutine set_bc(myrank, nx, ny, Jacobian, QJ)
+  subroutine set_bc(myrank, nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4)
     integer, intent(in), value     :: myrank, nx, ny
     real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ(nx,4,ny) ! Q / Jacobian
-    integer i, j, l, ireq, ierr, istat(MPI_STATUS_SIZE)
+    real(8), intent(inout), device :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny) ! Q / Jacobian
+    integer i, j, ireq, ierr, istat(MPI_STATUS_SIZE)
     real(8) :: p_wall
     !$cuf kernel do(1)<<<*,*>>>
     do j = 2, ny-1
-      do l = 1, 4
-        ! outlet
-        QJ(nx,l,j) = QJ(nx-1,l,j)
-    enddo;enddo
+      ! outlet
+      QJ_1(nx,j) = QJ_1(nx-1,j); QJ_2(nx,j) = QJ_2(nx-1,j); QJ_3(nx,j) = QJ_3(nx-1,j); QJ_4(nx,j) = QJ_4(nx-1,j)
+    enddo
 
     !$cuf kernel do(1)<<<*,*>>>
     do i = 1, nx
       ! Neumann
-      QJ(i,1,ny) = QJ(i,1,ny-1)
-      QJ(i,2,ny) = QJ(i,2,ny-1)
-      QJ(i,3,ny) = QJ(i,3,ny-1)
-      QJ(i,4,ny) = QJ(i,4,ny-1)
+      QJ_1(i,ny) = QJ_1(i,ny-1)
+      QJ_2(i,ny) = QJ_2(i,ny-1)
+      QJ_3(i,ny) = QJ_3(i,ny-1)
+      QJ_4(i,ny) = QJ_4(i,ny-1)
       ! NoSlip
-      QJ(i,1,1) = QJ(i,1,2)
-      QJ(i,2,1) = 0.d0
-      QJ(i,3,1) = 0.d0
-      p_wall = gamma_1 * (QJ(i,4,2) - 0.5d0 * (QJ(i,2,2)**2 + QJ(i,3,2)**2) / QJ(i,1,2))
-      QJ(i,4,1) = p_wall * over_gamma_1
+      QJ_1(i,1) = QJ_1(i,2)
+      QJ_2(i,1) = 0.d0
+      QJ_3(i,1) = 0.d0
+      p_wall = gamma_1 * (QJ_4(i,2) - 0.5d0 * (QJ_2(i,2)**2 + QJ_3(i,2)**2) / QJ_1(i,2))
+      QJ_4(i,1) = p_wall * over_gamma_1
     enddo
   end subroutine set_bc
 end module set

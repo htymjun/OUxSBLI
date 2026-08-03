@@ -14,8 +14,9 @@ KEEP6 (KEEP, 6th-order accuracy) → expected order ≥ 5.7
 Grid levels: nx = ny ∈ [64, 128, 256]
 
 Note:
-You should edit `/src/print.f90` file.
-io must be 8 because half precision (default) is not enough to check grid convergence
+Requests output_precision=8 (double-precision VTK output) via Case(...) --
+single precision (the default) doesn't have enough dynamic range to resolve
+a 4th/6th-order convergence trend.
 """
 import math
 import pathlib
@@ -82,6 +83,7 @@ def _run_evc(scheme, accuracy, nx, params):
         p0       = p0,
         T0       = T0,
         u0       = u0,
+        output_precision = 8,
     )
     case.build()
     case.run(nranks=2)

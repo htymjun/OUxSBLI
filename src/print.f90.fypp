@@ -1,21 +1,27 @@
-#define io 4
+#:include 'config.fypp'
+#:if not defined('OUTPUT_PRECISION')
+  #:set OUTPUT_PRECISION = 4
+#:endif
 module print
   use mpi
   use mod_globals, only : nt, np, dt, step_offset, gamma, R, dimension
   use mod_constant, only : id_accuracy
   implicit none
+  integer, parameter :: io = ${OUTPUT_PRECISION}$
   integer, parameter :: IO_UNIT_VTK = 10
   interface
     subroutine print_entropy(step, nx, ny, nz, rho_flat, p_flat, entropy0, myrank)
+      import :: io
       integer, intent(in)           :: step, nx, ny, nz
       real(io), intent(in)          :: rho_flat(nx*ny*nz), p_flat(nx*ny*nz)
       real(4), intent(inout)        :: entropy0
       integer, intent(in), optional :: myrank
     end subroutine print_entropy
   end interface
- 
+
   interface
     subroutine print_KE(step, nx, ny, nz, rho_flat, vel_flat, ke0, myrank)
+      import :: io
       integer, intent(in)           :: step, nx, ny, nz
       real(io), intent(in)          :: rho_flat(nx*ny*nz), vel_flat(nx*ny*nz*3)
       real(4), intent(inout)        :: ke0
@@ -26,7 +32,7 @@ module print
   interface make_1d_for_print
     module procedure make_1d_for_print2, make_1d_for_print3
   end interface
-  
+
   interface send_recv_for_print_even
     module procedure send_recv_for_print_even2, send_recv_for_print_even3
   end interface
@@ -103,7 +109,7 @@ contains
       do j = 1+offset, ny-offset
         do i = 1+offset, nx-offset
           l  = i + (j-1) * nx + (k-1) * nx * ny
-          m  = 1 + (i-1) * 3 + (j-1) * 3 * nx + (k-1) * 3 * nx * ny 
+          m  = 1 + (i-1) * 3 + (j-1) * 3 * nx + (k-1) * 3 * nx * ny
           ke = ke + 0.5d0 * rho_flat(l) * (vel_flat(m)**2 + vel_flat(m+1)**2 + vel_flat(m+2)**2)
     enddo;enddo;enddo
     ke = ke / dble((nx-accuracy) * (ny-accuracy) * (nz-accuracy))
@@ -191,7 +197,7 @@ contains
 
   subroutine make_1d_for_print2(nx, ny, Jacobian, QJ, rho_flat, p_flat, vel_flat)
     integer, intent(in) :: nx, ny
-    real(8), intent(in) :: Jacobian(nx,ny), QJ(nx,4,ny) ! Q / Jacobian
+    real(8), intent(in) :: Jacobian(nx,ny), QJ(nx,ny,4) ! Q / Jacobian
     real(io), intent(out), dimension(nx*ny)   :: rho_flat, p_flat
     real(io), intent(out), dimension(nx*ny*3) :: vel_flat
     real(8) rho, u, v, p
@@ -200,10 +206,10 @@ contains
     m = 1
     do j = 1, ny
       do i = 1, nx
-        rho      = Jacobian(i,j) * QJ(i,1,j)
-        u        = QJ(i,2,j) / QJ(i,1,j)
-        v        = QJ(i,3,j) / QJ(i,1,j)
-        p        = (gamma - 1.d0) * (Jacobian(i,j) * QJ(i,4,j) - 0.5d0 * rho * (u**2 + v**2))
+        rho      = Jacobian(i,j) * QJ(i,j,1)
+        u        = QJ(i,j,2) / QJ(i,j,1)
+        v        = QJ(i,j,3) / QJ(i,j,1)
+        p        = (gamma - 1.d0) * (Jacobian(i,j) * QJ(i,j,4) - 0.5d0 * rho * (u**2 + v**2))
         rho_flat(l) = real(rho, kind=io)
         p_flat(l)   = real(p,   kind=io)
         vel_flat(m)   = real(u,   kind=io)
@@ -243,15 +249,19 @@ contains
   end subroutine make_1d_for_print3
 
 
-  subroutine send_recv_for_print_even2(myrank, nranks, step, nx, ny, x, y, Jacobian_cpu, QJ, Q, ke0, entropy0)
+  subroutine send_recv_for_print_even2(myrank, nranks, step, nx, ny, x, y, Jacobian_cpu, &
+                                       QJ_1, QJ_2, QJ_3, QJ_4, Q, ke0, entropy0)
     integer, intent(in)         :: myrank, nranks, step, nx, ny
     real(8), intent(in)         :: x(nx), y(ny), Jacobian_cpu(nx,ny)
-    real(8), intent(in), device :: QJ(nx,4,ny)
-    real(8), intent(inout)      :: Q(nx,4,ny)
+    real(8), intent(in), device :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
+    real(8), intent(inout)      :: Q(nx,ny,4)
     real(4), intent(inout)      :: ke0, entropy0
     integer ireq3(3), istat3(MPI_STATUS_SIZE,3), ierr
     real(io) rho_flat(nx*ny), p_flat(nx*ny), vel_flat(nx*ny*3)
-    Q = QJ
+    Q(:,:,1) = QJ_1
+    Q(:,:,2) = QJ_2
+    Q(:,:,3) = QJ_3
+    Q(:,:,4) = QJ_4
     call make_1d_for_print(nx, ny, Jacobian_cpu, Q, rho_flat, p_flat, vel_flat)
     if (io == 4) then
       call MPI_ISEND(rho_flat, nx*ny,   MPI_REAL4, myrank+1, 3*(myrank+1)-2, MPI_COMM_WORLD, ireq3(1), ierr)
@@ -297,7 +307,7 @@ contains
   subroutine send_recv_for_print_odd2(myrank, nranks, step, nx, ny, x, y, Jacobian_cpu, Q, ke0, entropy0)
     integer, intent(in)    :: myrank, nranks, step, nx, ny
     real(8), intent(in)    :: x(nx), y(ny), Jacobian_cpu(nx,ny)
-    real(8), intent(inout) :: Q(nx,4,ny)
+    real(8), intent(inout) :: Q(nx,ny,4)
     real(4), intent(inout) :: ke0, entropy0
     integer ireq3(3), istat3(MPI_STATUS_SIZE,3), ierr
     real(io) rho_flat(nx*ny), p_flat(nx*ny), vel_flat(nx*ny*3)
@@ -341,7 +351,7 @@ contains
     real(8), intent(in)    :: x(nx)               !< x coordinate array (host)
     real(8), intent(in)    :: y(ny)               !< y coordinate array (host)
     real(8), intent(in)    :: Jacobian_cpu(nx,ny) !< Jacobian determinant (host)
-    real(8), intent(in)    :: Q(nx,4,ny)          !< conservative variables on host
+    real(8), intent(in)    :: Q(nx,ny,4)          !< conservative variables on host
     real(4), intent(inout) :: ke0
     real(4), intent(inout) :: entropy0
     real(io) rho_flat(nx*ny), p_flat(nx*ny), vel_flat(nx*ny*3)

@@ -28,60 +28,60 @@ contains
   subroutine set_init(myrank, nx, ny, x, y, Q)
     integer, intent(in)  :: myrank, nx, ny
     real(8), intent(in)  :: x(nx), y(ny)
-    real(8), intent(out) :: Q(nx,4,ny)
+    real(8), intent(out) :: Q(nx,ny,4)
     integer :: i, j
     do j = 1, ny
       do i = 1, nx
-        Q(i,1,j) = rho0
-        Q(i,2,j) = rho0 * u0
-        Q(i,3,j) = 0.d0
-        Q(i,4,j) = p0 * over_gamma_1 + 0.5d0 * rho0 * u0**2
+        Q(i,j,1) = rho0
+        Q(i,j,2) = rho0 * u0
+        Q(i,j,3) = 0.d0
+        Q(i,j,4) = p0 * over_gamma_1 + 0.5d0 * rho0 * u0**2
     enddo;enddo
     do i = int(0.1d0 * nx), nx
-      Q(i,1,ny) = rho2
-      Q(i,2,ny) = rho2 * ux
-      Q(i,3,ny) = rho2 * uy
-      Q(i,4,ny) = p2 * over_gamma_1 + 0.5d0 * rho2 * (ux**2 + uy**2)
+      Q(i,ny,1) = rho2
+      Q(i,ny,2) = rho2 * ux
+      Q(i,ny,3) = rho2 * uy
+      Q(i,ny,4) = p2 * over_gamma_1 + 0.5d0 * rho2 * (ux**2 + uy**2)
     enddo
   end subroutine set_init
 
-  subroutine set_bc(myrank, nx, ny, Jacobian, QJ)
+  subroutine set_bc(myrank, nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4)
     integer, intent(in), value     :: myrank, nx, ny
     real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ(nx,4,ny)
+    real(8), intent(inout), device :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
     real(8) Jacobian_tmp
     integer :: i, j
     !$cuf kernel do(1)<<<*,*>>>
     do i = 1, nx
       Jacobian_tmp = 1.d0 / Jacobian(1,ny-1)
       if (i < int(0.1d0 * nx)) then
-        QJ(i,1,ny) = rho0 * Jacobian_tmp
-        QJ(i,2,ny) = rho0 * u0 * Jacobian_tmp
-        QJ(i,3,ny) = 0.d0
-        QJ(i,4,ny) = (p0 * over_gamma_1 + 0.5d0 * rho0 * u0**2) * Jacobian_tmp
+        QJ_1(i,ny) = rho0 * Jacobian_tmp
+        QJ_2(i,ny) = rho0 * u0 * Jacobian_tmp
+        QJ_3(i,ny) = 0.d0
+        QJ_4(i,ny) = (p0 * over_gamma_1 + 0.5d0 * rho0 * u0**2) * Jacobian_tmp
       else
-        QJ(i,1,ny) = rho2 * Jacobian_tmp
-        QJ(i,2,ny) = rho2 * ux * Jacobian_tmp
-        QJ(i,3,ny) = rho2 * uy * Jacobian_tmp
-        QJ(i,4,ny) = (p2 * over_gamma_1 + 0.5d0 * rho2 * (ux**2 + uy**2)) * Jacobian_tmp
+        QJ_1(i,ny) = rho2 * Jacobian_tmp
+        QJ_2(i,ny) = rho2 * ux * Jacobian_tmp
+        QJ_3(i,ny) = rho2 * uy * Jacobian_tmp
+        QJ_4(i,ny) = (p2 * over_gamma_1 + 0.5d0 * rho2 * (ux**2 + uy**2)) * Jacobian_tmp
       endif
       ! Slip
-      QJ(i,1,1) =  QJ(i,1,2)
-      QJ(i,2,1) =  QJ(i,2,2)
-      QJ(i,3,1) = -QJ(i,3,2)
-      QJ(i,4,1) =  QJ(i,4,2)
+      QJ_1(i,1) =  QJ_1(i,2)
+      QJ_2(i,1) =  QJ_2(i,2)
+      QJ_3(i,1) = -QJ_3(i,2)
+      QJ_4(i,1) =  QJ_4(i,2)
     enddo
     !$cuf kernel do(1)<<<*,*>>>
     do j = 1, ny
       Jacobian_tmp = 1.d0 / Jacobian(1,j)
-      QJ(1,1,j)  = rho0 * Jacobian_tmp
-      QJ(1,2,j)  = rho0 * u0 * Jacobian_tmp
-      QJ(1,3,j)  = 0.d0
-      QJ(1,4,j)  = (p0 * over_gamma_1 + 0.5d0 * rho0 * u0**2) * Jacobian_tmp
-      QJ(nx,1,j) = QJ(nx-1,1,j)
-      QJ(nx,2,j) = QJ(nx-1,2,j)
-      QJ(nx,3,j) = QJ(nx-1,3,j)
-      QJ(nx,4,j) = QJ(nx-1,4,j)
+      QJ_1(1,j)  = rho0 * Jacobian_tmp
+      QJ_2(1,j)  = rho0 * u0 * Jacobian_tmp
+      QJ_3(1,j)  = 0.d0
+      QJ_4(1,j)  = (p0 * over_gamma_1 + 0.5d0 * rho0 * u0**2) * Jacobian_tmp
+      QJ_1(nx,j) = QJ_1(nx-1,j)
+      QJ_2(nx,j) = QJ_2(nx-1,j)
+      QJ_3(nx,j) = QJ_3(nx-1,j)
+      QJ_4(nx,j) = QJ_4(nx-1,j)
     enddo
   end subroutine set_bc
 end module set
