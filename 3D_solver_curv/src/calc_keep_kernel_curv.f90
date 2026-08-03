@@ -3,7 +3,7 @@
 !> G flux uses uniform Normal_z (z is Cartesian); caller scales by J_2D via dt_Szeta.
 module calc_keep_kernel_curv
   use libm
-  use mod_globals, only : threadsE, threadsF, threadsG
+  use mod_globals, only : gamma, threadsE, threadsF, threadsG
   use mod_constant, only : R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
   implicit none
   private
@@ -15,7 +15,10 @@ module calc_keep_kernel_curv
   real(8), parameter :: one_240       = 1.d0 / 240.d0
   real(8), parameter :: seven_twelfth = 7.d0 / 12.d0
 contains
-  include '../../3D_solver/src/calc_keep_3d.f90'
+  ! KEEP2/4/6 AND SLAU_common/SLAU1/HRSLAU2/phi are compiled here too
+  ! (calc_scheme_math.f90 covers both schemes) even though this module only
+  ! calls KEEP2 -- gamma above is the one SLAU_common's body references.
+  include 'calc_scheme_math.f90'
 
   !> KEEP 2nd-order flux at xi-faces (i+1/2, j, k).
   !> n_xi_x/y(nx-1, ny-2): area-scaled face normals at interior eta cells.

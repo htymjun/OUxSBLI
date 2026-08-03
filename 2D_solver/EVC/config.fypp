@@ -10,3 +10,4 @@
 #:set BC_Y          = False
 #:set COMMZ         = False
 #:set ORDER_IO = ORDER // 2 - 1
+#:set OUTPUT_PRECISION = 8

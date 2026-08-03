@@ -12,3 +12,4 @@
 #:set TVD = 'hybrid'
 #:set SLAU_VARIANT = 'HRSLAU2'
 #:set ORDER_IO = ORDER // 2 - 1
+#:set OUTPUT_PRECISION = 4

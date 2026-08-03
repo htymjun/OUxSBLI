@@ -29,61 +29,52 @@ contains
   subroutine set_init(myrank, nx, ny, x, y, Q)
     integer, intent(in)  :: myrank, nx, ny
     real(8), intent(in)  :: x(nx), y(ny)
-    real(8), intent(out) :: Q(nx,4,ny)
+    real(8), intent(out) :: Q(nx,ny,4)
     integer i, j
     do j = 1, ny
       do i = 1, nx / 2
-        Q(i,1,j) = rho0
-        Q(i,2,j) = 0.d0
-        Q(i,3,j) = 0.d0
-        Q(i,4,j) = p0 / (gamma - 1.d0)
+        Q(i,j,1) = rho0
+        Q(i,j,2) = 0.d0
+        Q(i,j,3) = 0.d0
+        Q(i,j,4) = p0 / (gamma - 1.d0)
       enddo
       do i = nx / 2 + 1, nx
-        Q(i,1,j) = rho1
-        Q(i,2,j) = 0.d0
-        Q(i,3,j) = 0.d0
-        Q(i,4,j) = p1 / (gamma - 1.d0)
+        Q(i,j,1) = rho1
+        Q(i,j,2) = 0.d0
+        Q(i,j,3) = 0.d0
+        Q(i,j,4) = p1 / (gamma - 1.d0)
       enddo
     enddo
   end subroutine set_init
 
 
-  subroutine set_bc(myrank, nx, ny, Jacobian, QJ)
+  subroutine set_bc(myrank, nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4)
     integer, intent(in), value     :: myrank, nx, ny
     real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ(nx,4,ny)
+    real(8), intent(inout), device :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
     real(8) p_wall
-    integer i, j, l
+    integer i, j
     ! inlet outlet
     !$cuf kernel do<<<*,*>>>
     do j = 2, ny-1
-      do l = 1, 4
-        QJ(1,l,j)  = QJ(2,l,j)
-        QJ(nx,l,j) = QJ(nx-1,l,j)
-    enddo;enddo
-
-    ! no wall
-    !!$cuf kernel do<<<*,*>>>
-    !do i = 1, nx
-    !  do l = 1, 4
-    !    QJ(i,l,1)  = QJ(i,l,2)
-    !    QJ(i,l,ny) = QJ(i,l,ny-1)
-    !enddo;enddo
+      QJ_1(1,j)  = QJ_1(2,j);    QJ_2(1,j)  = QJ_2(2,j);    QJ_3(1,j)  = QJ_3(2,j);    QJ_4(1,j)  = QJ_4(2,j)
+      QJ_1(nx,j) = QJ_1(nx-1,j); QJ_2(nx,j) = QJ_2(nx-1,j); QJ_3(nx,j) = QJ_3(nx-1,j); QJ_4(nx,j) = QJ_4(nx-1,j)
+    enddo
 
     ! no-slip wall & symetric boundary condition
     !$cuf kernel do<<<*,*>>>
     do i = 1, nx
       ! no-slip wall
-      p_wall = gamma_1 * (QJ(i,4,2) - 0.5d0 * (QJ(i,2,2)**2 + QJ(i,3,2)**2) / QJ(i,1,2))
-      QJ(i,1,1) = QJ(i,1,2)
-      QJ(i,2,1) = 0.d0
-      QJ(i,3,1) = 0.d0
-      QJ(i,4,1) = p_wall * over_gamma_1
+      p_wall = gamma_1 * (QJ_4(i,2) - 0.5d0 * (QJ_2(i,2)**2 + QJ_3(i,2)**2) / QJ_1(i,2))
+      QJ_1(i,1) = QJ_1(i,2)
+      QJ_2(i,1) = 0.d0
+      QJ_3(i,1) = 0.d0
+      QJ_4(i,1) = p_wall * over_gamma_1
       ! symetric boundary condition
-      QJ(i,1,ny) =  QJ(i,1,ny-1)
-      QJ(i,2,ny) =  QJ(i,2,ny-1)
-      QJ(i,3,ny) = -QJ(i,3,ny-1)
-      QJ(i,4,ny) =  QJ(i,4,ny-1)
+      QJ_1(i,ny) =  QJ_1(i,ny-1)
+      QJ_2(i,ny) =  QJ_2(i,ny-1)
+      QJ_3(i,ny) = -QJ_3(i,ny-1)
+      QJ_4(i,ny) =  QJ_4(i,ny-1)
     enddo
   end subroutine set_bc
 end module set

@@ -3,7 +3,7 @@
 module calc_slau_kernel_curv
   use libm
   use mod_globals, only : threadsE, threadsF, threadsG
-  use mod_constant, only : over_gamma_1, id_slau
+  use mod_constant, only : over_gamma_1, id_slau, R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
   use calc_hybrid
   implicit none
   private
@@ -11,8 +11,18 @@ module calc_slau_kernel_curv
   interface SLAU
     module procedure SLAU1, HRSLAU2
   end interface SLAU
+  ! KEEP2/4/6 are compiled here too (calc_scheme_math.f90 include below covers
+  ! both schemes) even though this module never calls them -- these constants
+  ! are the ones their bodies reference. gamma/sp (needed by SLAU_common) are
+  ! already in scope transitively via `use calc_hybrid` above.
+  real(8), parameter :: one_24        = 1.d0 / 24.d0
+  real(8), parameter :: one_48        = 1.d0 / 48.d0
+  real(8), parameter :: one_60        = 1.d0 / 60.d0
+  real(8), parameter :: one_120       = 1.d0 / 120.d0
+  real(8), parameter :: one_240       = 1.d0 / 240.d0
+  real(8), parameter :: seven_twelfth = 7.d0 / 12.d0
 contains
-  include '../../3D_solver/src/calc_slau_3d.f90'
+  include 'calc_scheme_math.f90'
 
   !> SLAU 2nd-order flux at xi-faces (i+1/2, j, k). Area-scaled by |S_xi|.
   attributes(global) subroutine calc_slau_xi_curv(id_accuracy, nx, ny, nz, n_xi_x, n_xi_y, Q_1, Q_2, Q_3, Q_4, Q_5, sensor, E)

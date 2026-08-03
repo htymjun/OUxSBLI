@@ -29,7 +29,7 @@ program main
     call set_block_2D(nx, ny, threads, threadsE, threadsEv, threadsF, threadsFv, &
                       blocks, blocksE, blocksEv, blocksF, blocksFv)
   endif
-  allocate(Q(nx,dimension+2,ny), x(nx), dx(nx-1), y(ny), dy(ny-1), Jacobian(nx,ny))
+  allocate(Q(nx,ny,dimension+2), x(nx), dx(nx-1), y(ny), dy(ny-1), Jacobian(nx,ny))
   call set_grid(myrank, nx, ny, Lx, Ly, x, y, dx, dy)
   call set_Jacobian_xy2(nx, ny, dx, dy, Jacobian)
 
@@ -79,9 +79,9 @@ program main
     endif
     ! save data
     do j = 1, ny
-      do i = 1, nx
-        do m = 1, dimension+2
-          Q(i,m,j) = Jacobian(i,j) * Q(i,m,j)
+      do m = 1, dimension+2
+        do i = 1, nx
+          Q(i,j,m) = Jacobian(i,j) * Q(i,j,m)
     enddo;enddo;enddo
     call cpu_time(t_start)
     write(filename, "(a, i5.5, a)") "recal/Q", int(myrank/2+1), ".dat"
@@ -105,4 +105,3 @@ program main
   deallocate(Q, x, dx, y, dy, Jacobian)
   call MPI_FINALIZE(ierr)
 end program main
-

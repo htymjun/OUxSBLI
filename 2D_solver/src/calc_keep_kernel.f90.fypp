@@ -1,6 +1,6 @@
 #:include 'config.fypp'
 module calc_keep_kernel
-  use mod_globals, only : threadsE, threadsF
+  use mod_globals, only : gamma, threadsE, threadsF
   use mod_constant, only : R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
   use libm
   implicit none
@@ -28,13 +28,13 @@ module calc_keep_kernel
     module procedure KEEP2, KEEP4, KEEP6
   end interface KEEP
 contains
-  include 'calc_keep_2d.f90'
+  include 'calc_scheme_math.f90'
 
-  attributes(global) subroutine calc_keep_x(nx, ny, Q, T, E)
+  attributes(global) subroutine calc_keep_x(nx, ny, Q_1, Q_2, Q_3, Q_4, T, E)
     use mod_constant, only : Normal_x
     integer, intent(in), value                :: nx, ny
-    real(8), intent(in), device, contiguous   :: Q(nx,4,ny), T(nx,ny)
-    real(8), intent(out), device, contiguous  :: E(4,nx-1,ny-2)
+    real(8), intent(in), device, contiguous   :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny), T(nx,ny)
+    real(8), intent(out), device, contiguous  :: E(nx-1,ny-2,4)
     integer i, j, it, jt
     integer :: ii, i_base, idx, offset_y
     integer, parameter :: sx = threadsE%x + 2*io + 1
@@ -49,8 +49,8 @@ contains
       i = i_base + ii
       if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny) then
         idx = ii + offset_y
-        rho(idx) = Q(i,1,j); u(idx) = Q(i,2,j)
-          v(idx) = Q(i,3,j); p(idx) = Q(i,4,j); tmp(idx) = T(i,j)
+        rho(idx) = Q_1(i,j); u(idx) = Q_2(i,j)
+          v(idx) = Q_3(i,j); p(idx) = Q_4(i,j); tmp(idx) = T(i,j)
       endif
     enddo
     call syncthreads()
@@ -60,36 +60,36 @@ contains
     associate(uu => u)
     #:if ORDER == 6
     if (3 <= i .and. i <= nx-3) then
-      E(:,i,j-1) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3),   v(idx-2:idx+3), &
+      E(i,j-1,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3),   v(idx-2:idx+3), &
                         uu(idx-2:idx+3), p(idx-2:idx+3), tmp(idx-2:idx+3), Normal_x)
     elseif (2 <= i .and. i <= nx-2) then
-      E(:,i,j-1) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
+      E(i,j-1,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
                         uu(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_x)
     else
-      E(:,i,j-1) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1), &
+      E(i,j-1,:) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1), &
                         uu(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_x)
     endif
     #:elif ORDER == 4
     if (2 <= i .and. i <= nx-2) then
-      E(:,i,j-1) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
+      E(i,j-1,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
                         uu(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_x)
     else
-      E(:,i,j-1) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1), &
+      E(i,j-1,:) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1), &
                         uu(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_x)
     endif
     #:else
-      E(:,i,j-1) = KEEP(id_acc,        rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1), &
+      E(i,j-1,:) = KEEP(id_acc,        rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1), &
                         uu(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_x)
     #:endif
     end associate
   end subroutine calc_keep_x
 
 
-  attributes(global) subroutine calc_keep_y(nx, ny, Q, T, F)
+  attributes(global) subroutine calc_keep_y(nx, ny, Q_1, Q_2, Q_3, Q_4, T, F)
     use mod_constant, only : Normal_y
     integer, intent(in), value                :: nx, ny
-    real(8), intent(in), device, contiguous   :: Q(nx,4,ny), T(nx,ny)
-    real(8), intent(out), device, contiguous  :: F(4,nx-2,ny-1)
+    real(8), intent(in), device, contiguous   :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny), T(nx,ny)
+    real(8), intent(out), device, contiguous  :: F(nx-2,ny-1,4)
     integer i, j, it, jt
     integer :: jj, j_base, idx, offset_x
     integer, parameter :: sx = threadsF%x
@@ -104,8 +104,8 @@ contains
       j = j_base + jj
       if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny) then
         idx = jj + offset_x
-        rho(idx) = Q(i,1,j); u(idx) = Q(i,2,j)
-          v(idx) = Q(i,3,j); p(idx) = Q(i,4,j); tmp(idx) = T(i,j)
+        rho(idx) = Q_1(i,j); u(idx) = Q_2(i,j)
+          v(idx) = Q_3(i,j); p(idx) = Q_4(i,j); tmp(idx) = T(i,j)
       endif
     enddo
     call syncthreads()
@@ -115,25 +115,25 @@ contains
     associate(vv => v)
     #:if ORDER == 6
     if (3 <= j .and. j <= ny-3) then
-      F(:,i-1,j) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3),   v(idx-2:idx+3), &
+      F(i-1,j,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3),   v(idx-2:idx+3), &
                         vv(idx-2:idx+3), p(idx-2:idx+3), tmp(idx-2:idx+3), Normal_y)
     elseif (2 <= j .and. j <= ny-2) then
-      F(:,i-1,j) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
+      F(i-1,j,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
                         vv(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_y)
     else
-      F(:,i-1,j) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1),   &
+      F(i-1,j,:) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1),   &
                         vv(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_y)
     endif
     #:elif ORDER == 4
     if (2 <= j .and. j <= ny-2) then
-      F(:,i-1,j) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
+      F(i-1,j,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
                         vv(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_y)
     else
-      F(:,i-1,j) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1),   &
+      F(i-1,j,:) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1),   &
                         vv(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_y)
     endif
     #:else
-      F(:,i-1,j) = KEEP(id_acc,        rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1),   &
+      F(i-1,j,:) = KEEP(id_acc,        rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1),   &
                         vv(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_y)
     #:endif
     end associate

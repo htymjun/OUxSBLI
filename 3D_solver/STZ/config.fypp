@@ -12,3 +12,4 @@
 #:set TVD = 'tvd'
 #:set SLAU_VARIANT = 'SLAU'
 #:set ORDER_IO = ORDER // 2 - 1
+#:set OUTPUT_PRECISION = 4
