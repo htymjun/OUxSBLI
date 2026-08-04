@@ -47,11 +47,11 @@ program extract
 
   allocate(Q1d(5,ny))
   do j = 1, ny
-    rho = sum(Q(nx1:nx2,1,j)) / dble(nx2 - nx1)
-    u   = sum(Q(nx1:nx2,2,j) / Q(nx1:nx2,1,j)) / dble(nx2 - nx1)
-    v   = sum(Q(nx1:nx2,3,j) / Q(nx1:nx2,1,j)) / dble(nx2 - nx1)
+    rho = sum(Q(nx1:nx2,1,j)) / dble(nx2 - nx1 + 1)
+    u   = sum(Q(nx1:nx2,2,j) / Q(nx1:nx2,1,j)) / dble(nx2 - nx1 + 1)
+    v   = sum(Q(nx1:nx2,3,j) / Q(nx1:nx2,1,j)) / dble(nx2 - nx1 + 1)
     p   = sum((gamma - 1.d0) * (Q(nx1:nx2,4,j) &
-          - 0.5d0 * (Q(nx1:nx2,2,j)**2 + Q(nx1:nx2,3,j)**2) / Q(nx1:nx2,1,j))) / dble(nx2 - nx1)
+          - 0.5d0 * (Q(nx1:nx2,2,j)**2 + Q(nx1:nx2,3,j)**2) / Q(nx1:nx2,1,j))) / dble(nx2 - nx1 + 1)
     Q1d(1,j) = y(j)
     Q1d(2,j) = rho
     Q1d(3,j) = u

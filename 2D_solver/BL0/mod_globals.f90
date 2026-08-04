@@ -7,11 +7,11 @@ module mod_globals
   real(8), parameter  :: blt         = 1.d-3
 
   ! mesh
-  real(8), parameter :: Lx = 100.d0 * blt
-  real(8), parameter :: Ly = 12.5d0 * blt !5
+  real(8), parameter :: Lx = 300.d0 * blt !100
+  real(8), parameter :: Ly = 35.9d0 * blt !12.5!5
   ! DNS
-  integer, parameter :: nx = 1281 !1025
-  integer, parameter :: ny = 321 !129
+  integer, parameter :: nx = 3841 !1281
+  integer, parameter :: ny = 1177 !321!129
 
   ! RTX 4090
   type(dim3), parameter :: threadsE  = dim3(128,1,1)
@@ -23,8 +23,8 @@ module mod_globals
 
   ! time
   integer, parameter :: step_offset = 0
-  real(8), parameter :: endT  = 0.8d-3 !0.4d-3
-  integer, parameter :: np    = 80
+  real(8), parameter :: endT  = 1.5d-3 !0.4d-3
+  integer, parameter :: np    = 150 !80
   real(8), parameter :: R     = 287.03d0
   real(8), parameter :: gamma = 1.4d0
   real(8), parameter :: M0    = 2.d0
