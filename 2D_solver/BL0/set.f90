@@ -23,7 +23,7 @@ contains
       x(i+1) = x(i) + dx(i)
     enddo
 
-    s = 1.6d0
+    s = 2.2d0
     tanh_s = tanh(s)
     do j = 1, ny
       yi = dble(j-1) / dble(ny-1)
