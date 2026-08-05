@@ -50,7 +50,7 @@ _ALIAS = {
 # fypp comparisons are case-sensitive: 'Euler' ≠ 'EULER', 'none' ≠ 'NONE'.
 # ---------------------------------------------------------------------------
 _VALUE_NORMALIZE: dict[str, dict[str, str]] = {
-    "SCHEME":       {"keep": "KEEP", "slau": "SLAU", "roe": "Roe", "hybrid": "Hybrid"},
+    "SCHEME":       {"keep": "KEEP", "slau": "SLAU", "hybrid": "Hybrid"},
     "VISC":         {"euler": "Euler", "ns": "NS", "les": "LES"},
     "TVD":          {"none": "none", "tvd": "tvd", "hybrid": "hybrid",
                      "minmod": "tvd", "muscl4": "hybrid"},  # backward-compat aliases

@@ -139,7 +139,6 @@ Parameters in `mod_globals.f90` use the Fortran type **kind** (not value) as a d
 |-------------|------|--------|
 | `integer(2)` | KEEP | Kinetic Energy & Entropy Preserving |
 | `real(2)` | SLAU | Simple Low-dissipation AUSM |
-| `real(4)` | Roe | Roe approximate Riemann |
 | `real(8)` | Hybrid | KEEP ↔ SLAU via Ducros sensor |
 
 The Python API handles this automatically via friendly strings:

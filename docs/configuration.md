@@ -25,7 +25,7 @@ All compile-time options are set here. Below is a full listing with allowed valu
 | Variable | Type | Values | Default (NSTGV) | Effect |
 |----------|------|--------|-----------------|--------|
 | `VISC` | string | `'Euler'`, `'NS'`, `'LES'` | `'NS'` | Physics model |
-| `SCHEME` | string | `'KEEP'`, `'SLAU'`, `'Roe'`, `'Hybrid'` | `'SLAU'` | Convective flux scheme |
+| `SCHEME` | string | `'KEEP'`, `'SLAU'`, `'Hybrid'` | `'SLAU'` | Convective flux scheme |
 | `ORDER` | int | `2`, `4`, `6` | `6` | Spatial accuracy (convective + viscous) |
 | `VISC_ORDER` | int | `2`, `4` | *(defaults to `ORDER`)* | Override viscous stencil order |
 | `TVD` | string | `'none'`, `'tvd'`, `'hybrid'` | `'hybrid'` | TVD limiter for reconstruction |
@@ -39,7 +39,7 @@ All compile-time options are set here. Below is a full listing with allowed valu
 | `BC_Z` | bool | `True`, `False` | `False` | Wall/inflow BCs in z |
 | `ORDER_IO` | int | computed | `ORDER // 2 - 1` | Ghost-cell count for I/O interpolation |
 
-> **Note:** `COMMZ = True` and `RESCALE = True` cannot be combined. The Roe scheme is supported but not actively optimised — prefer KEEP, SLAU, or Hybrid.
+> **Note:** `COMMZ = True` and `RESCALE = True` cannot be combined.
 
 ### Example: NSTGV config.fypp
 
@@ -118,7 +118,7 @@ Thread-block sizes must be tuned to the GPU architecture and grid size for best 
 | `id_slau` (integer) | SLAU | HRSLAU2 | — |
 | `id_rescale` (integer) | off | on | — |
 | `id_bc_x/y/z` (integer) | periodic | wall/inflow | — |
-| `id_scheme` | integer(2) = KEEP | real(2) = SLAU | real(4) = Roe / real(8) = Hybrid |
+| `id_scheme` | integer(2) = KEEP | real(2) = SLAU | real(8) = Hybrid |
 
 `id_recal` (restart flag) is a Fortran `logical` (`.true.` / `.false.`).
 

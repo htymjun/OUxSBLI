@@ -170,7 +170,6 @@ At a glance, the dispatch encoding used internally by `mod_constant.f90`:
 |-------------|------|--------|
 | `integer(2)` | KEEP | Kinetic Energy & Entropy Preserving |
 | `real(2)` | SLAU | Simple Low-dissipation AUSM |
-| `real(4)` | Roe | Roe approximate Riemann |
 | `real(8)` | Hybrid | KEEP ↔ SLAU via Ducros sensor |
 
 These Fortran parameters are **generated automatically** from `config.fypp` — you do not edit them directly.

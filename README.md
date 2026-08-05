@@ -47,7 +47,7 @@ cd 3D_solver/NSTGV
 
 ```python
 #:set VISC   = 'NS'      # 'Euler', 'NS', or 'LES'
-#:set SCHEME = 'SLAU'    # 'KEEP', 'SLAU', 'Roe', or 'Hybrid'
+#:set SCHEME = 'SLAU'    # 'KEEP', 'SLAU', or 'Hybrid'
 #:set ORDER  = 6         # spatial order: 2, 4, or 6
 #:set BC_X   = False     # False → periodic; True → wall/inflow BCs
 #:set BC_Y   = False
@@ -125,7 +125,6 @@ See [docs/api.md](docs/api.md) for the full API reference.
 ### Spatial (Convection terms)
 * Kinetic energy and entropy preserving (KEEP) scheme
 * Simple low-dissipation AUSM (SLAU) scheme
-* Roe scheme
 * KEEP / SLAU hybrid scheme
 
 ### Spatial (Viscous terms)

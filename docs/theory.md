@@ -53,15 +53,6 @@ SLAU is a pressure-based all-speed Riemann solver from the AUSM family. HRSLAU2 
 - **Variants:** `SLAU_VARIANT = 'SLAU'` or `'HRSLAU2'` (default)
 - **Best for:** SBLI, TBL, BL, OS — any case with shocks
 
-### Roe — Approximate Riemann Solver
-
-`SCHEME = 'Roe'`
-
-The Roe scheme linearises the Riemann problem at each interface and adds matrix dissipation proportional to the spectral radius of the flux Jacobian. It is well-suited to strong discontinuities but is not actively optimised in OUxSBLI; SLAU or Hybrid is preferred for most cases.
-
-- **Files:** `calc_roe_kernel.f90.fypp`, `calc_roe_kernel_internal.f90.fypp`
-- **Best for:** strong shocks at hypersonic conditions
-
 ### Hybrid — KEEP ↔ SLAU via Ducros Sensor
 
 `SCHEME = 'Hybrid'`
@@ -122,4 +113,4 @@ Enabled for the STZ validation case. Non-blocking MPI halo exchange is posted, i
 - Grid metric coefficients (ξ_x, ξ_y, η_x, η_y) and the Jacobian are stored on device.
 - Conservative variables are stored as Q × J_2D × Δz; they are converted to primitive form before kernel dispatch.
 - E and F fluxes are area-scaled (include the face-area factor S_ξ or S_η); G flux is not.
-- Only KEEP, SLAU, and Hybrid are supported; Roe and LES are not implemented in `calc_flux_base_curv.f90`.
+- Only KEEP, SLAU, and Hybrid are supported; LES is not implemented in `calc_flux_base_curv.f90`.
