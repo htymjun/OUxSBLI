@@ -64,7 +64,7 @@ contains
     integer, parameter :: sy = threadsE%y
     integer, parameter :: sz = threadsE%z
     real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp, uy, uz
-    real(8) :: flux(5), mui, utau_sum
+    real(8) :: flux(5), mui
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -110,19 +110,19 @@ contains
           real(8) :: tau, utau
           call calc_tau_straight(mui, u(idx-io_v:idx+io_v+1), vy(i-io_v:i+io_v+1,j,k), wz(i-io_v:i+io_v+1,j,k), dx(i), tau, utau)
           flux(2) = flux(2) - tau
-          utau_sum = utau
+          flux(5) = flux(5) - utau
         end block
         block
           real(8) :: tau, utau
           call calc_tau_cross(mui, v(idx-io_v:idx+io_v+1), uy(idx-io_v:idx+io_v+1), dx(i), tau, utau)
           flux(3) = flux(3) - tau
-          utau_sum = utau_sum + utau
+          flux(5) = flux(5) - utau
         end block
         block
           real(8) :: tau, utau
           call calc_tau_cross(mui, w(idx-io_v:idx+io_v+1), uz(idx-io_v:idx+io_v+1), dx(i), tau, utau)
           flux(4) = flux(4) - tau
-          utau_sum = utau_sum + utau
+          flux(5) = flux(5) - utau
         end block
         block
           real(8) :: Tx, kTx
@@ -131,7 +131,7 @@ contains
           ! dedup only available because KEEP already tiles T.
           Tx  = diff6_s(dx(i), -tmp(idx-2)+tmp(idx+3), tmp(idx-1)-tmp(idx+2), -tmp(idx)+tmp(idx+1))
           kTx = Cp_over_Pr * mui * Tx
-          flux(5) = flux(5) - (utau_sum + kTx)
+          flux(5) = flux(5) - kTx
         end block
       endif
       E(i,j-1,k-1,:) = flux(:)
@@ -155,7 +155,7 @@ contains
     integer, parameter :: sy = threadsF%y + 2*io + 1
     integer, parameter :: sz = threadsF%z
     real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp, vx, vz
-    real(8) :: flux(5), mui, utau_sum
+    real(8) :: flux(5), mui
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -203,25 +203,25 @@ contains
                wz(i,j,  k)+wz(i,j+1,k), ux(i,j,  k)+ux(i,j+1,k), &
                dy(j), tau, utau)
           flux(3) = flux(3) - tau
-          utau_sum = utau
+          flux(5) = flux(5) - utau
         end block
         block
           real(8) :: tau, utau
           call calc_tau_cross(mui, u(idx-io_v:idx+io_v+1), vx(idx-io_v:idx+io_v+1), dy(j), tau, utau)
           flux(2) = flux(2) - tau
-          utau_sum = utau_sum + utau
+          flux(5) = flux(5) - utau
         end block
         block
           real(8) :: tau, utau
           call calc_tau_cross(mui, w(idx-io_v:idx+io_v+1), vz(idx-io_v:idx+io_v+1), dy(j), tau, utau)
           flux(4) = flux(4) - tau
-          utau_sum = utau_sum + utau
+          flux(5) = flux(5) - utau
         end block
         block
           real(8) :: Ty, kTy
           Ty  = diff6_s(dy(j), -tmp(idx-2)+tmp(idx+3), tmp(idx-1)-tmp(idx+2), -tmp(idx)+tmp(idx+1))
           kTy = Cp_over_Pr * mui * Ty
-          flux(5) = flux(5) - (utau_sum + kTy)
+          flux(5) = flux(5) - kTy
         end block
       endif
       F(i-1,j,k-1,:) = flux(:)
@@ -245,7 +245,7 @@ contains
     integer, parameter :: sy = threadsG%y
     integer, parameter :: sz = threadsG%z + 2*io + 1
     real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp, wx, wy
-    real(8) :: flux(5), mui, utau_sum
+    real(8) :: flux(5), mui
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -293,25 +293,25 @@ contains
                ux(i,j,k  )+ux(i,j,k+1), vy(i,j,k  )+vy(i,j,k+1), &
                dz(k), tau, utau)
           flux(4) = flux(4) - tau
-          utau_sum = utau
+          flux(5) = flux(5) - utau
         end block
         block
           real(8) :: tau, utau
           call calc_tau_cross(mui, u(idx-io_v:idx+io_v+1), wx(idx-io_v:idx+io_v+1), dz(k), tau, utau)
           flux(2) = flux(2) - tau
-          utau_sum = utau_sum + utau
+          flux(5) = flux(5) - utau
         end block
         block
           real(8) :: tau, utau
           call calc_tau_cross(mui, v(idx-io_v:idx+io_v+1), wy(idx-io_v:idx+io_v+1), dz(k), tau, utau)
           flux(3) = flux(3) - tau
-          utau_sum = utau_sum + utau
+          flux(5) = flux(5) - utau
         end block
         block
           real(8) :: Tz, kTz
           Tz  = diff6_s(dz(k), -tmp(idx-2)+tmp(idx+3), tmp(idx-1)-tmp(idx+2), -tmp(idx)+tmp(idx+1))
           kTz = Cp_over_Pr * mui * Tz
-          flux(5) = flux(5) - (utau_sum + kTz)
+          flux(5) = flux(5) - kTz
         end block
       endif
       G(i-1,j-1,k,:) = flux(:)

@@ -367,3 +367,91 @@ maxima.
   fusion (no 6th-order 2D viscous kernel exists), and curvilinear fusion
   (mismatched conv/visc thread-block shapes) — all explicitly out of scope
   for this pass, each needing its own follow-up plan.
+
+## Update — 2026-08-05 (continued again): GH200 confirms the SLAU fusion win; committed; Phase B register-pressure fix applied to both kernels
+
+New GH200 captures landed (`my_report_ncu_{fuse,nofuse}_20260805_slau.ncu-rep`,
+full production grid, 513³, real GH200 120GB — confirmed via session
+metadata, same `SoA`-vs-`stable` branch-checkout comparison methodology as
+before). **This resolves the open question from the previous update.**
+
+### SLAU fusion: confirmed win, not a regression
+
+| Direction | Fused | Unfused (conv+visc) | Reduction |
+|---|---|---|---|
+| x | 29.6 ms | 42.3 ms | 30.0% |
+| y | 33.3 ms | 48.4 ms | 31.3% |
+| z | 36.7 ms | 57.3 ms | 36.1% |
+| **Total** | **99.5 ms** | **148.1 ms** | **32.8%** |
+
+This directly contradicts the earlier RTX4060 signal (~9% slower). Occupancy
+data explains why: on RTX4060 the fused kernel's added shared-memory tiles
+pushed the binding occupancy constraint below the hardware block cap; on
+GH200 (far more registers/shared-mem per SM), that never binds — the SLAU
+fusion behaves like KEEP's fusion, a clean win from eliminating the
+intermediate global-memory round-trip. **RTX4060 was confirmed not to be a
+valid proxy for this decision.** Committed as two commits: `127dd00` (Roe
+removal) and `24bc57f` (SLAU fusion + NS pytest coverage), both including the
+before/after numbers above in the commit message.
+
+### Next lever, identified directly from the GH200 data
+
+All three fused kernels (x, y, z) land at the **same occupancy ceiling**: 24
+resident warps/SM out of 64 max (37.5%), matching measured occupancy almost
+exactly (36.4/36.6/36.7%) — x is register-bound (74 regs/thread → 24 blocks),
+y/z are register- *and* shared-mem-bound simultaneously (6 blocks × 4
+warps). Every kernel's dominant stall reason is `long_scoreboard` (memory
+latency, 3.9–4.3 cycles/instruction) by a wide margin over any other stall
+category — meaning more resident warps would directly help hide that
+latency. This matches the exact trigger condition for Phase B item #1 from
+the original plan ("Block Limit Registers is the binding occupancy
+constraint") — not a blind guess.
+
+**Applied to both fused kernels** (`calc_keep_visc_kernel.f90.fypp` and
+`calc_slau_visc_kernel.f90.fypp`, all three directions each): the `utau_sum`
+sequential-accumulation chain — previously threaded live from the first
+`calc_tau_straight` block through the final heat-flux block before a single
+deferred `flux(5) = flux(5) - (utau_sum + kTx)` — now commits each viscous
+contribution to `flux(5)` immediately inside its own block
+(`flux(5) = flux(5) - utau`), removing `utau_sum`'s cross-block live range.
+
+**Correctness bar shifts here, deliberately.** Unlike Phase A's launch-config
+change (byte-identical by construction — same math, different thread
+mapping) and the SLAU generalization above (byte-identical — same
+computation, just fused into one launch), this changes floating-point
+*evaluation order*: `a - b - c - d` is not bit-identical to `a - (b+c+d)` in
+IEEE 754 in general. Verified accordingly, not by relaxing scrutiny but by
+using the right tool for what actually changed:
+- `kinetic_energy.d` (both DHIT/KEEP @ nx=70 and NSTGV/SLAU @ nx=129):
+  **exactly identical** (domain-averaged scalar, insensitive at this
+  precision).
+- Raw `Q*.vtr` field snapshots: **not** byte-identical (as expected), but
+  quantified directly — max relative difference ~5.5×10⁻¹⁰ (v-velocity,
+  DHIT) and ~9.4×10⁻¹⁰ (w-velocity, NSTGV), i.e. rounding-level, not a
+  physics-affecting change. (Some fields matched exactly even at the raw
+  level — the reordering doesn't always change the rounded result, and the
+  single-precision VTK output quantizes most of what's left.)
+- Build-check (8/8), `test_etgv.py`, and the full pytest suite (24/24,
+  including both `test_nstgv_ke_eps.py` energy-budget checks) all pass.
+
+**Not yet committed** — this needs the same GH200 `ncu` re-capture as
+before (same kernel names, same metrics: registers/thread, occupancy
+limiter, `gpu__time_duration.sum`) to confirm the expected occupancy/latency
+benefit actually materializes before deciding to keep it. Expect it might be
+a *small* win at best: eliminating one live scalar register is unlikely to
+single-handedly move the register-limit needle much (74→~73 registers,
+roughly) — this change is more of a "measure and see" than a slam dunk, per
+its own original framing in the Phase B menu. If GH200 shows no
+improvement, this is cheap to revert (a mechanical, well-isolated diff).
+
+### Outstanding (updated)
+
+- **GH200 re-profiling of the register-pressure fix** — the actual blocker
+  before committing this specific change. Same `ncu` command pattern as
+  before (`--kernel-name regex:calc_keepv_x_in` / `calc_slauv_x_in` etc.,
+  `--metrics launch__registers_per_thread,launch__shared_mem_per_block_static,sm__warps_active.avg.pct_of_peak_sustained_active,gpu__time_duration.sum,launch__occupancy_limit_registers,launch__occupancy_limit_shared_mem,launch__occupancy_limit_blocks,launch__occupancy_limit_warps`).
+- Phase A's original ask (KEEP `threadsE` N=1-vs-N=2 on GH200) — still
+  outstanding, independent of everything above.
+- Hybrid+NS fusion, boundary-aware fusion, 2D solver fusion, curvilinear
+  fusion — all still out of scope/deferred, unchanged from the previous
+  update.

@@ -138,7 +138,7 @@ contains
     real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, uy, uz
     real(8), dimension(sxr*sy*sz), shared           :: rhor, ur, vr, wr, pr
     real(8) rhol, ul, vl, wl, pl
-    real(8) :: flux(5), mui, utau_sum
+    real(8) :: flux(5), mui
     real(sp) fdx  ! sp intentional: sensor interpolation does not need double precision
     it = threadIdx%x
     jt = threadIdx%y
@@ -182,25 +182,25 @@ contains
           real(8) :: tau, utau
           call calc_tau_straight(mui, u(idx-io_v:idx+io_v+1), vy(i-io_v:i+io_v+1,j,k), wz(i-io_v:i+io_v+1,j,k), dx(i), tau, utau)
           flux(2) = flux(2) - tau
-          utau_sum = utau
+          flux(5) = flux(5) - utau
         end block
         block
           real(8) :: tau, utau
           call calc_tau_cross(mui, v(idx-io_v:idx+io_v+1), uy(idx-io_v:idx+io_v+1), dx(i), tau, utau)
           flux(3) = flux(3) - tau
-          utau_sum = utau_sum + utau
+          flux(5) = flux(5) - utau
         end block
         block
           real(8) :: tau, utau
           call calc_tau_cross(mui, w(idx-io_v:idx+io_v+1), uz(idx-io_v:idx+io_v+1), dx(i), tau, utau)
           flux(4) = flux(4) - tau
-          utau_sum = utau_sum + utau
+          flux(5) = flux(5) - utau
         end block
         block
           real(8) :: Tx, kTx
           Tx  = diff6_s(dx(i), -T(i-2,j,k)+T(i+3,j,k), T(i-1,j,k)-T(i+2,j,k), -T(i,j,k)+T(i+1,j,k))
           kTx = Cp_over_Pr * mui * Tx
-          flux(5) = flux(5) - (utau_sum + kTx)
+          flux(5) = flux(5) - kTx
         end block
       endif
       fdx = 0.50_sp * (sensor(i,j,k) + sensor(i+1,j,k))
@@ -248,7 +248,7 @@ contains
     real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, vx, vz
     real(8), dimension(sx*syr*sz), shared           :: rhor, ur, vr, wr, pr
     real(8) rhol, ul, vl, wl, pl
-    real(8) :: flux(5), mui, utau_sum
+    real(8) :: flux(5), mui
     real(sp) fdy  ! sp intentional: sensor interpolation does not need double precision
     it = threadIdx%x
     jt = threadIdx%y
@@ -294,25 +294,25 @@ contains
                wz(i,j,  k)+wz(i,j+1,k), ux(i,j,  k)+ux(i,j+1,k), &
                dy(j), tau, utau)
           flux(3) = flux(3) - tau
-          utau_sum = utau
+          flux(5) = flux(5) - utau
         end block
         block
           real(8) :: tau, utau
           call calc_tau_cross(mui, u(idx-io_v:idx+io_v+1), vx(idx-io_v:idx+io_v+1), dy(j), tau, utau)
           flux(2) = flux(2) - tau
-          utau_sum = utau_sum + utau
+          flux(5) = flux(5) - utau
         end block
         block
           real(8) :: tau, utau
           call calc_tau_cross(mui, w(idx-io_v:idx+io_v+1), vz(idx-io_v:idx+io_v+1), dy(j), tau, utau)
           flux(4) = flux(4) - tau
-          utau_sum = utau_sum + utau
+          flux(5) = flux(5) - utau
         end block
         block
           real(8) :: Ty, kTy
           Ty  = diff6_s(dy(j), -T(i,j-2,k)+T(i,j+3,k), T(i,j-1,k)-T(i,j+2,k), -T(i,j,k)+T(i,j+1,k))
           kTy = Cp_over_Pr * mui * Ty
-          flux(5) = flux(5) - (utau_sum + kTy)
+          flux(5) = flux(5) - kTy
         end block
       endif
       fdy = 0.50_sp * (sensor(i,j,k) + sensor(i,j+1,k))
@@ -360,7 +360,7 @@ contains
     real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, wx, wy
     real(8), dimension(sx*sy*szr), shared           :: rhor, ur, vr, wr, pr
     real(8) rhol, ul, vl, wl, pl
-    real(8) :: flux(5), mui, utau_sum
+    real(8) :: flux(5), mui
     real(sp) fdz  ! sp intentional: sensor interpolation does not need double precision
     it = threadIdx%x
     jt = threadIdx%y
@@ -406,25 +406,25 @@ contains
                ux(i,j,k  )+ux(i,j,k+1), vy(i,j,k  )+vy(i,j,k+1), &
                dz(k), tau, utau)
           flux(4) = flux(4) - tau
-          utau_sum = utau
+          flux(5) = flux(5) - utau
         end block
         block
           real(8) :: tau, utau
           call calc_tau_cross(mui, u(idx-io_v:idx+io_v+1), wx(idx-io_v:idx+io_v+1), dz(k), tau, utau)
           flux(2) = flux(2) - tau
-          utau_sum = utau_sum + utau
+          flux(5) = flux(5) - utau
         end block
         block
           real(8) :: tau, utau
           call calc_tau_cross(mui, v(idx-io_v:idx+io_v+1), wy(idx-io_v:idx+io_v+1), dz(k), tau, utau)
           flux(3) = flux(3) - tau
-          utau_sum = utau_sum + utau
+          flux(5) = flux(5) - utau
         end block
         block
           real(8) :: Tz, kTz
           Tz  = diff6_s(dz(k), -T(i,j,k-2)+T(i,j,k+3), T(i,j,k-1)-T(i,j,k+2), -T(i,j,k)+T(i,j,k+1))
           kTz = Cp_over_Pr * mui * Tz
-          flux(5) = flux(5) - (utau_sum + kTz)
+          flux(5) = flux(5) - kTz
         end block
       endif
       fdz = 0.50_sp * (sensor(i,j,k) + sensor(i,j,k+1))
