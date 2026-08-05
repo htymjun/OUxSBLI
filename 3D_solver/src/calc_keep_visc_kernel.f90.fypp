@@ -1,0 +1,324 @@
+#:include 'config.fypp'
+#:if not defined('VISC_ORDER')
+  #:set VISC_ORDER = ORDER
+#:endif
+! Fused convective (KEEP) + viscous flux kernel, one launch per direction
+! instead of two. Only meaningful for the exact configuration NSTGV/DHIT's
+! KEEP+NS build uses today: SCHEME='KEEP', VISC='NS', ORDER=VISC_ORDER=6,
+! no boundary (periodic, BC_X=BC_Y=BC_Z=False), no COMMZ. Every other
+! combination (SLAU/Hybrid, LES, BC_*=True, VISC_ORDER=4) keeps using the
+! existing separate calc_keep_*_in / calc_*v6_in kernels unchanged -- this
+! module is an empty no-op for those configs, so it never conflicts with
+! them and never runs untested branches.
+!
+! Rationale: calc_keep_x_in (calc_keep_kernel_internal.f90.fypp) and
+! calc_Ev6_in (calc_visc_high_internal.f90.fypp) both load rho/u/v/w/p/T (or
+! u/v/w) over the same overlapping x-halo into two independent shared-memory
+! tiles, and E/F/G is stored by the convective kernel then read-modified-
+! written by the viscous kernel purely because they are separate launches.
+! Here both are computed from ONE shared load pass and stored ONCE.
+!
+! Known risk (see calc_div.f90's own history): combining formerly-separate
+! kernels can regress register pressure/occupancy even when it cuts memory
+! traffic -- this must be measured (nsys/ncu), not assumed.
+#:if SCHEME == 'KEEP' and VISC == 'NS' and ORDER == 6 and VISC_ORDER == 6 and not BC_X and not BC_Y and not BC_Z and not COMMZ
+module calc_keep_visc_kernel_internal
+  use libm
+  use mod_globals, only : gamma, threadsE, threadsF, threadsG
+  use mod_constant, only : R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third, &
+                            Cp_over_Pr, one_sixty
+  implicit none
+  private
+  public calc_keepv_x_in, calc_keepv_y_in, calc_keepv_z_in
+  real(8), parameter :: one_24        = 1.d0 / 24.d0
+  real(8), parameter :: one_48        = 1.d0 / 48.d0
+  real(8), parameter :: one_60        = 1.d0 / 60.d0
+  real(8), parameter :: one_120       = 1.d0 / 120.d0
+  real(8), parameter :: one_240       = 1.d0 / 240.d0
+  real(8), parameter :: seven_twelfth = 7.d0 / 12.d0
+  integer, parameter :: io   = ${ORDER_IO}$
+  integer, parameter :: io_v = 2
+  integer(8), parameter :: id_acc = 0_8
+
+  interface KEEP
+    module procedure KEEP2, KEEP4, KEEP6
+  end interface KEEP
+contains
+  include 'calc_scheme_math.f90'
+  #:include 'calc_visc_cent.f90.fypp'
+
+
+  attributes(global) subroutine calc_keepv_x_in(nx, ny, nz, dx, dy, dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, vy, wz, E)
+    use mod_constant, only : Normal_x
+    integer, intent(in), value                 :: nx, ny, nz
+    real(8), intent(in), device, contiguous    :: dx(nx-1), dy(ny-1), dz(nz-1)
+    real(8), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: vy(nx,ny,nz) !< dv/dy at cell-center, precomputed by calc_div
+    real(8), intent(in), device, contiguous    :: wz(nx,ny,nz) !< dw/dz at cell-center, precomputed by calc_div
+    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
+    integer i, j, k, it, jt, kt
+    integer :: ii, i_base, idx, offset_yz
+    logical :: jk_in_range, jk_in_range_grad_y, jk_in_range_grad_z, interior
+    integer, parameter :: sx = threadsE%x + 2*io + 1
+    integer, parameter :: sy = threadsE%y
+    integer, parameter :: sz = threadsE%z
+    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp, uy, uz
+    real(8) :: flux(5), mui, utau_sum
+    it = threadIdx%x
+    jt = threadIdx%y
+    kt = threadIdx%z
+    j  = (blockIdx%y-1)*blockDim%y + jt + 1
+    k  = (blockIdx%z-1)*blockDim%z + kt + 1
+    i_base = (blockIdx%x-1)*blockDim%x
+    offset_yz = (jt-1) * sx + (kt-1) * sx * sy
+    jk_in_range        = (j >= 1 .and. j <= ny .and. k >= 1 .and. k <= nz)
+    jk_in_range_grad_y = (4 <= j .and. j <= ny-3 .and. k >= 1 .and. k <= nz)
+    jk_in_range_grad_z = (j >= 1 .and. j <= ny .and. 4 <= k .and. k <= nz-3)
+    do ii = it-io, threadsE%x+io+1, blockDim%x
+      i = i_base + ii
+      if (i >= 1 .and. i <= nx .and. jk_in_range) then
+        idx = ii + offset_yz
+        rho(idx) = Q_1(i,j,k);   u(idx) = Q_2(i,j,k)
+          v(idx) = Q_3(i,j,k);   w(idx) = Q_4(i,j,k)
+          p(idx) = Q_5(i,j,k); tmp(idx) =   T(i,j,k)
+        if (jk_in_range_grad_y) then
+          uy(idx) = (one_sixty * (-Q_2(i,j-3,k) + Q_2(i,j+3,k)) + 0.15d0 * (Q_2(i,j-2,k) - Q_2(i,j+2,k)) + 0.75d0 * (-Q_2(i,j-1,k) + Q_2(i,j+1,k))) * dy(j)
+        endif
+        if (jk_in_range_grad_z) then
+          uz(idx) = (one_sixty * (-Q_2(i,j,k-3) + Q_2(i,j,k+3)) + 0.15d0 * (Q_2(i,j,k-2) - Q_2(i,j,k+2)) + 0.75d0 * (-Q_2(i,j,k-1) + Q_2(i,j,k+1))) * dz(k)
+        endif
+      endif
+    enddo
+    call syncthreads()
+    i = (blockIdx%x-1)*blockDim%x + it
+    if (io+1 <= i .and. i <= nx-(io+1) .and. j <= ny-1 .and. k <= nz-1) then
+      idx = it + offset_yz
+      associate(uu => u)
+      flux = KEEP(id_acc, &
+                  rho(idx-io:idx+io+1), u(idx-io:idx+io+1), &
+                    v(idx-io:idx+io+1), w(idx-io:idx+io+1), &
+                   uu(idx-io:idx+io+1), p(idx-io:idx+io+1), &
+                  tmp(idx-io:idx+io+1), Normal_x)
+      end associate
+      ! narrower than the convective validity above: vy/wz are only valid
+      ! where calc_div_vy_6_in/calc_div_wz_6_in's own y/z-margin covers them
+      interior = (4 <= j .and. j <= ny-3 .and. 4 <= k .and. k <= nz-3)
+      if (interior) then
+        mui = interp6_s(mu(i-2,j,k)+mu(i+3,j,k), mu(i-1,j,k)+mu(i+2,j,k), mu(i,j,k)+mu(i+1,j,k))
+        block
+          real(8) :: tau, utau
+          call calc_tau_straight(mui, u(idx-io_v:idx+io_v+1), vy(i-io_v:i+io_v+1,j,k), wz(i-io_v:i+io_v+1,j,k), dx(i), tau, utau)
+          flux(2) = flux(2) - tau
+          utau_sum = utau
+        end block
+        block
+          real(8) :: tau, utau
+          call calc_tau_cross(mui, v(idx-io_v:idx+io_v+1), uy(idx-io_v:idx+io_v+1), dx(i), tau, utau)
+          flux(3) = flux(3) - tau
+          utau_sum = utau_sum + utau
+        end block
+        block
+          real(8) :: tau, utau
+          call calc_tau_cross(mui, w(idx-io_v:idx+io_v+1), uz(idx-io_v:idx+io_v+1), dx(i), tau, utau)
+          flux(4) = flux(4) - tau
+          utau_sum = utau_sum + utau
+        end block
+        block
+          real(8) :: Tx, kTx
+          ! T sourced from the shared tmp tile (already loaded for KEEP's
+          ! own energy term) instead of an independent global read -- a
+          ! dedup only available because KEEP already tiles T.
+          Tx  = diff6_s(dx(i), -tmp(idx-2)+tmp(idx+3), tmp(idx-1)-tmp(idx+2), -tmp(idx)+tmp(idx+1))
+          kTx = Cp_over_Pr * mui * Tx
+          flux(5) = flux(5) - (utau_sum + kTx)
+        end block
+      endif
+      E(i,j-1,k-1,:) = flux(:)
+    endif
+  end subroutine calc_keepv_x_in
+
+
+  attributes(global) subroutine calc_keepv_y_in(nx, ny, nz, dx, dy, dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, ux, wz, F)
+    use mod_constant, only : Normal_y
+    integer, intent(in), value                 :: nx, ny, nz
+    real(8), intent(in), device, contiguous    :: dx(nx-1), dy(ny-1), dz(nz-1)
+    real(8), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: ux(nx,ny,nz) !< du/dx at cell-center, precomputed by calc_div
+    real(8), intent(in), device, contiguous    :: wz(nx,ny,nz) !< dw/dz at cell-center, precomputed by calc_div
+    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
+    integer i, j, k, it, jt, kt
+    integer :: jj, j_base, idx, offset_xz
+    logical :: ik_in_range, ik_in_range_grad_x, ik_in_range_grad_z, interior
+    integer, parameter :: sx = threadsF%x
+    integer, parameter :: sy = threadsF%y + 2*io + 1
+    integer, parameter :: sz = threadsF%z
+    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp, vx, vz
+    real(8) :: flux(5), mui, utau_sum
+    it = threadIdx%x
+    jt = threadIdx%y
+    kt = threadIdx%z
+    i  = (blockIdx%x-1)*blockDim%x + it + 1
+    k  = (blockIdx%z-1)*blockDim%z + kt + 1
+    j_base = (blockIdx%y-1)*blockDim%y
+    offset_xz = (it-1) * sy + (kt-1) * sy * sx
+    ik_in_range        = (i >= 1 .and. i <= nx .and. k >= 1 .and. k <= nz)
+    ik_in_range_grad_x = (4 <= i .and. i <= nx-3 .and. k >= 1 .and. k <= nz)
+    ik_in_range_grad_z = (i >= 1 .and. i <= nx .and. 4 <= k .and. k <= nz-3)
+    do jj = jt-io, threadsF%y+io+1, blockDim%y
+      j = j_base + jj
+      if (ik_in_range .and. j >= 1 .and. j <= ny) then
+        idx = jj + offset_xz
+        rho(idx) = Q_1(i,j,k);   u(idx) = Q_2(i,j,k)
+          v(idx) = Q_3(i,j,k);   w(idx) = Q_4(i,j,k)
+          p(idx) = Q_5(i,j,k); tmp(idx) =   T(i,j,k)
+        if (ik_in_range_grad_x) then
+          vx(idx) = (one_sixty * (-Q_3(i-3,j,k) + Q_3(i+3,j,k)) + 0.15d0 * (Q_3(i-2,j,k) - Q_3(i+2,j,k)) + 0.75d0 * (-Q_3(i-1,j,k) + Q_3(i+1,j,k))) * dx(i)
+        endif
+        if (ik_in_range_grad_z) then
+          vz(idx) = (one_sixty * (-Q_3(i,j,k-3) + Q_3(i,j,k+3)) + 0.15d0 * (Q_3(i,j,k-2) - Q_3(i,j,k+2)) + 0.75d0 * (-Q_3(i,j,k-1) + Q_3(i,j,k+1))) * dz(k)
+        endif
+      endif
+    enddo
+    call syncthreads()
+    j = (blockIdx%y-1)*blockDim%y + jt
+    if (io+1 <= j .and. j <= ny-(io+1) .and. i <= nx-1 .and. k <= nz-1) then
+      idx = jt + offset_xz
+      associate(vv => v)
+      flux = KEEP(id_acc, &
+                  rho(idx-io:idx+io+1), u(idx-io:idx+io+1), &
+                    v(idx-io:idx+io+1), w(idx-io:idx+io+1), &
+                   vv(idx-io:idx+io+1), p(idx-io:idx+io+1), &
+                  tmp(idx-io:idx+io+1), Normal_y)
+      end associate
+      interior = (4 <= i .and. i <= nx-3 .and. 4 <= k .and. k <= nz-3)
+      if (interior) then
+        mui = interp6_s(mu(i,j-2,k)+mu(i,j+3,k), mu(i,j-1,k)+mu(i,j+2,k), mu(i,j,k)+mu(i,j+1,k))
+        block
+          real(8) :: tau, utau
+          call calc_tau_straight_s(mui, v(idx-io_v:idx+io_v+1), &
+               wz(i,j-2,k)+wz(i,j+3,k), ux(i,j-2,k)+ux(i,j+3,k), &
+               wz(i,j-1,k)+wz(i,j+2,k), ux(i,j-1,k)+ux(i,j+2,k), &
+               wz(i,j,  k)+wz(i,j+1,k), ux(i,j,  k)+ux(i,j+1,k), &
+               dy(j), tau, utau)
+          flux(3) = flux(3) - tau
+          utau_sum = utau
+        end block
+        block
+          real(8) :: tau, utau
+          call calc_tau_cross(mui, u(idx-io_v:idx+io_v+1), vx(idx-io_v:idx+io_v+1), dy(j), tau, utau)
+          flux(2) = flux(2) - tau
+          utau_sum = utau_sum + utau
+        end block
+        block
+          real(8) :: tau, utau
+          call calc_tau_cross(mui, w(idx-io_v:idx+io_v+1), vz(idx-io_v:idx+io_v+1), dy(j), tau, utau)
+          flux(4) = flux(4) - tau
+          utau_sum = utau_sum + utau
+        end block
+        block
+          real(8) :: Ty, kTy
+          Ty  = diff6_s(dy(j), -tmp(idx-2)+tmp(idx+3), tmp(idx-1)-tmp(idx+2), -tmp(idx)+tmp(idx+1))
+          kTy = Cp_over_Pr * mui * Ty
+          flux(5) = flux(5) - (utau_sum + kTy)
+        end block
+      endif
+      F(i-1,j,k-1,:) = flux(:)
+    endif
+  end subroutine calc_keepv_y_in
+
+
+  attributes(global) subroutine calc_keepv_z_in(nx, ny, nz, dx, dy, dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, ux, vy, G)
+    use mod_constant, only : Normal_z
+    integer, intent(in), value                 :: nx, ny, nz
+    real(8), intent(in), device, contiguous    :: dx(nx-1), dy(ny-1), dz(nz-1)
+    real(8), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: ux(nx,ny,nz) !< du/dx at cell-center, precomputed by calc_div
+    real(8), intent(in), device, contiguous    :: vy(nx,ny,nz) !< dv/dy at cell-center, precomputed by calc_div
+    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    integer i, j, k, it, jt, kt
+    integer :: kk, k_base, idx, offset_xy
+    logical :: ij_in_range, ij_in_range_grad_x, ij_in_range_grad_y, interior
+    integer, parameter :: sx = threadsG%x
+    integer, parameter :: sy = threadsG%y
+    integer, parameter :: sz = threadsG%z + 2*io + 1
+    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp, wx, wy
+    real(8) :: flux(5), mui, utau_sum
+    it = threadIdx%x
+    jt = threadIdx%y
+    kt = threadIdx%z
+    i  = (blockIdx%x-1)*blockDim%x + it + 1
+    j  = (blockIdx%y-1)*blockDim%y + jt + 1
+    k_base = (blockIdx%z-1)*blockDim%z
+    offset_xy = (jt-1) * sz + (it-1) * sz * sy
+    ij_in_range        = (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny)
+    ij_in_range_grad_x = (4 <= i .and. i <= nx-3 .and. j >= 1 .and. j <= ny)
+    ij_in_range_grad_y = (i >= 1 .and. i <= nx .and. 4 <= j .and. j <= ny-3)
+    do kk = kt-io, threadsG%z+io+1, blockDim%z
+      k = k_base + kk
+      if (ij_in_range .and. k >= 1 .and. k <= nz) then
+        idx = kk + offset_xy
+        rho(idx) = Q_1(i,j,k);   u(idx) = Q_2(i,j,k)
+          v(idx) = Q_3(i,j,k);   w(idx) = Q_4(i,j,k)
+          p(idx) = Q_5(i,j,k); tmp(idx) =   T(i,j,k)
+        if (ij_in_range_grad_x) then
+          wx(idx) = (one_sixty * (-Q_4(i-3,j,k) + Q_4(i+3,j,k)) + 0.15d0 * (Q_4(i-2,j,k) - Q_4(i+2,j,k)) + 0.75d0 * (-Q_4(i-1,j,k) + Q_4(i+1,j,k))) * dx(i)
+        endif
+        if (ij_in_range_grad_y) then
+          wy(idx) = (one_sixty * (-Q_4(i,j-3,k) + Q_4(i,j+3,k)) + 0.15d0 * (Q_4(i,j-2,k) - Q_4(i,j+2,k)) + 0.75d0 * (-Q_4(i,j-1,k) + Q_4(i,j+1,k))) * dy(j)
+        endif
+      endif
+    enddo
+    call syncthreads()
+    k = (blockIdx%z-1)*blockDim%z + kt
+    if (io+1 <= k .and. k <= nz-(io+1) .and. i <= nx-1 .and. j <= ny-1) then
+      idx = kt + offset_xy
+      associate(ww => w)
+      flux = KEEP(id_acc, &
+                  rho(idx-io:idx+io+1), u(idx-io:idx+io+1), &
+                    v(idx-io:idx+io+1), w(idx-io:idx+io+1), &
+                   ww(idx-io:idx+io+1), p(idx-io:idx+io+1), &
+                  tmp(idx-io:idx+io+1), Normal_z)
+      end associate
+      interior = (4 <= i .and. i <= nx-3 .and. 4 <= j .and. j <= ny-3)
+      if (interior) then
+        mui = interp6_s(mu(i,j,k-2)+mu(i,j,k+3), mu(i,j,k-1)+mu(i,j,k+2), mu(i,j,k)+mu(i,j,k+1))
+        block
+          real(8) :: tau, utau
+          call calc_tau_straight_s(mui, w(idx-io_v:idx+io_v+1), &
+               ux(i,j,k-2)+ux(i,j,k+3), vy(i,j,k-2)+vy(i,j,k+3), &
+               ux(i,j,k-1)+ux(i,j,k+2), vy(i,j,k-1)+vy(i,j,k+2), &
+               ux(i,j,k  )+ux(i,j,k+1), vy(i,j,k  )+vy(i,j,k+1), &
+               dz(k), tau, utau)
+          flux(4) = flux(4) - tau
+          utau_sum = utau
+        end block
+        block
+          real(8) :: tau, utau
+          call calc_tau_cross(mui, u(idx-io_v:idx+io_v+1), wx(idx-io_v:idx+io_v+1), dz(k), tau, utau)
+          flux(2) = flux(2) - tau
+          utau_sum = utau_sum + utau
+        end block
+        block
+          real(8) :: tau, utau
+          call calc_tau_cross(mui, v(idx-io_v:idx+io_v+1), wy(idx-io_v:idx+io_v+1), dz(k), tau, utau)
+          flux(3) = flux(3) - tau
+          utau_sum = utau_sum + utau
+        end block
+        block
+          real(8) :: Tz, kTz
+          Tz  = diff6_s(dz(k), -tmp(idx-2)+tmp(idx+3), tmp(idx-1)-tmp(idx+2), -tmp(idx)+tmp(idx+1))
+          kTz = Cp_over_Pr * mui * Tz
+          flux(5) = flux(5) - (utau_sum + kTz)
+        end block
+      endif
+      G(i-1,j-1,k,:) = flux(:)
+    endif
+  end subroutine calc_keepv_z_in
+end module calc_keep_visc_kernel_internal
+#:else
+module calc_keep_visc_kernel_internal
+end module calc_keep_visc_kernel_internal
+#:endif

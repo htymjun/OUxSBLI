@@ -55,7 +55,7 @@ Each case directory contains a **`config.fypp`** file that declares all compile-
 
 ```python
 #:set VISC    = 'NS'      # 'Euler', 'NS', 'LES'
-#:set SCHEME  = 'SLAU'    # 'KEEP', 'SLAU', 'Roe', 'Hybrid'
+#:set SCHEME  = 'SLAU'    # 'KEEP', 'SLAU', 'Hybrid'
 #:set ORDER   = 6         # 2, 4, 6  (convective + viscous stencil order)
 #:set TVD     = 'hybrid'  # 'none', 'tvd', 'hybrid'
 #:set RESCALE = True       # True → SBLI reference-state rescaling
@@ -81,12 +81,12 @@ Source files with the `.f90.fypp` extension are **templates**; CMake runs `fypp 
 | `3D_solver/src/calc_time_dev.f90.fypp` | RK time-stepping orchestration |
 | `3D_solver/src/calc_keep_kernel.f90.fypp` | KEEP convective kernel |
 | `3D_solver/src/calc_slau_kernel.f90.fypp` | SLAU convective kernel |
-| `3D_solver/src/calc_roe_kernel.f90.fypp` | Roe convective kernel |
 | `3D_solver/src/calc_hybrid_kernel.f90.fypp` | Hybrid KEEP↔SLAU kernel |
 | `3D_solver/src/calc_keep_kernel_internal.f90.fypp` | Interior-only KEEP variant |
 | `3D_solver/src/calc_slau_kernel_internal.f90.fypp` | Interior-only SLAU variant |
-| `3D_solver/src/calc_roe_kernel_internal.f90.fypp` | Interior-only Roe variant |
 | `3D_solver/src/calc_hybrid_kernel_internal.f90.fypp` | Interior-only Hybrid variant |
+| `3D_solver/src/calc_keep_visc_kernel.f90.fypp` | Fused KEEP conv + NS visc kernel (internal-only, see below) |
+| `3D_solver/src/calc_slau_visc_kernel.f90.fypp` | Fused SLAU conv + NS visc kernel (internal-only, see below) |
 | `3D_solver/src/calc_visc2.f90.fypp` | 2nd-order viscous kernels |
 | `3D_solver/src/calc_visc_high.f90.fypp` | 4th/6th-order viscous kernels (`VISC_ORDER`-controlled), boundary-aware (interior/fallback branch per point) |
 | `3D_solver/src/calc_visc_high_internal.f90.fypp` | Interior-only 4th/6th-order viscous variant (used where a direction has no BC, i.e. periodic) |
@@ -195,10 +195,60 @@ Available cases:
 |--------|-------|----------|
 | KEEP (Kinetic Energy & Entropy Preserving) | `calc_keep_kernel.f90.fypp`, `calc_keep_kernel_internal.f90.fypp` | Smooth vortical flows (TGV, KHI) |
 | SLAU (Simple Low-dissipation AUSM) | `calc_slau_kernel.f90.fypp`, `calc_slau_kernel_internal.f90.fypp` | Compressible turbulence with shocks (SBLI, TBL) |
-| Roe | `calc_roe_kernel.f90.fypp`, `calc_roe_kernel_internal.f90.fypp` | Supersonic/hypersonic discontinuities |
 | Hybrid (KEEP↔SLAU via Ducros sensor) | `calc_hybrid_kernel.f90.fypp`, `calc_hybrid_kernel_internal.f90.fypp` | Mixed smooth/shocked regions |
 
 Viscous discretization: `calc_visc2.f90.fypp` (Gaitonde & Visbal 2nd-order, `VISC_ORDER=2`) or `calc_visc_high.f90.fypp` + `calc_visc_high_internal.f90.fypp` (4th/6th-order, `VISC_ORDER=4` or `6`).
+
+### Fused Convective+Viscous Kernels (KEEP+NS, SLAU+NS)
+
+For the narrow but real configuration `VISC == 'NS'`, `ORDER == VISC_ORDER
+== 6`, fully periodic (`not BC_X and not BC_Y and not BC_Z`), `not COMMZ`,
+and `SCHEME in ('KEEP', 'SLAU')`, `calc_flux_base.f90.fypp`'s
+`fused_keepv`/`fused_conv_visc` guard dispatches to a single fused kernel per
+sweep direction (`calc_keepv_x/y/z_in` from `calc_keep_visc_kernel.f90.fypp`,
+or `calc_slauv_x/y/z_in` from `calc_slau_visc_kernel.f90.fypp`) instead of
+two separate launches (`calc_conv` + `calc_${dir}v6_in`). This eliminates a
+global-memory round-trip through the E/F/G flux arrays: the convective and
+viscous kernels used to independently load overlapping shared-memory tiles
+of the same rho/u/v/w/p(/T) halo and the viscous kernel then read-modified-
+wrote the flux array the convective kernel had just written; the fused
+kernel loads once and stores once. Both fused kernels `#:include
+'calc_visc_cent.f90.fypp'` for the shared `interp6_s`/`diff6_s`/
+`calc_tau_straight[_s]`/`calc_tau_cross` viscous math — this part is
+scheme-independent (the same NS stress tensor regardless of which convective
+scheme produced the flux) and copy-identical between the two files.
+
+`SCHEME=='KEEP'` and `SCHEME=='SLAU'` differ enough that the fusion isn't a
+blind copy-paste between the two kernel files:
+- KEEP's own convective kernel already tiles `T` (needed for its own energy
+  term), so `calc_keep_visc_kernel.f90.fypp` reuses that tile for the
+  viscous heat-flux term for free. SLAU never needs `T` convectively, and
+  `calc_slau_visc_kernel.f90.fypp` deliberately does **not** add a new
+  shared-memory tile for it — SLAU already carries more shared arrays than
+  KEEP (`rho,u,v,w,p` + `rhor,ur,vr,wr,pr` = 10, before even adding this
+  fusion's cross-derivative tiles, vs. KEEP's `rho,u,v,w,p,tmp` = 6) — so `T`
+  (like `mu`) is read straight from DRAM per-point instead.
+- SLAU's own reconstruction step (state values → left/right states) would,
+  in the unfused kernel, overwrite the raw primitive tile with the left
+  state before calling `SLAU()`. The fused kernel computes the viscous
+  stress/heat-flux terms from the **raw** tile first and keeps the
+  reconstructed left state in local scalars rather than writing it back —
+  so the overwrite that motivated this ordering in the first place never
+  happens at all.
+- `calc_slau_visc_kernel.f90.fypp` locally renames its own reconstruction
+  routines (`interp2/4/6` → `recon2/4/6`) — `calc_visc_cent.f90.fypp` already
+  defines a same-named `interp${N}$` *function* (used inside
+  `calc_tau_straight`/`calc_tau_cross`), which collides with SLAU's own
+  same-named reconstruction *subroutine* once both are `#:include`d into one
+  module. KEEP's fused kernel never hit this, since KEEP has no analogous
+  reconstruction step to begin with.
+
+Both fused kernels are internal-only (no boundary-aware analogue exists) and
+gated to `ORDER == VISC_ORDER == 6` specifically. `SCHEME == 'Hybrid'` is not
+fused: it would need the same reconstruction-overwrite handling as SLAU
+*plus* correct viscous-stress computation under both of its per-point
+KEEP/SLAU sensor branches, and no periodic Hybrid+NS case exists today to
+benefit from or validate it against.
 
 ### Cell-Center Velocity Gradients (`ux`, `vy`, `wz`)
 
@@ -238,7 +288,7 @@ All compile-time scheme/method choices live in `<CASE>/config.fypp`. The fypp pr
 | Variable | Values | Effect |
 |----------|--------|--------|
 | `VISC` | `'Euler'`, `'NS'`, `'LES'` | Physics model |
-| `SCHEME` | `'KEEP'`, `'SLAU'`, `'Roe'`, `'Hybrid'` | Convective flux scheme |
+| `SCHEME` | `'KEEP'`, `'SLAU'`, `'Hybrid'` | Convective flux scheme |
 | `ORDER` | `2`, `4`, `6` | Spatial accuracy (convective + viscous) |
 | `VISC_ORDER` | `2`, `4`, `6` | Override viscous stencil order (defaults to `ORDER`) |
 | `TVD` | `'none'`, `'tvd'`, `'hybrid'` | TVD limiter for reconstruction |
@@ -269,7 +319,7 @@ This file is **not** preprocessed by fypp. It holds:
 | `id_tvd` (integer) | no TVD | tvd | hybrid |
 | `id_slau` (integer) | SLAU | HRSLAU2 | — |
 | `id_rescale` (integer) | off | on | — |
-| `id_scheme` | integer(2)=KEEP | real(2)=SLAU | real(4)=Roe / real(8)=Hybrid |
+| `id_scheme` | integer(2)=KEEP | real(2)=SLAU | real(8)=Hybrid |
 | `id_bc_x/y/z` (integer) | periodic | wall/inflow | — |
 
 The **value** of these parameters is always 0; only the **type kind** matters for compile-time dispatch. `id_recal` (restart flag) is a Fortran `logical` (`.true.`/`.false.`).
@@ -337,13 +387,13 @@ For 2D cases:
 * From an occupancy perspective, the subroutines invoked within `calc_flux_base.f90` should not be executed on separate streams.
 * `calc_flux_base.f90` and `calc_steps.f90` are the main bottleneck. You should optimize them.
 * `calc_flux_base.f90` calls `calc_*_kernel.f90`, `calc_*_kernel_internal.f90`, `calc_visc*.f90`, and `calc_div.f90` (runs once per RK stage, right after `calc_quantities_T_3D`, for `VISC_ORDER>2`). They are the main bottleneck.
-* Roe scheme is not used. KEEP, SLAU, Hybrid schemes should be optimized.
+* `3D_solver/src/roe/` holds the retired Roe kernel (`calc_roe_kernel.f90.fypp`, `calc_roe_kernel_internal.f90.fypp`, `calc_roe_3d.f90`) — kept for reference, not registered in `CMakeLists.txt`'s `_SHARED_FYPP` list, so it is never compiled.
 * `id_accuracy` controls ghost-cell count for both convective and viscous stencils.
 * Do not add `contiguous` and `shared` attributes when passing shared memory as an argument.
 * `cpu_gpu_mpi.f90` will be modified in the future.
 * STZ case exists specifically to validate the z-direction halo exchange (COMMZ=True, BC_Z=True); more validation and 6-point stencil support are still required.
 * When modifying `.f90.fypp` templates, always verify the generated output in `build/` for all affected cases — a fypp condition that looks correct may silently produce wrong code for one combination of config variables. In particular, no current case sets `VISC_ORDER=4` for an NS/LES build (all NS/LES cases use `ORDER=6` or `2`), so that branch of every viscous-kernel template only gets exercised by deliberately overriding `VISC_ORDER` in a case's `config.fypp` and rebuilding — do this before trusting changes to the `VISC_ORDER==4` branches.
-* `calc_hybrid.f90`'s `calc_Ducros` shock sensor (used by SLAU/Roe/Hybrid schemes) recomputes its own full velocity-gradient tensor via always-2nd-order central differences, independent of `calc_div`'s higher-order `ux,vy,wz` — reusing `calc_div`'s output there would change the sensor's numerical values (mixed-order dilatation vs. vorticity) and needs a fallback for the edge band `calc_div` doesn't cover, so it hasn't been done; flagged here as a known optimization candidate for SLAU/Hybrid NS/LES cases (currently: SBLI).
+* `calc_hybrid.f90`'s `calc_Ducros` shock sensor (used by SLAU/Hybrid schemes) recomputes its own full velocity-gradient tensor via always-2nd-order central differences, independent of `calc_div`'s higher-order `ux,vy,wz` — reusing `calc_div`'s output there would change the sensor's numerical values (mixed-order dilatation vs. vorticity) and needs a fallback for the edge band `calc_div` doesn't cover, so it hasn't been done; flagged here as a known optimization candidate for SLAU/Hybrid NS/LES cases (currently: SBLI).
 * Nsight Compute profiling captures live in `3D_solver/nsys_ncu/*.ncu-rep` (open with `ncu --import <file> --print-summary per-kernel`, or the `.csv` triage exports); use these before speculating about kernel performance.
 
 ## Strict Tooling Rules
