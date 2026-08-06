@@ -31,3 +31,10 @@ data
 tmp
 ouxsbli/__pycache__
 ouxsbli/tests/tmp
+__pycache__
+recal
+nohup.out
+# reference data and its plotting scripts must survive the *.dat rule above;
+# generated figures in ref/ stay ignored via *.png
+!2D_solver/*/ref/*.dat
+!2D_solver/*/ref/*.py
