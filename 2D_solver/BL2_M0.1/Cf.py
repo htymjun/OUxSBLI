@@ -24,7 +24,7 @@ u0   = M0 * np.sqrt(gamma * R * T0)
 q_inf = 0.5 * rho0 * u0**2   # freestream dynamic pressure (Cf normalization)
 
 # ------------------------------------------------------------
-# Sutherland's law: mu(T) = SUTHERLAND_C * T^1.5 / (T + S)
+# Sutherland's law: mu(T) = SUTHERLAND_C * T**1.5 / (T + S)
 # ------------------------------------------------------------
 SUTHERLAND_MU_REF = 1.716e-5   # [Pa s] reference viscosity at T_ref
 SUTHERLAND_T_REF  = 273.2       # [K]
@@ -118,11 +118,6 @@ def cf_eckert(x):
     cf_star = 0.664 / np.sqrt(Re_x_star)
     return cf_star * (rho_star / rho0)
 
-print(f"[theory] T0 = {T0:.3f} K,  Taw = {Taw:.3f} K,  T* = {T_star:.3f} K")
-print(f"[theory] mu(T0) = {mu0:.4e} Pa s,  mu(T*) = {mu_star:.4e} Pa s")
-print(f"[theory] compressibility correction on Cf (T* vs T0): "
-      f"{100.0 * (np.sqrt(mu0 / mu_star) * (rho_star / rho0) - 1.0):+.3f} %")
-
 # ============================================================
 # 3. Plot: DNS Cf(x) vs. theoretical Cf(x)  (x-axis normalized by Xsh)
 # ============================================================
@@ -153,14 +148,7 @@ if __name__ == "__main__":
     ax.plot(x_over_xsh, cf_th_eckert, color="k", ls="--", lw=2.0,
             label="Eckert's Reference\nTemperature Method")
     ax.plot(x_over_xsh, cf_th_incomp, color="tab:red", ls=":", lw=2.0,
-            label="Incompressible Blasius")  # "Incompressible Blasius (properties at $T_0$)"
-
-    # --- relative error (DNS vs Eckert theory) ---
-    rel_err = (cf_dns_plot - cf_th_eckert) / cf_th_eckert * 100.0
-    print(f"[compare] max |relative error| DNS vs Eckert theory: "
-          f"{np.max(np.abs(rel_err)):.2f} %  "
-          f"(mean {np.mean(np.abs(rel_err)):.2f} %) "
-          f"over X/Xsh in [{x_over_xsh[0]:.3f}, {x_over_xsh[-1]:.3f}]")
+            label="Incompressible Blasius")
 
     ax.set_xlim(0, 2)
     ax.set_ylim(bottom=0)
