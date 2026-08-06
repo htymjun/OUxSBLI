@@ -116,21 +116,21 @@ REFERENCE_DATA = [
     {
         "path": "./data_Degrez_Cf.dat",
         "label": "Degrez et al. (numerical)",
-        "style": dict(marker="o", ls="--", color="k", lw=1.0, ms=3),
+        "style": dict(marker="o", ls="none", mfc="none", color="k", ms=6, mew=2.0), #lw=2.0#ls"--"#ms=5
         "x_scale": 1.25,
     },
     {
         "path": "./data_Moro_Cf.dat",
         "label": "Moro et al.",
-        "style": dict(marker="s", ls="-.", color="tab:red", lw=1.0, ms=3),
+        "style": dict(marker="x", ls="none", color="tab:red", ms=6, mew=2.0), #ls="-."
         "x_scale": 1.25,
     },
-    {
-        "path": "./data_Vila-Pérez_Cf.dat",
-        "label": "Vila-Pérez et al.",
-        "style": dict(marker="^", ls=":", color="tab:green", lw=1.0, ms=3),
-        "x_scale": 1.25,
-    },
+    # {
+    #     "path": "./data_Vila-Pérez_Cf.dat",
+    #     "label": "Vila-Pérez et al.",
+    #     "style": dict(marker="^", ls=":", color="tab:green", lw=2.0, ms=5),
+    #     "x_scale": 1.25,
+    # },
 ]
 
 if __name__ == "__main__":
