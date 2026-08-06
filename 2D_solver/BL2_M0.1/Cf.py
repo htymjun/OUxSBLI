@@ -24,7 +24,7 @@ u0   = M0 * np.sqrt(gamma * R * T0)
 q_inf = 0.5 * rho0 * u0**2   # freestream dynamic pressure (Cf normalization)
 
 # ------------------------------------------------------------
-# Sutherland's law: mu(T) = SUTHERLAND_C * T**1.5 / (T + S)
+# Sutherland's law: mu(T) = SUTHERLAND_C * T^1.5 / (T + S)
 # ------------------------------------------------------------
 SUTHERLAND_MU_REF = 1.716e-5   # [Pa s] reference viscosity at T_ref
 SUTHERLAND_T_REF  = 273.2       # [K]
@@ -108,15 +108,15 @@ def cf_blasius_incompressible(x):
 
 # --- (b) Eckert reference-temperature method (adiabatic wall) ---
 #   T* = Te + (0.5 + 0.22 r)(Taw - Te),   here Te = T0 (edge = freestream)
-T_star   = T0 + (0.5 + 0.22 * rf) * (Taw - T0)
-mu_star  = sutherland_mu(T_star)
-rho_star = p0 / (R * T_star)
+# T_star   = T0 + (0.5 + 0.22 * rf) * (Taw - T0)
+# mu_star  = sutherland_mu(T_star)
+# rho_star = p0 / (R * T_star)
 
-def cf_eckert(x):
-    """Cf(x) via Eckert reference-temperature method (adiabatic wall)."""
-    Re_x_star = rho_star * u0 * x / mu_star
-    cf_star = 0.664 / np.sqrt(Re_x_star)
-    return cf_star * (rho_star / rho0)
+# def cf_eckert(x):
+#     """Cf(x) via Eckert reference-temperature method (adiabatic wall)."""
+#     Re_x_star = rho_star * u0 * x / mu_star
+#     cf_star = 0.664 / np.sqrt(Re_x_star)
+#     return cf_star * (rho_star / rho0)
 
 # ============================================================
 # 3. Plot: DNS Cf(x) vs. theoretical Cf(x)  (x-axis normalized by Xsh)
@@ -138,17 +138,17 @@ if __name__ == "__main__":
     x_m = x_mm_plot * blt
 
     cf_th_incomp = cf_blasius_incompressible(x_m)
-    cf_th_eckert = cf_eckert(x_m)
+    # cf_th_eckert = cf_eckert(x_m)
 
     # --- normalize x-axis by Xsh ---
     x_over_xsh = x_mm_plot / Xsh_mm
 
     ax.plot(x_over_xsh, cf_dns_plot, color="tab:blue", lw=2.0,
             label=case["label"])
-    ax.plot(x_over_xsh, cf_th_eckert, color="k", ls="--", lw=2.0,
-            label="Eckert's Reference\nTemperature Method")
-    ax.plot(x_over_xsh, cf_th_incomp, color="tab:red", ls=":", lw=2.0,
-            label="Incompressible Blasius")
+    # ax.plot(x_over_xsh, cf_th_eckert, color="k", ls=":", lw=2.0,
+    #         label="Eckert's Reference\nTemperature Method")
+    ax.plot(x_over_xsh, cf_th_incomp, color="tab:red", ls="--", lw=2.0,
+            label="Blasius") #Incompressible Blasius
 
     ax.set_xlim(0, 2)
     ax.set_ylim(bottom=0)
@@ -179,7 +179,7 @@ if __name__ == "__main__":
     ax.yaxis.set_major_formatter(y_formatter)
     ax.yaxis.get_offset_text().set_fontsize(25)
 
-    ax.legend(frameon=False, fontsize=18, loc="upper right")
+    ax.legend(frameon=False, fontsize=25, loc="upper right")
     fig.tight_layout()
     fig.savefig("cf_BL2_theory_compare.png", dpi=200)
     print("Saved: cf_BL2_theory_compare.png")
