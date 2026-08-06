@@ -9,6 +9,7 @@ description = "Python API for the OUxSBLI CUDA Fortran CFD solver"
 requires-python = ">=3.10"
 dependencies = [
     "numpy",
+    "scipy",
     "fypp",
     "vtk",
 ]

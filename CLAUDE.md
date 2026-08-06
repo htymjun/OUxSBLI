@@ -169,12 +169,26 @@ Available cases:
 
 | Case | Description |
 |------|-------------|
-| BL   | Supersonic laminar boundary layer |
+| BL   | Laminar flat-plate boundary layer (M=0.1, validated vs. Blasius) |
 | DSL  | Double shear layer |
 | EVC  | Euler vortex convection (grid-convergence study) |
 | OS   | 2D oblique shock (M=2, θ=8°, SLAU, Euler) |
-| SBLI | 2D shock-boundary layer interaction |
+| SBLI | Oblique shock / laminar BL interaction (M=2.15, β=30.8°, Re_Xsh≈1e5) |
 | ST   | Sod shock tube |
+
+BL and SBLI share the same flat-plate setup: a uniform freestream over a
+symmetry wall upstream of the leading edge and a no-slip wall downstream of it,
+with the inlet column left frozen at its `set_init` state (the interior-only RK
+kernels never touch i=1, and neither case defines an inlet BC). In SBLI that
+frozen column is also the oblique-shock generator — above the incident-shock
+trace it holds the analytic post-shock state. Both place the leading edge at
+x = 0 via the `i_LE` constant in `mod_globals.f90`, so wall quantities can be
+compared against theory and reference data without an origin offset.
+
+Digitized reference data for SBLI (Moro et al., Degrez et al., Vila-Perez et
+al.) lives in `2D_solver/SBLI/ref/`, together with the `Cf_all.py` / `Cp_all.py`
+overlay scripts. Note that `.gitignore` excludes `2D_solver/*/data*` and `*.dat`
+globally; `ref/` is kept tracked by an explicit `!2D_solver/*/ref/**` negation.
 
 ### 3D Cartesian Cases
 
@@ -299,21 +313,36 @@ pytest ouxsbli/tests/
 | `test_evc.py` | Euler vortex convergence — KEEP 2nd/4th/6th, SLAU 2nd; expected order ≥1.5/3.5 |
 | `test_os.py` | 2D oblique shock — pre/post state vs. Rankine-Hugoniot (tol 2%/5%) |
 | `test_corn.py` | 3D_solver_curv/CORN — pressure and density ratios vs. θ-β-M theory (tol 5%) |
+| `test_bl.py` | 2D laminar BL — Cf and u-profile vs. Blasius (~3 min) |
+| `test_sbli.py` | 2D shock/BL interaction — Cp and separation bubble vs. Moro et al. (~8 min, `slow`) |
+
+`test_sbli.py` carries the `slow` marker; deselect it with `pytest -m "not slow"`.
+Both new tests patch the case down from its production settings (BL raises dt
+~17x to CFL≈0.18; SBLI coarsens to 276×257 and raises dt 10x) and assert a
+quasi-steady guard between the last two snapshots before comparing, so a
+failure to converge reports itself instead of surfacing as a tolerance miss.
+`test_bl.py` normalises by the *local* boundary-layer edge state rather than the
+nominal freestream — displacement growth accelerates the flow ~2% in the 12 mm
+tall domain, which is case geometry rather than solver error.
 
 Analytical helpers in `ouxsbli/tests/utils/`:
 - `oblique_shock.py` — `beta_from_theta()`, `post_shock_state()` via bisection on the θ-β-M relation
 - `sod_exact.py` — exact Riemann solver for the Sod shock tube
 - `vtk_reader.py` — VTK output reader
 
+Post-processing shared by the tests and the user-facing plotting scripts lives
+in `ouxsbli/analysis/`:
+- `wall.py` — Sutherland viscosity, one-sided wall derivative, `compute_cf_cp()` / `wall_coeffs_from_vtr()`, `edge_state()`, `find_zero_crossings()`, `load_reference()`
+- `blasius.py` — RK4-integrated Blasius similarity solution (`fprime()`, `eta()`, `cf_blasius()`); accurate to ~1e-5, unlike the coarse `fp_tab` in `src/set_compressible_bl.f90`, which is an IC seed only and deviates by up to 7%
+
 ## Tutorials
 
-`tutorials/ouxsbli_bl/` — Supersonic flat-plate boundary layer (M=2, dimensional parameters, wall-normal grid stretching, Riemann-invariant top BC). Run like any 2D case:
-
-```bash
-cd tutorials/ouxsbli_bl
-cmake -B build && cmake --build build -j
-cd build && mpirun -n 1 ./a.out
-```
+`tutorials/test.py` generates `tutorials/ouxsbli_bl/` — a patched copy of the
+`2D_solver/BL` flat-plate case (dimensional parameters, wall-normal grid
+stretching, Riemann-invariant top BC) built through the `ouxsbli.Case` API. The
+directory is not checked in; run the script to create it. Note that 2D output
+requires **two** MPI ranks (the even rank computes, the odd rank writes VTK), so
+`mpirun -n 1` produces no files.
 
 ## Adding a New Test Case
 

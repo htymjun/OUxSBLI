@@ -12,6 +12,11 @@ def pytest_configure(config):
         "integration: marks tests that build and run the CUDA Fortran solver "
         "(requires NVIDIA HPC SDK and a CUDA-capable GPU)",
     )
+    config.addinivalue_line(
+        "markers",
+        "slow: long-running integration case (~10-30 min); "
+        'deselect with -m "not slow"',
+    )
 
 
 @pytest.fixture(scope="session")
