@@ -5,17 +5,14 @@ from myvtk import getGrid, getQ, myParams
 
 myParams()
 
-# ============================================================
-# 1. BL2 case parameters (must match mod_globals.f90)
-# ============================================================
-R      = 287.15          # specific gas constant [J/(kg K)]  <- BL2 value
+R      = 287.15
 gamma  = 1.4
 M0     = 2.15
-p_tot  = 25.0e3           # [Pa]
-T0     = 288.15           # [K]  STATIC freestream temperature (given directly in mod_globals.f90)
+p_tot  = 25.0e3
+T0     = 288.15           # [K]  STATIC freestream temperature
 blt    = 1.0e-3           # length scale [m], used to convert x to mm
 
-Xsh_mm = 80.0             # shock impingement location [mm] (Re_Xsh definition point, BL2 spec)
+Xsh_mm = 80.0             # shock impingement location [mm]
 
 # y-axis zoom range, in RAW (unscaled) Cf units — matches roughly the
 # range shown in Degrez et al. Fig. 15 (-1e-3 to 5e-3). This crops out
@@ -23,8 +20,6 @@ Xsh_mm = 80.0             # shock impingement location [mm] (Re_Xsh definition p
 # region is actually visible. Set to None to auto-scale instead.
 Y_ZOOM_RANGE = (-1.5e-3, 6.5e-3)
 
-# font sizes: adjust these to resize the axis numbers (tick labels) and the
-# axis titles (Cf, X/Xsh) independently
 TICK_LABEL_FONTSIZE = 25   # size of the 0,1,2,...,0.25,0.50,... numbers
 AXIS_LABEL_FONTSIZE = 25   # size of the "X/Xsh" and "Cf" axis titles
 LEGEND_FONTSIZE = 18        # size of the legend entries (Present Study, Degrez et al., ...)
@@ -38,18 +33,15 @@ q_inf = 0.5 * rho0 * u0**2   # freestream dynamic pressure (Cf normalization)
 # ------------------------------------------------------------
 # Sutherland's law: mu(T) = SUTHERLAND_C * T^1.5 / (T + S)
 #   SUTHERLAND_C = mu_ref * (T_ref + S) / T_ref^1.5
-# NOTE: verify against mod_constant.f90's mu0_T0_S_over_T0_2_3 (see docstring).
 # ------------------------------------------------------------
 SUTHERLAND_MU_REF = 1.716e-5   # [Pa s] reference viscosity at T_ref
 SUTHERLAND_T_REF  = 273.2       # [K]
 SUTHERLAND_S      = 111.0       # [K]  Sutherland constant
 SUTHERLAND_C = SUTHERLAND_MU_REF * (SUTHERLAND_T_REF + SUTHERLAND_S) / SUTHERLAND_T_REF**1.5
 
-
 def sutherland_mu(T):
     """Dynamic viscosity mu(T) [Pa s] from Sutherland's law."""
     return SUTHERLAND_C * T**1.5 / (T + SUTHERLAND_S)
-
 
 def one_sided_deriv_3pt(y0, y1, y2, f0, f1, f2):
     """
@@ -70,7 +62,6 @@ def one_sided_deriv_3pt(y0, y1, y2, f0, f1, f2):
 def compute_cf(path):
     """
     Compute the bottom-wall (y=0) skin-friction coefficient Cf(x)
-    from a VTR snapshot file.
 
     Returns
     -------
@@ -106,7 +97,6 @@ def compute_cf(path):
     x_mm = x / blt
     return x_mm, cf
 
-
 def find_zero_crossings(x_over_xsh, cf):
     """Locate Cf=0 crossings (separation/reattachment points) by linear interpolation."""
     sign_change = np.where(np.diff(np.sign(cf)) != 0)[0]
@@ -118,14 +108,9 @@ def find_zero_crossings(x_over_xsh, cf):
         crossings.append(xc)
     return crossings
 
-
 # ============================================================
 # 2. Plot (single snapshot, or overlay multiple cases)
 # ============================================================
-
-# Digitized Degrez et al. 1987 Fig. 15 data (columns: X/Xsh, Cf), whitespace-
-# separated, no header. Set to a path if you digitize the curve (e.g. with
-# WebPlotDigitizer) and want to overlay it directly. None disables overlay.
 
 REFERENCE_DATA = [
     {
@@ -150,12 +135,6 @@ REFERENCE_DATA = [
 
 if __name__ == "__main__":
 
-    # --- add more entries here to overlay multiple files (e.g. grid
-    #     sensitivity study, or different time steps) ---
-    # optional "x_range": (min, max) restricts the plotted/printed X/Xsh
-    # range for that case only (e.g. to exclude inflow/outflow buffer
-    # regions outside the physical plate) — reference datasets are
-    # unaffected.
     cases = [
         {"path": "./Q00800.vtr", "label": "Present Study", "x_range": (0.125, 1.875)},
         # {"path": "./Q00600.vtr", "label": "t = step 600"},
@@ -165,7 +144,7 @@ if __name__ == "__main__":
 
     for case in cases:
         x_mm, cf = compute_cf(case["path"])
-        x_over_xsh = x_mm / Xsh_mm   # X/Xsh normalization (matches Fig. 15)
+        x_over_xsh = x_mm / Xsh_mm   # X/Xsh normalization
 
         x_range = case.get("x_range")
         if x_range is not None:
@@ -189,7 +168,7 @@ if __name__ == "__main__":
         ref = np.loadtxt(ref_entry["path"])       # whitespace-separated, no header
         order = np.argsort(ref[:, 0])             # digitizer points may be slightly out of order
         ref = ref[order]
-        ref[:, 0] = ref[:, 0] * ref_entry.get("x_scale", 1.0)   # X/Xsh補正(全データ1.25倍)
+        ref[:, 0] = ref[:, 0] * ref_entry.get("x_scale", 1.0)   # X/Xsh correction (all data × 1.25)
         ax.plot(ref[:, 0], ref[:, 1], label=ref_entry["label"], **ref_entry["style"])
 
         label = ref_entry["label"]
@@ -205,7 +184,7 @@ if __name__ == "__main__":
               f"at X/Xsh = {ref[imin_ref, 0]:.3f}")
 
     ax.axhline(0.0, color="k", ls="--", lw=0.8)
-    ax.set_xlim(0, 2.0)          # matches Fig. 15's axis range
+    ax.set_xlim(0, 2.0)
     ax.set_xlabel(r"$X / X_{sh}$", fontsize=AXIS_LABEL_FONTSIZE)
     ax.set_ylabel(r"$C_f$", fontsize=AXIS_LABEL_FONTSIZE)
     ax.tick_params(axis="both", which="major", labelsize=TICK_LABEL_FONTSIZE)
