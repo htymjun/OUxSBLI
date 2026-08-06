@@ -63,21 +63,21 @@ REFERENCE_DATA = [
     {
         "path": "./data_Degrez_Cp.dat",
         "label": "Degrez et al. (numerical)",
-        "style": dict(marker="o", ls="none", mfc="none", color="k", ms=5),
+        "style": dict(marker="o", ls="none", mfc="none", color="k", ms=6, mew=2.0),
         "x_scale": 1.25,  # digitized from Vila-Pérez Fig. 28(a): x/L -> X/Xsh
     },
     {
         "path": "./data_Moro_Cp.dat",
         "label": "Moro et al.",
-        "style": dict(marker="x", ls="none", color="tab:red", ms=6, mew=1.2),
+        "style": dict(marker="x", ls="none", color="tab:red", ms=6, mew=2.0),
         "x_scale": 1.25,  # digitized from Vila-Pérez Fig. 28(a): x/L -> X/Xsh
     },
-    {
-        "path": "./data_Vila-Pérez_Cp.dat",
-        "label": "Vila-Pérez et al.",
-        "style": dict(marker="^", ls=":", color="tab:green", lw=1.0, ms=4),
-        "x_scale": 1.25,  # digitized from Vila-Pérez Fig. 28(a): x/L -> X/Xsh
-    },
+    # {
+    #     "path": "./data_Vila-Pérez_Cp.dat",
+    #     "label": "Vila-Pérez et al.",
+    #     "style": dict(marker="^", ls=":", color="tab:green", lw=1.0, ms=4),
+    #     "x_scale": 1.25,  # digitized from Vila-Pérez Fig. 28(a): x/L -> X/Xsh
+    # },
 ]
 
 if __name__ == "__main__":
