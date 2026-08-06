@@ -75,7 +75,7 @@ contains
   subroutine set_bc(myrank, nx, ny, Jacobian, QJ)
     integer, intent(in), value     :: myrank, nx, ny
     real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ(nx,4,ny) ! Q / Jacobian
+    real(8), intent(inout), device :: QJ(nx,4,ny) !Q / Jacobian
     real(8) Jacobian_tmp
     integer i, j, l, ireq, ierr, istat(MPI_STATUS_SIZE)
     real(8) :: p_wall

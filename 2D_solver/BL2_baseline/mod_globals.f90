@@ -10,8 +10,8 @@ module mod_globals
   real(8), parameter :: Lx = 176.d0 * blt !20
   real(8), parameter :: Ly = 80.d0 * blt !5
   ! DNS
-  integer, parameter :: nx = 564 !2254!257
-  integer, parameter :: ny = 513 !2049!129
+  integer, parameter :: nx = 564 !2254 !257
+  integer, parameter :: ny = 513 !2049 !129
 
   ! RTX 4090
   type(dim3), parameter :: threadsE  = dim3(128,1,1)
