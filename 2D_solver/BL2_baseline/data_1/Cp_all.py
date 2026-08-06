@@ -5,14 +5,11 @@ from myvtk import getGrid, getQ, myParams
 
 myParams()
 
-# ============================================================
-# 1. BL2 case parameters (must match mod_globals.f90; identical to Cf script)
-# ============================================================
-R      = 287.15          # specific gas constant [J/(kg K)]  <- BL2 value
+R      = 287.15
 gamma  = 1.4
 M0     = 2.15
-p_tot  = 25.0e3           # [Pa]
-T0     = 288.15           # [K]  STATIC freestream temperature (given directly in mod_globals.f90)
+p_tot  = 25.0e3
+T0     = 288.15           # [K]  STATIC freestream temperature
 blt    = 1.0e-3           # length scale [m], used to convert x to mm
 
 Xsh_mm = 80.0             # shock impingement location [mm] (Re_Xsh definition point, BL2 spec)
@@ -32,14 +29,12 @@ LEGEND_FONTSIZE = 16.5
 p0   = p_tot / (1.0 + 0.5 * (gamma - 1.0) * M0**2) ** (gamma / (gamma - 1.0))
 rho0 = p0 / (R * T0)
 u0   = M0 * np.sqrt(gamma * R * T0)
-q_inf = 0.5 * rho0 * u0**2   # freestream dynamic pressure (Cp normalization, eq. 64)
-
+q_inf = 0.5 * rho0 * u0**2   # freestream dynamic pressure (Cp normalization)
 
 def compute_cp(path):
     """
     Compute the bottom-wall (y=0) pressure coefficient
-    Cp = (p - p_inf) / (0.5 * rho_inf * v_inf^2)   [eq. (64)]
-    from a VTR snapshot file.
+    Cp = (p - p_inf) / (0.5 * rho_inf * v_inf^2)
 
     Returns
     -------
@@ -55,7 +50,6 @@ def compute_cp(path):
     cp = (p_w - p0) / q_inf
     x_mm = x / blt
     return x_mm, cp
-
 
 # ============================================================
 # 2. Plot (single snapshot, or overlay multiple cases)
@@ -101,7 +95,7 @@ if __name__ == "__main__":
 
     for case in cases:
         x_mm, cp = compute_cp(case["path"])
-        x_over_xsh = x_mm / Xsh_mm   # X/Xsh normalization (matches Fig. 12)
+        x_over_xsh = x_mm / Xsh_mm   # X/Xsh normalization
 
         x_range = case.get("x_range")
         if x_range is not None:
@@ -133,7 +127,7 @@ if __name__ == "__main__":
         ax.plot(ref[:, 0], ref[:, 1], label=ref_entry["label"], **ref_entry["style"])
 
     ax.axhline(0.0, color="k", ls="--", lw=0.6)   # undisturbed-freestream reference level Cp=0
-    ax.set_xlim(0, 2.0)          # matches Fig. 28's axis range
+    ax.set_xlim(0, 2.0)
     ax.set_xlabel(r"$X / X_{sh}$", fontsize=AXIS_LABEL_FONTSIZE)
     ax.set_ylabel(r"$C_p$", fontsize=AXIS_LABEL_FONTSIZE)
     ax.tick_params(axis="both", which="major", labelsize=TICK_LABEL_FONTSIZE)
