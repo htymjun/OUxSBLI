@@ -5,11 +5,10 @@ from ouxsbli import Case
 from ouxsbli.patcher import patch
 
 
-OUxSBLI_ROOT = "/home/jhatayama/ouxsbli/2d/OUxSBLI"
-WORKDIR      = "./ouxsbli_bl"
+WORKDIR = "./ouxsbli_bl"
 
 case = Case(
-  source  = str(pathlib.Path(OUxSBLI_ROOT) / "2D_solver/BL"),  # template — never modified
+  source  = "2D_solver/BL",    # template — never modified; resolved relative to the repo root
   workdir = WORKDIR,           # new run directory (created fresh each time)
   # Physics
   visc    = "ns",              # Navier-Stokes
@@ -23,7 +22,7 @@ case = Case(
   nt = 5,                      # total output intervals
 )
 
-# Build: copies source → patches mod_globals.f90 → runs make
+# Build: copies source → patches mod_globals.f90 → runs cmake + make
 # Takes ~1-3 minutes depending on hardware
 print("Building...")
 case.build()

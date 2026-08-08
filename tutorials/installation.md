@@ -74,17 +74,17 @@ Expected output: all patcher tests pass; I/O tests skip if no simulation data is
 
 ## 5. Build a Test Case (Requires GPU)
 
-Each case directory contains a `Makefile`. To build the 2D laminar boundary layer case:
+Each case directory contains a `CMakeLists.txt`. To build the 2D laminar boundary layer case:
 
 ```bash
 cd 2D_solver/BL
-make clean && make
+cmake -B build && cmake --build build -j
 ```
 
-Successful compilation produces `a.out`. Then run:
+CMake runs fypp on the `.f90.fypp` templates, then compiles with `mpif90`. The executable `a.out` lands in `build/`. Then run:
 
 ```bash
-mkdir -p data
+cd build
 mpirun -n 2 ./a.out
 ```
 
@@ -101,16 +101,23 @@ VTK output files (`Q00000.vtr`, `Q00001.vtr`, …) appear in `data/` every `np` 
 | `BL/` | Navier-Stokes | Supersonic laminar boundary layer (M=2) |
 | `DSL/` | Euler | Double shear layer |
 | `EVC/` | Euler | Euler vortex convection |
+| `OS/` | Euler | 2D oblique shock (M=2, θ=8°) |
+| `SBLI/` | Navier-Stokes | 2D shock-boundary layer interaction |
 | `ST/` | Euler | 2D shock tube |
 
 ### 3D Solver (`3D_solver/`)
 
 | Directory | Physics | Description |
 |-----------|---------|-------------|
+| `BL/` | Navier-Stokes | Quasi-2D laminar flat-plate boundary layer (extrudes 2D_solver/BL) |
 | `ETGV/` | Euler | Euler Taylor-Green vortex |
+| `EVC/` | Euler | Quasi-2D Euler vortex convection (extrudes 2D_solver/EVC) |
+| `IVST/` | Euler | Inviscid vortex smooth test case |
 | `NSTGV/` | Navier-Stokes | NS Taylor-Green vortex (Re=1600) |
 | `KHI/` | Euler | Kelvin-Helmholtz instability |
+| `OS/` | Euler | Quasi-2D oblique shock + wall reflection (extrudes 2D_solver/OS) |
 | `SBLI/` | Navier-Stokes | Shock-boundary layer interaction |
+| `STZ/` | Navier-Stokes | z-direction MPI halo exchange validation |
 | `TBL/` | Navier-Stokes | Turbulent boundary layer |
 | `DHIT/` | Navier-Stokes | Decaying homogeneous isotropic turbulence |
 
@@ -119,7 +126,7 @@ VTK output files (`Q00000.vtr`, `Q00001.vtr`, …) appear in `data/` every `np` 
 | Directory | Physics | Description |
 |-----------|---------|-------------|
 | `NACA/` | Navier-Stokes | NACA 0012 airfoil (O-grid) |
-| `CORN/` | Navier-Stokes | Corner geometry |
+| `CORN/` | Navier-Stokes | Compression corner (M=2, θ=8°) |
 
 ---
 

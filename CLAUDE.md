@@ -33,12 +33,12 @@ Profiling (where available):
 cd build && bash ../profile.sh    # nsys/ncu profiling
 ```
 
-**Curvilinear cases are still Makefile-based** (see `3D_solver_curv/CLAUDE.md`):
+**Curvilinear cases use CMake** (see `3D_solver_curv/CLAUDE.md`):
 
 ```bash
 cd 3D_solver_curv/NACA
-make clean && make
-bash calc.sh
+cmake -B build && cmake --build build -j   # fypp preprocess + compile
+bash calc.sh                               # run simulation
 ```
 
 **2D solver cases use CMake** (see `2D_solver/CLAUDE.md` for the case list):

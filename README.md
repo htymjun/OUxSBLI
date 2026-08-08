@@ -31,6 +31,7 @@ OUxSBLI is a GPU-accelerated CFD code with Python-API written in CUDA Fortran. I
 ### Python API
 * Python 3.10 or newer
 * numpy
+* scipy
 * vtk
 
 ## Usage
@@ -176,6 +177,12 @@ The results are consistent with Lusher's results.
 <div align="center">
   <img src="./docs/img/sbli_2d.png" alt="SBLI" width="900">  
 </div>
+
+Wall Cp and the separation-bubble location match digitized reference data (Moro et al., `2D_solver/SBLI/ref/`), verified by `ouxsbli/tests/test_sbli.py`.
+
+### 2D Laminar Boundary Layer
+
+Cf and the velocity profile match the Blasius similarity solution, verified by `ouxsbli/tests/test_bl.py`.
 
 ### 2D Oblique Shock
 
