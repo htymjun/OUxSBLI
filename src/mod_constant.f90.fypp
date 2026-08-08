@@ -114,8 +114,6 @@ module mod_constant
   integer(2), parameter :: id_scheme = 0
   #:elif SCHEME == 'SLAU'
   real(2),    parameter :: id_scheme = 0
-  #:elif SCHEME == 'Roe'
-  real(4),    parameter :: id_scheme = 0
   #:elif SCHEME == 'Hybrid'
   real(8),    parameter :: id_scheme = 0
   #:endif

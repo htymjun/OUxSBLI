@@ -63,7 +63,7 @@ Each case directory contains a **`config.fypp`** file that declares all compile-
 
 ```python
 #:set VISC    = 'NS'      # 'Euler', 'NS', 'LES'
-#:set SCHEME  = 'SLAU'    # 'KEEP', 'SLAU', 'Roe', 'Hybrid'
+#:set SCHEME  = 'SLAU'    # 'KEEP', 'SLAU', 'Hybrid'
 #:set ORDER   = 6         # 2, 4, 6  (convective + viscous stencil order)
 #:set TVD     = 'hybrid'  # 'none', 'tvd', 'hybrid'
 #:set RESCALE = True       # True → SBLI reference-state rescaling
@@ -104,7 +104,7 @@ All compile-time scheme/method choices live in `<CASE>/config.fypp`. The fypp pr
 | Variable | Values | Effect |
 |----------|--------|--------|
 | `VISC` | `'Euler'`, `'NS'`, `'LES'` | Physics model |
-| `SCHEME` | `'KEEP'`, `'SLAU'`, `'Roe'`, `'Hybrid'` | Convective flux scheme |
+| `SCHEME` | `'KEEP'`, `'SLAU'`, `'Hybrid'` | Convective flux scheme |
 | `ORDER` | `2`, `4`, `6` | Spatial accuracy (convective + viscous) |
 | `VISC_ORDER` | `2`, `4`, `6` | Override viscous stencil order (defaults to `ORDER`) |
 | `TVD` | `'none'`, `'tvd'`, `'hybrid'` | TVD limiter for reconstruction |
@@ -135,7 +135,7 @@ This file is **not** preprocessed by fypp. It holds:
 | `id_tvd` (integer) | no TVD | tvd | hybrid |
 | `id_slau` (integer) | SLAU | HRSLAU2 | — |
 | `id_rescale` (integer) | off | on | — |
-| `id_scheme` | integer(2)=KEEP | real(2)=SLAU | real(4)=Roe / real(8)=Hybrid |
+| `id_scheme` | integer(2)=KEEP | real(2)=SLAU | real(8)=Hybrid |
 | `id_bc_x/y/z` (integer) | periodic | wall/inflow | — |
 
 The **value** of these parameters is always 0; only the **type kind** matters for compile-time dispatch. `id_recal` (restart flag) is a Fortran `logical` (`.true.`/`.false.`).

@@ -41,7 +41,7 @@ These are patched into the copied `config.fypp`:
 | Keyword | fypp variable | Type | Example values |
 |---------|---------------|------|----------------|
 | `visc` | `VISC` | str | `'Euler'`, `'NS'`, `'LES'` |
-| `scheme` | `SCHEME` | str | `'KEEP'`, `'SLAU'`, `'Roe'`, `'Hybrid'` |
+| `scheme` | `SCHEME` | str | `'KEEP'`, `'SLAU'`, `'Hybrid'` |
 | `accuracy` | `ORDER` | int | `2`, `4`, `6` |
 | `visc_order` | `VISC_ORDER` | int | `2`, `4`, `6` |
 | `tvd` | `TVD` | str | `'none'`, `'tvd'`, `'hybdir'` |
