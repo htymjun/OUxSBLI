@@ -10,8 +10,8 @@ module mod_globals
   real(8), parameter :: Lx = 176.d0 * blt !20
   real(8), parameter :: Ly = 80.d0 * blt !5
   ! DNS
-  integer, parameter :: nx = 564 !2254 !257
-  integer, parameter :: ny = 513 !2049 !129
+  integer, parameter :: nx = 257
+  integer, parameter :: ny = 257
 
   ! flat-plate geometry
   real(8), parameter :: x_in = -16.d0 * blt ! x(1); the inlet-shock threshold (Xsh - x_in)*tan(beta) depends on this
@@ -28,18 +28,17 @@ module mod_globals
 
   ! time
   integer, parameter :: step_offset = 0
-  real(8), parameter :: endT  = 1.5d-2 !8.d-3 !0.3d-3
-  integer, parameter :: np    = 1500 !800 !30
-  real(8), parameter :: R     = 287.15d0 !287.03d0
+  real(8), parameter :: endT  = 1.d-2
+  integer, parameter :: np    = 100
+  real(8), parameter :: R     = 287.15d0
   real(8), parameter :: gamma = 1.4d0
-  real(8), parameter :: M0    = 2.15d0 !2
-  real(8), parameter :: p_tot = 25.d3 !100
-  !real(8), parameter :: T_tot = 295.d0
+  real(8), parameter :: M0    = 2.15d0
+  real(8), parameter :: p_tot = 25.d3
   real(8), parameter :: p0    = p_tot / ((1.d0 + 0.5d0 * (gamma - 1.d0) * M0**2)**(gamma/(gamma-1.d0)))
   real(8), parameter :: T0    = 288.15d0
   real(8), parameter :: rho0  = p0 / (R * T0)
   real(8), parameter :: u0    = M0 * sqrt(gamma * R * T0)
-  real(8), parameter :: dt    = 3.d-9
+  real(8), parameter :: dt    = 5.d-9
   integer, parameter :: nt    = int(endT / (dble(np) * dt))
 
   ! physical properties

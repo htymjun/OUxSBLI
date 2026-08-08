@@ -39,12 +39,12 @@ q_inf = 0.5 * rho0 * u0**2  # freestream dynamic pressure (Cf normalization)
 mu0 = sutherland_mu(T0)
 
 # x = 0 is the plate leading edge (set_grid places it there exactly)
+# The upper limit stays clear of the 0th-order-extrapolated outlet at x = 100.3 mm.
 X_MIN_MM = 5.0
-X_MAX_MM = 100.0
+X_MAX_MM = 95.0
 
 if __name__ == "__main__":
     path = sys.argv[1] if len(sys.argv) > 1 else latest_vtr(CASE_DIR / "data")
-
     x, cf_dns, _ = wall_coeffs_from_vtr(path, R, p0, q_inf)
     x_mm = x / blt
 
@@ -58,9 +58,10 @@ if __name__ == "__main__":
     print(f"Cf vs Blasius over x = {X_MIN_MM}-{X_MAX_MM} mm (freestream-normalised): "
           f"mean rel. error {err.mean():.3f}, max {err.max():.3f}")
 
-    # The growing displacement thickness accelerates the flow slightly in the
-    # finite-height domain; normalising by the local edge state (as
-    # ouxsbli/tests/test_bl.py does) is the like-for-like comparison.
+    # Normalising by the local edge state instead (as ouxsbli/tests/test_bl.py does)
+    # divides out any residual acceleration of the outer flow. The gap between the
+    # two curves is therefore a direct readout of how much work the far-field
+    # boundary is doing on the freestream: it should be near zero.
     ni, nj, nk, xg, yg, zg = getGrid(str(path))
     rho, uu, vv, ww, pp = getQ(str(path), ni, nj, nk)
     u_e, rho_e, mu_e = edge_state(rho[0], uu[0], pp[0], R)
@@ -68,11 +69,14 @@ if __name__ == "__main__":
     cf_loc = cf_dns * (q_inf / (0.5 * rho_e * u_e**2))
     with np.errstate(divide="ignore", invalid="ignore"):
         err_loc = np.abs(cf_loc[mask] / (0.664 / np.sqrt(Re_x_loc[mask])) - 1.0)
-    print(f"{'':>4}                                    (edge-normalised): "
+    print(f"{'':>4}                                   (edge-normalised): "
           f"mean rel. error {err_loc.mean():.3f}, max {err_loc.max():.3f}")
+    print(f"peak edge acceleration u_e/u0 - 1: {u_e[mask].max() / u0 - 1.0:+.4f}")
 
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.plot(x_mm_plot, cf_dns_plot, color="tab:blue", lw=2.0, label="Present Study")
+    ax.plot(x_mm_plot, cf_loc[mask], color="tab:green", ls=":", lw=2.0,
+            label="Present Study (edge-norm.)")
     ax.plot(x_mm_plot, cf_theory, color="tab:red", ls="--", lw=2.0, label="Blasius")
 
     ax.set_xlim(0, X_MAX_MM)
@@ -101,7 +105,7 @@ if __name__ == "__main__":
     ax.yaxis.set_major_formatter(y_formatter)
     ax.yaxis.get_offset_text().set_fontsize(25)
 
-    ax.legend(frameon=False, fontsize=25, loc="upper right")
+    ax.legend(frameon=False, fontsize=18, loc="upper right")
     fig.tight_layout()
     fig.savefig(CASE_DIR / "cf_BL_theory_compare.png", dpi=200)
     print("Saved: cf_BL_theory_compare.png")

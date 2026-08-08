@@ -11,7 +11,7 @@ contains
     integer i, j
     real(8) dx1
     real(8) tanh_s, yi
-    real(8), parameter :: s = 1.6d0 ! tanh wall-clustering stretch
+    real(8), parameter :: s = 2.4d0 ! tanh wall-clustering stretch
     dx1 = Lx / dble(nx-1)
 
     ! place the leading edge (first no-slip wall point, i = i_LE) exactly at x = 0
@@ -62,41 +62,75 @@ contains
     real(8), intent(inout), device :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
     integer i, j
     real(8) :: p_wall
-    ! Riemann invariants
-    real(8) :: rhoin, pin, cin, vin, Rp, Rm, rhob, vb, cb, pb
+    ! top far field: interior (j = ny-1) state and boundary state
+    real(8) :: rhoin, uin, vin, pin, rhob, ub, vb, pb, sb
     ! cache
     real(8) Jacobian_tmp
-    ! freestream state at the top boundary
-    real(8), parameter :: v0      = 0.d0
-    real(8), parameter :: c0      = sqrt(gamma * p0 / rho0)
-    real(8), parameter :: over_c0 = 1.d0 / c0
+    ! freestream entropy at the top boundary
+    real(8), parameter :: s0 = p0 / rho0**gamma
 
     !$cuf kernel do(1)<<<*,*>>>
     do j = 2, ny-1
-      ! outlet
-      QJ_1(nx,j) = QJ_1(nx-1,j); QJ_2(nx,j) = QJ_2(nx-1,j); QJ_3(nx,j) = QJ_3(nx-1,j); QJ_4(nx,j) = QJ_4(nx-1,j)
+      ! outlet: subsonic pressure outflow.
+      !
+      ! Extrapolating all four conservatives imposes nothing where subsonic
+      ! outflow needs exactly one condition, so the exit pressure floated: it sat
+      ! 0.008*q_inf below p0 and dragged a favorable gradient ~25 mm back up the
+      ! plate, inflating Cf there by 6%. A zero-incidence flat plate has dp/dx = 0,
+      ! so p = p0 is the physically right single condition and matches what the
+      ! top boundary already imposes. Density and both momenta still come from the
+      ! interior; only the energy is rebuilt around p0.
+      QJ_1(nx,j) = QJ_1(nx-1,j)
+      QJ_2(nx,j) = QJ_2(nx-1,j)
+      QJ_3(nx,j) = QJ_3(nx-1,j)
+      QJ_4(nx,j) = p0 * over_gamma_1 / Jacobian(nx,j) &
+                 + 0.5d0 * (QJ_2(nx,j)**2 + QJ_3(nx,j)**2) / QJ_1(nx,j)
     enddo
 
     !$cuf kernel do(1)<<<*,*>>>
     do i = 1, nx
-      ! top
-      ! Riemann invariants
-      Jacobian_tmp = 1.d0 / Jacobian(i,ny)
-      pin   = gamma_1 * (QJ_4(i,ny-1) - 0.5d0 * (QJ_2(i,ny-1)**2 + QJ_3(i,ny-1)**2) &
-              / QJ_1(i,ny-1)) * Jacobian(i,ny-1)
+      ! top: constant-pressure far field.
+      !
+      ! The Riemann-invariant far field this used to be (and that SBLI still uses)
+      ! holds Rm = v_ext - 2*c_ext/(gamma-1) fixed, which in steady state forces
+      ! p_b - p0 = rho0*c0*v_b, i.e. (p_b - p0)/q_inf = 2*v_b/(u0*M0). That is a
+      ! transient non-reflection property, not p -> p0, and the 1/M0 factor makes it
+      ! unusable at M0 = 0.1: the displacement-induced v_b (0.11 m/s at the leading
+      ! edge, decaying downstream) became a 0.07*q_inf favorable pressure gradient
+      ! along the plate, accelerating the edge flow 3% and inflating Cf by >10% at
+      ! the trailing end. At SBLI's M0 = 2.15 there is no 1/M0 amplification, which
+      ! is why the same form is fine there.
+      !
+      ! For a steady zero-incidence plate the far field is p = p0, so impose that and
+      ! take everything else from the outgoing characteristics: v is always
+      ! extrapolated (this is also the zero-shear far-field condition, replacing the
+      ! old u = u0 clamp that put a spurious shear layer across the outer half of the
+      ! domain), while entropy and tangential momentum are upwinded on the sign of v.
+      ! Subsonic outflow takes 1 condition from outside, subsonic inflow takes 3.
       rhoin = QJ_1(i,ny-1) * Jacobian(i,ny-1)
-      cin   = sqrt(gamma * pin / rhoin)
+      uin   = QJ_2(i,ny-1) / QJ_1(i,ny-1)
       vin   = QJ_3(i,ny-1) / QJ_1(i,ny-1)
-      Rp   = vin + 2.d0 * cin * over_gamma_1
-      Rm   = v0  - 2.d0 * c0  * over_gamma_1
-      vb   = 0.5d0 * (Rp + Rm)
-      cb   = 0.25d0 * gamma_1 * (Rp - Rm)
-      rhob = (cb * over_c0)**(2.d0 * over_gamma_1) * rho0
-      pb   = (rhob * cb**2) * over_gamma
+      pin   = gamma_1 * (QJ_4(i,ny-1) * Jacobian(i,ny-1) &
+              - 0.5d0 * rhoin * (uin**2 + vin**2))
+
+      pb = p0
+      vb = vin
+      if (vb >= 0.d0) then
+        ! outflow: entropy and tangential momentum leave the domain
+        sb = pin / rhoin**gamma
+        ub = uin
+      else
+        ! inflow: both come from the freestream (rhob then reduces to rho0)
+        sb = s0
+        ub = u0
+      endif
+      rhob = (pb / sb)**over_gamma
+
+      Jacobian_tmp = 1.d0 / Jacobian(i,ny)
       QJ_1(i,ny) = rhob * Jacobian_tmp
-      QJ_2(i,ny) = rhob * u0 * Jacobian_tmp
+      QJ_2(i,ny) = rhob * ub * Jacobian_tmp
       QJ_3(i,ny) = rhob * vb * Jacobian_tmp
-      QJ_4(i,ny) = (pb * over_gamma_1 + 0.5d0 * rhob * (u0**2 + vb**2)) * Jacobian_tmp
+      QJ_4(i,ny) = (pb * over_gamma_1 + 0.5d0 * rhob * (ub**2 + vb**2)) * Jacobian_tmp
     enddo
 
     !$cuf kernel do(1)<<<*,*>>>
