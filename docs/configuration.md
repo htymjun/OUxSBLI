@@ -27,7 +27,7 @@ All compile-time options are set here. Below is a full listing with allowed valu
 | `VISC` | string | `'Euler'`, `'NS'`, `'LES'` | `'NS'` | Physics model |
 | `SCHEME` | string | `'KEEP'`, `'SLAU'`, `'Hybrid'` | `'SLAU'` | Convective flux scheme |
 | `ORDER` | int | `2`, `4`, `6` | `6` | Spatial accuracy (convective + viscous) |
-| `VISC_ORDER` | int | `2`, `4` | *(defaults to `ORDER`)* | Override viscous stencil order |
+| `VISC_ORDER` | int | `2`, `4`, `6` | *(defaults to `ORDER`)* | Override viscous stencil order |
 | `TVD` | string | `'none'`, `'tvd'`, `'hybrid'` | `'hybrid'` | TVD limiter for reconstruction |
 | `SLAU_VARIANT` | string | `'SLAU'`, `'HRSLAU2'` | `'HRSLAU2'` | SLAU flux variant |
 | `RESCALE` | bool | `True`, `False` | `False` | SBLI reference-state rescaling |
@@ -38,6 +38,7 @@ All compile-time options are set here. Below is a full listing with allowed valu
 | `BC_Y` | bool | `True`, `False` | `False` | Wall/inflow BCs in y |
 | `BC_Z` | bool | `True`, `False` | `False` | Wall/inflow BCs in z |
 | `ORDER_IO` | int | computed | `ORDER // 2 - 1` | Ghost-cell count for I/O interpolation |
+| `OUTPUT_PRECISION` | int | `4`, `8` | `4` | VTK output float precision (kind dispatch: real*4 vs real*8). Single precision can't resolve 6th-order convergence trends or tight Cf tolerances — the EVC/BL/OS validation tests set this to `8`. |
 
 > **Note:** `COMMZ = True` and `RESCALE = True` cannot be combined.
 
@@ -57,6 +58,7 @@ All compile-time options are set here. Below is a full listing with allowed valu
 #:set TVD          = 'hybrid'
 #:set SLAU_VARIANT = 'HRSLAU2'
 #:set ORDER_IO     = ORDER // 2 - 1
+#:set OUTPUT_PRECISION = 4
 ```
 
 ---
