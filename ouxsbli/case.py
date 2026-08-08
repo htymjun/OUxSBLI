@@ -117,7 +117,12 @@ class Case:
         shutil.copytree(
             self.source,
             self.workdir,
-            ignore=shutil.ignore_patterns("build", "CMakeCache.txt", "CMakeFiles", "*.cmake"),
+            # data/recal are excluded so snapshots from a previous run of the
+            # source case can't be mistaken for this run's output.
+            ignore=shutil.ignore_patterns(
+                "build", "CMakeCache.txt", "CMakeFiles", "*.cmake",
+                "data", "data_*", "recal", "nohup.out",
+            ),
         )
 
         config_path  = self.workdir / "config.fypp"
