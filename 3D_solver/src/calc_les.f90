@@ -93,10 +93,10 @@ contains
   end function stride_filter
 
 
-  pure attributes(global) subroutine calc_mut(nx, ny, nz, dx, dy, dz, Q, mut, qc2)
+  pure attributes(global) subroutine calc_mut(nx, ny, nz, dx, dy, dz, Q_1, Q_2, Q_3, Q_4, mut, qc2)
     integer, intent(in), value               :: nx, ny, nz
     real(8), intent(in), device, contiguous  :: dx(nx-1), dy(ny-1), dz(nz-1)
-    real(8), intent(in), device, contiguous  :: Q(nx,5,ny,nz)
+    real(8), intent(in), device, contiguous  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz)
     real(8), intent(out), device, contiguous :: mut(nx,ny,nz), qc2(nx,ny,nz)
     integer i, j, k
     real(8), dimension(3,3,3) :: u3, v3, w3, u_test, v_test, w_test
@@ -105,13 +105,13 @@ contains
     j = (blockIdx%y-1)*blockDim%y + threadIdx%y + 1
     k = (blockIdx%z-1)*blockDim%z + threadIdx%z + 1
     if (i < 2 .or. nx-1 < i .or. j < 2 .or. ny-1 < j .or. k < 2 .or. nz-1 < k) return
-    u3 = Q(i-1:i+1,2,j-1:j+1,k-1:k+1)
-    v3 = Q(i-1:i+1,3,j-1:j+1,k-1:k+1)
-    w3 = Q(i-1:i+1,4,j-1:j+1,k-1:k+1)
+    u3 = Q_2(i-1:i+1,j-1:j+1,k-1:k+1)
+    v3 = Q_3(i-1:i+1,j-1:j+1,k-1:k+1)
+    w3 = Q_4(i-1:i+1,j-1:j+1,k-1:k+1)
     if (3<=i .and. i<=nx-2 .and. 3<=j .and. j<=ny-2 .and. 3<=k .and. k <=nz-2) then
-      u5 = Q(i-2:i+2,2,j-2:j+2,k-2:k+2)
-      v5 = Q(i-2:i+2,3,j-2:j+2,k-2:k+2)
-      w5 = Q(i-2:i+2,4,j-2:j+2,k-2:k+2)
+      u5 = Q_2(i-2:i+2,j-2:j+2,k-2:k+2)
+      v5 = Q_3(i-2:i+2,j-2:j+2,k-2:k+2)
+      w5 = Q_4(i-2:i+2,j-2:j+2,k-2:k+2)
       u_test = stride_filter(u5)
       v_test = stride_filter(v5)
       w_test = stride_filter(w5)
@@ -121,7 +121,7 @@ contains
       w_test = w3
     endif
     qc2(i,j,k) = 0.5d0 * ((u3(2,2,2) - u_test(2,2,2))**2 + (v3(2,2,2) - v_test(2,2,2))**2 + (w3(2,2,2) - w_test(2,2,2))**2)
-    mut(i,j,k) = Q(i,1,j,k) * SMS(u3,v3,w3,u_test,v_test,w_test,dx(i),dy(j),dz(k),qc2(i,j,k))
+    mut(i,j,k) = Q_1(i,j,k) * SMS(u3,v3,w3,u_test,v_test,w_test,dx(i),dy(j),dz(k),qc2(i,j,k))
   end subroutine calc_mut
 end module calc_les
 

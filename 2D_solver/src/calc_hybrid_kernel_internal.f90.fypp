@@ -2,6 +2,7 @@
 !> Interior-only Hybrid kernel variants — skip boundary stencil-order fallback branches.
 !> Used for periodic domains where all points are interior (no boundary stencil fallback needed).
 module calc_hybrid_kernel_internal
+  use libm
   use mod_globals, only : gamma, threshold, threadsE, threadsF
   use mod_constant, only : over_gamma_1, R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third, id_slau
   use calc_muscl
@@ -37,8 +38,7 @@ module calc_hybrid_kernel_internal
     module procedure delta_r2, delta_r4, delta_r6
   end interface delta_r
 contains
-  include 'calc_keep_2d.f90'
-  include 'calc_slau_2d.f90'
+  include 'calc_scheme_math.f90'
 
   !$dir inline
   attributes(device) subroutine delta_r2(id_acc_arg, sensor, a, al, ar)
@@ -68,13 +68,13 @@ contains
   end subroutine delta_r6
 
 
-  attributes(global) subroutine calc_hybrid_x_in(nx, ny, Q, T, sensor, E)
+  attributes(global) subroutine calc_hybrid_x_in(nx, ny, Q_1, Q_2, Q_3, Q_4, T, sensor, E)
     use mod_constant, only : Normal_x
     integer, intent(in), value                :: nx, ny
-    real(8), intent(in), device, contiguous   :: Q(nx,4,ny)
+    real(8), intent(in), device, contiguous   :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
     real(8), intent(in), device, contiguous   :: T(nx,ny)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny)
-    real(8), intent(out), device, contiguous  :: E(4,nx-1,ny-2)
+    real(8), intent(out), device, contiguous  :: E(nx-1,ny-2,4)
     integer i, j, it, jt, ii, i_base
     real(8), dimension(-(io-1):threadsE%x+io+1, threadsE%y), shared :: rho, u, v, p
     real(8), dimension(threadsE%x, threadsE%y), shared :: rhor, ur, vr, pr
@@ -86,8 +86,8 @@ contains
     do ii = it-io, threadsE%x+io+1, blockDim%x
       i = i_base + ii
       if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny) then
-        rho(ii,jt) = Q(i,1,j); u(ii,jt) = Q(i,2,j)
-          v(ii,jt) = Q(i,3,j); p(ii,jt) = Q(i,4,j)
+        rho(ii,jt) = Q_1(i,j); u(ii,jt) = Q_2(i,j)
+          v(ii,jt) = Q_3(i,j); p(ii,jt) = Q_4(i,j)
       endif
     enddo
     call syncthreads()
@@ -99,7 +99,7 @@ contains
           real(8) tmp(2*io+2)
           tmp = T(i-io:i+io+1, j)
           associate(uu => u)
-            E(:,i,j-1) = KEEP(id_acc, &
+            E(i,j-1,:) = KEEP(id_acc, &
                               rho(it-io:it+io+1,jt), u(it-io:it+io+1,jt), v(it-io:it+io+1,jt), &
                                uu(it-io:it+io+1,jt), p(it-io:it+io+1,jt), tmp, Normal_x)
           end associate
@@ -118,19 +118,19 @@ contains
       associate(un1 => u(it,jt), un2 => ur(it,jt))
         call SLAU(id_slau, rho(it,jt), rhor(it,jt), u(it,jt), ur(it,jt), v(it,jt), vr(it,jt), &
                    un1, un2, p(it,jt), pr(it,jt), Normal_x, 1.0_sp, &
-                  E(1,i,j-1), E(2,i,j-1), E(3,i,j-1), E(4,i,j-1))
+                  E(i,j-1,1), E(i,j-1,2), E(i,j-1,3), E(i,j-1,4))
       end associate
     endif
   end subroutine calc_hybrid_x_in
 
 
-  attributes(global) subroutine calc_hybrid_y_in(nx, ny, Q, T, sensor, F)
+  attributes(global) subroutine calc_hybrid_y_in(nx, ny, Q_1, Q_2, Q_3, Q_4, T, sensor, F)
     use mod_constant, only : Normal_y
     integer, intent(in), value                :: nx, ny
-    real(8), intent(in), device, contiguous   :: Q(nx,4,ny)
+    real(8), intent(in), device, contiguous   :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
     real(8), intent(in), device, contiguous   :: T(nx,ny)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny)
-    real(8), intent(out), device, contiguous  :: F(4,nx-2,ny-1)
+    real(8), intent(out), device, contiguous  :: F(nx-2,ny-1,4)
     integer i, j, it, jt, jj, j_base
     real(8), dimension(-(io-1):threadsF%y+io+1, threadsF%x), shared :: rho, u, v, p
     real(8), dimension(threadsF%y, threadsF%x), shared :: rhor, ur, vr, pr
@@ -142,8 +142,8 @@ contains
     do jj = jt-io, threadsF%y+io+1, blockDim%y
       j = j_base + jj
       if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny) then
-        rho(jj,it) = Q(i,1,j); u(jj,it) = Q(i,2,j)
-          v(jj,it) = Q(i,3,j); p(jj,it) = Q(i,4,j)
+        rho(jj,it) = Q_1(i,j); u(jj,it) = Q_2(i,j)
+          v(jj,it) = Q_3(i,j); p(jj,it) = Q_4(i,j)
       endif
     enddo
     call syncthreads()
@@ -155,7 +155,7 @@ contains
           real(8) tmp(2*io+2)
           tmp = T(i, j-io:j+io+1)
           associate(vv => v)
-            F(:,i-1,j) = KEEP(id_acc, &
+            F(i-1,j,:) = KEEP(id_acc, &
                               rho(jt-io:jt+io+1,it), u(jt-io:jt+io+1,it), v(jt-io:jt+io+1,it), &
                                vv(jt-io:jt+io+1,it), p(jt-io:jt+io+1,it), tmp, Normal_y)
           end associate
@@ -174,7 +174,7 @@ contains
       associate(un1 => v(jt,it), un2 => vr(jt,it))
         call SLAU(id_slau, rho(jt,it), rhor(jt,it), u(jt,it), ur(jt,it), v(jt,it), vr(jt,it), &
                    un1, un2, p(jt,it), pr(jt,it), Normal_y, 1.0_sp, &
-                  F(1,i-1,j), F(2,i-1,j), F(3,i-1,j), F(4,i-1,j))
+                  F(i-1,j,1), F(i-1,j,2), F(i-1,j,3), F(i-1,j,4))
       end associate
     endif
   end subroutine calc_hybrid_y_in

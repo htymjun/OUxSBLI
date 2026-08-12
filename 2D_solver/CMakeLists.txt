@@ -9,7 +9,7 @@ if(NOT DEFINED CASE_GPU_CC)
 endif()
 
 set(SUBROUTINES "name:calc_tau_straight,calc_tau_cross,flux4")
-set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -cuda -acc -fast -Mpreprocess -Mchkptr -Minline=reshape,${SUBROUTINES} -Minfo=accel,inline -gpu=ptxinfo,rdc,lto,cc${CASE_GPU_CC} -lnvhpcwrapnvtx")
+set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -cuda -acc -fast -Mpreprocess -Mchkptr -Minline=reshape,${SUBROUTINES} -Minfo=accel,inline -gpu=ptxinfo,rdc,lto,cc${CASE_GPU_CC},lineinfo -lnvhpcwrapnvtx")
 
 find_package(MPI REQUIRED Fortran)
 find_program(FYPP_EXE fypp REQUIRED)
@@ -22,10 +22,10 @@ macro(add_ouxsbli_2d_case)
   else()
     set(_CASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
   endif()
-  set(FYPP_FLAGS "-I${_CASE_DIR}")
+  set(FYPP_FLAGS "-I${_CASE_DIR}" "-DDIM=2")
 
-  # mod_constant comes from the shared src/ (../../src relative to case dir)
-  set(_PARENT_FYPP "mod_constant")
+  # mod_constant/print come from the shared src/ (../../src relative to case dir)
+  set(_PARENT_FYPP "mod_constant" "calc_muscl" "print")
   # calc_flux_base is the only fypp template in 2D_solver/src/
   set(_SHARED_FYPP
       "calc_flux_base"
@@ -40,6 +40,17 @@ macro(add_ouxsbli_2d_case)
       "calc_slau_kernel_internal"
       "calc_hybrid_kernel"
       "calc_hybrid_kernel_internal")
+
+  # calc_scheme_math.f90.fypp is include'd as raw text (no `module` wrapper) by
+  # calc_keep_kernel/calc_slau_kernel/calc_hybrid_kernel(+_internal) below, not
+  # compiled as its own translation unit -- generate it via a custom target so
+  # it exists before those files compile, without adding it to _GEN/add_executable.
+  set(_SCHEME_MATH_IN  "${CMAKE_CURRENT_SOURCE_DIR}/../../src/calc_scheme_math.f90.fypp")
+  set(_SCHEME_MATH_OUT "${CMAKE_CURRENT_BINARY_DIR}/calc_scheme_math.f90")
+  add_custom_command(OUTPUT ${_SCHEME_MATH_OUT}
+    COMMAND ${FYPP_EXE} ${FYPP_FLAGS} ${_SCHEME_MATH_IN} ${_SCHEME_MATH_OUT}
+    DEPENDS ${_SCHEME_MATH_IN} "${_CASE_DIR}/config.fypp"
+    COMMENT "fypp ../../src: calc_scheme_math (include-only)")
 
   set(_GEN "")
   foreach(_f ${_PARENT_FYPP})
@@ -68,17 +79,18 @@ macro(add_ouxsbli_2d_case)
       "${CMAKE_CURRENT_SOURCE_DIR}/../../src/cpu_gpu_mpi.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../../src/set_coordinate.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../../src/calc_physical_quantities.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../../src/calc_muscl.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../../src/print.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/load_smem_visc2.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/load_smem_visc4.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_hybrid.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_steps.f90"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_div.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/set_bc_common.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/main.f90")
 
   get_filename_component(_CASE "${CMAKE_CURRENT_SOURCE_DIR}" NAME)
+  add_custom_target(${_CASE}_scheme_math DEPENDS ${_SCHEME_MATH_OUT})
   add_executable(${_CASE} ${_BASE} ${CASE_EXTRA_SOURCES} ${_GEN})
+  add_dependencies(${_CASE} ${_CASE}_scheme_math)
   target_link_libraries(${_CASE} PRIVATE MPI::MPI_Fortran)
   if(DEFINED CASE_LINK_OPTIONS)
     target_link_options(${_CASE} PRIVATE ${CASE_LINK_OPTIONS})

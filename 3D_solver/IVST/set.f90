@@ -33,80 +33,86 @@ contains
   subroutine set_init(myrank, nx, ny, nz, x, y, z, Q)
     integer, intent(in)  :: myrank, nx, ny, nz
     real(8), intent(in)  :: x(nx), y(ny), z(nz)
-    real(8), intent(out) :: Q(nx,5,ny,nz)
+    real(8), intent(out) :: Q(nx,ny,nz,5)
     integer i, j, k
     do i = 1, nx
       if (i < int(0.5*nx)) then
-        Q(i,1,:,:) = rhol
-        Q(i,2,:,:) = 0.d0
-        Q(i,3,:,:) = 0.d0
-        Q(i,4,:,:) = 0.d0
-        Q(i,5,:,:) = pl / (gamma  - 1.d0)
+        Q(i,:,:,1) = rhol
+        Q(i,:,:,2) = 0.d0
+        Q(i,:,:,3) = 0.d0
+        Q(i,:,:,4) = 0.d0
+        Q(i,:,:,5) = pl / (gamma  - 1.d0)
       else
-        Q(i,1,:,:) = rhor
-        Q(i,2,:,:) = 0.d0
-        Q(i,3,:,:) = 0.d0
-        Q(i,4,:,:) = 0.d0
-        Q(i,5,:,:) = pr / (gamma - 1.d0)
+        Q(i,:,:,1) = rhor
+        Q(i,:,:,2) = 0.d0
+        Q(i,:,:,3) = 0.d0
+        Q(i,:,:,4) = 0.d0
+        Q(i,:,:,5) = pr / (gamma - 1.d0)
       endif
     enddo
   end subroutine set_init
 
 
-  subroutine set_bc(myrank, nx, ny, nz, Jacobian, Q, Qre)
+  subroutine set_bc(myrank, nx, ny, nz, Jacobian, Q_1, Q_2, Q_3, Q_4, Q_5, Qre_1, Qre_2, Qre_3, Qre_4, Qre_5)
     integer, intent(in), value            :: myrank, nx, ny, nz
     real(8), intent(in), device           :: Jacobian(ny)
-    real(8), intent(inout), device        :: Q(nx,5,ny,nz) ! Q / J
-    real(8), intent(in), device, optional :: Qre(ny*(nz-6)*5)
-    integer :: i, j, k, l, jc = 4, kc = 4
-    real(8), device :: Qc(nx,5)
+    real(8), intent(inout), device        :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz) ! Q / J
+    real(8), intent(in), device, optional :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
+    integer :: i, j, k, jc = 4, kc = 4
+    real(8), device :: Qc_1(nx), Qc_2(nx), Qc_3(nx), Qc_4(nx), Qc_5(nx)
     ! inlet and outlet
     !$cuf kernel do(2) <<<*,*>>>
     do k = 4, 4
       do j = 4, 4
-        Q(1,1,j,k)    = rhol / Jacobian(j)
-        Q(1,2,j,k)    = 0.d0
-        Q(1,3,j,k)    = 0.d0
-        Q(1,4,j,k)    = 0.d0
-        Q(1,5,j,k)    = pl / (gamma - 1.d0) / Jacobian(j)
-        Q(2,1,j,k)    = rhol / Jacobian(j)
-        Q(2,2,j,k)    = 0.d0
-        Q(2,3,j,k)    = 0.d0
-        Q(2,4,j,k)    = 0.d0
-        Q(2,5,j,k)    = pl / (gamma - 1.d0) / Jacobian(j)
-        Q(3,1,j,k)    = rhol / Jacobian(j)
-        Q(3,2,j,k)    = 0.d0
-        Q(3,3,j,k)    = 0.d0
-        Q(3,4,j,k)    = 0.d0
-        Q(3,5,j,k)    = pl / (gamma - 1.d0) / Jacobian(j)
-        Q(nx-2,1,j,k) = rhor / Jacobian(j)
-        Q(nx-2,2,j,k) = 0.d0
-        Q(nx-2,3,j,k) = 0.d0
-        Q(nx-2,4,j,k) = 0.d0
-        Q(nx-2,5,j,k) = pr / (gamma - 1.d0) / Jacobian(j)
-        Q(nx-1,1,j,k) = rhor / Jacobian(j)
-        Q(nx-1,2,j,k) = 0.d0
-        Q(nx-1,3,j,k) = 0.d0
-        Q(nx-1,4,j,k) = 0.d0
-        Q(nx-1,5,j,k) = pr / (gamma - 1.d0) / Jacobian(j)
-        Q(nx,1,j,k)   = rhor / Jacobian(j)
-        Q(nx,2,j,k)   = 0.d0
-        Q(nx,3,j,k)   = 0.d0
-        Q(nx,4,j,k)   = 0.d0
-        Q(nx,5,j,k)   = pr / (gamma - 1.d0) / Jacobian(j)
+        Q_1(1,j,k)    = rhol / Jacobian(j)
+        Q_2(1,j,k)    = 0.d0
+        Q_3(1,j,k)    = 0.d0
+        Q_4(1,j,k)    = 0.d0
+        Q_5(1,j,k)    = pl / (gamma - 1.d0) / Jacobian(j)
+        Q_1(2,j,k)    = rhol / Jacobian(j)
+        Q_2(2,j,k)    = 0.d0
+        Q_3(2,j,k)    = 0.d0
+        Q_4(2,j,k)    = 0.d0
+        Q_5(2,j,k)    = pl / (gamma - 1.d0) / Jacobian(j)
+        Q_1(3,j,k)    = rhol / Jacobian(j)
+        Q_2(3,j,k)    = 0.d0
+        Q_3(3,j,k)    = 0.d0
+        Q_4(3,j,k)    = 0.d0
+        Q_5(3,j,k)    = pl / (gamma - 1.d0) / Jacobian(j)
+        Q_1(nx-2,j,k) = rhor / Jacobian(j)
+        Q_2(nx-2,j,k) = 0.d0
+        Q_3(nx-2,j,k) = 0.d0
+        Q_4(nx-2,j,k) = 0.d0
+        Q_5(nx-2,j,k) = pr / (gamma - 1.d0) / Jacobian(j)
+        Q_1(nx-1,j,k) = rhor / Jacobian(j)
+        Q_2(nx-1,j,k) = 0.d0
+        Q_3(nx-1,j,k) = 0.d0
+        Q_4(nx-1,j,k) = 0.d0
+        Q_5(nx-1,j,k) = pr / (gamma - 1.d0) / Jacobian(j)
+        Q_1(nx,j,k)   = rhor / Jacobian(j)
+        Q_2(nx,j,k)   = 0.d0
+        Q_3(nx,j,k)   = 0.d0
+        Q_4(nx,j,k)   = 0.d0
+        Q_5(nx,j,k)   = pr / (gamma - 1.d0) / Jacobian(j)
     enddo;enddo
-    !$cuf kernel do(2)<<<*,*>>>
-    do l = 1, 5
-      do i = 1, nx
-        Qc(i,l) = Q(i,l,jc,kc)
-    enddo;enddo
-    !$cuf kernel do(4)<<<*,*>>>
+    !$cuf kernel do(1)<<<*,*>>>
+    do i = 1, nx
+      Qc_1(i) = Q_1(i,jc,kc)
+      Qc_2(i) = Q_2(i,jc,kc)
+      Qc_3(i) = Q_3(i,jc,kc)
+      Qc_4(i) = Q_4(i,jc,kc)
+      Qc_5(i) = Q_5(i,jc,kc)
+    enddo
+    !$cuf kernel do(3)<<<*,*>>>
     do k = 1, nz
       do j = 1, ny
-        do l = 1, 5
-          do i = 1, nx
-            Q(i,l,j,k) = Qc(i,l)
-    enddo;enddo;enddo;enddo
+        do i = 1, nx
+          Q_1(i,j,k) = Qc_1(i)
+          Q_2(i,j,k) = Qc_2(i)
+          Q_3(i,j,k) = Qc_3(i)
+          Q_4(i,j,k) = Qc_4(i)
+          Q_5(i,j,k) = Qc_5(i)
+    enddo;enddo;enddo
   end subroutine set_bc
 
 

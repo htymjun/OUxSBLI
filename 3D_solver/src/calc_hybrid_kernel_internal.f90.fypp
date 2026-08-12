@@ -4,6 +4,7 @@ module calc_hybrid_kernel_internal
   use mod_constant, only : id_slau, over_gamma_1, R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
   use calc_muscl
   use calc_hybrid
+  use libm
   implicit none
   private
   public calc_hybrid_x_in, calc_hybrid_y_in, calc_hybrid_z_in, calc_hybrid_z_in_koff
@@ -35,8 +36,7 @@ module calc_hybrid_kernel_internal
     module procedure delta_r2, delta_r4, delta_r6
   end interface delta_r
 contains
-  include 'calc_keep_3d.f90'
-  include 'calc_slau_3d.f90'
+  include 'calc_scheme_math.f90'
 
   !$dir inline
   attributes(device) subroutine delta_r2(id_acc, sensor, a, al, ar)
@@ -66,13 +66,14 @@ contains
   end subroutine delta_r6
 
 
-  attributes(global) subroutine calc_hybrid_x_in(nx, ny, nz, Q, T, sensor, E)
+  attributes(global) subroutine calc_hybrid_x_in(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, E)
     use mod_constant, only : Normal_x
     integer, intent(in), value                :: nx, ny, nz
-    real(8), intent(in), device, contiguous   :: Q(nx,5,ny,nz), T(nx,ny,nz)
+    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: E(5,nx-1,ny-2,nz-2)
+    real(8), intent(out), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
     integer i, j, k, it, jt, kt, ii, i_base
+    logical :: jk_in_range
     real(8), dimension(-(io-1):threadsE%x+io+1, threadsE%y, threadsE%z), shared :: rho, u, v, w, p
     real(8), dimension(threadsE%x, threadsE%y, threadsE%z), shared :: rhor, ur, vr, wr, pr
     real(sp) fdx
@@ -81,12 +82,13 @@ contains
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
     k  = (blockIdx%z-1)*blockDim%z + kt + 1
     i_base = (blockIdx%x-1)*blockDim%x
+    jk_in_range = (j >= 1 .and. j <= ny .and. k >= 1 .and. k <= nz)
     do ii = it-io, threadsE%x+io+1, blockDim%x
       i = i_base + ii
-      if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny .and. k >= 1 .and. k <= nz) then
-        rho(ii,jt,kt) = Q(i,1,j,k);   u(ii,jt,kt) = Q(i,2,j,k)
-          v(ii,jt,kt) = Q(i,3,j,k);   w(ii,jt,kt) = Q(i,4,j,k)
-          p(ii,jt,kt) = Q(i,5,j,k)
+      if (i >= 1 .and. i <= nx .and. jk_in_range) then
+        rho(ii,jt,kt) = Q_1(i,j,k);   u(ii,jt,kt) = Q_2(i,j,k)
+          v(ii,jt,kt) = Q_3(i,j,k);   w(ii,jt,kt) = Q_4(i,j,k)
+          p(ii,jt,kt) = Q_5(i,j,k)
       endif
     enddo
     call syncthreads()
@@ -98,7 +100,7 @@ contains
           real(8) tmp(2*io+2)
           tmp = T(i-io:i+io+1, j, k)
           associate(uu => u)
-            E(:,i,j-1,k-1) = KEEP(id_acc, &
+            E(i,j-1,k-1,:) = KEEP(id_acc, &
                                    rho(it-io:it+io+1,jt,kt), u(it-io:it+io+1,jt,kt), &
                                      v(it-io:it+io+1,jt,kt), w(it-io:it+io+1,jt,kt), &
                                     uu(it-io:it+io+1,jt,kt), p(it-io:it+io+1,jt,kt), tmp, Normal_x)
@@ -119,19 +121,20 @@ contains
       associate(un1 => u(it,jt,kt), un2 => ur(it,jt,kt))
         call SLAU(id_slau, rho(it,jt,kt), rhor(it,jt,kt), u(it,jt,kt), ur(it,jt,kt), v(it,jt,kt), vr(it,jt,kt), &
                   w(it,jt,kt), wr(it,jt,kt), un1, un2, p(it,jt,kt), pr(it,jt,kt), Normal_x, 1.0_sp, &
-                  E(1,i,j-1,k-1), E(2,i,j-1,k-1), E(3,i,j-1,k-1), E(4,i,j-1,k-1), E(5,i,j-1,k-1))
+                  E(i,j-1,k-1,1), E(i,j-1,k-1,2), E(i,j-1,k-1,3), E(i,j-1,k-1,4), E(i,j-1,k-1,5))
       end associate
     endif
   end subroutine calc_hybrid_x_in
 
 
-  attributes(global) subroutine calc_hybrid_y_in(nx, ny, nz, Q, T, sensor, F)
+  attributes(global) subroutine calc_hybrid_y_in(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, F)
     use mod_constant, only : Normal_y
     integer, intent(in), value                :: nx, ny, nz
-    real(8), intent(in), device, contiguous   :: Q(nx,5,ny,nz), T(nx,ny,nz)
+    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: F(5,nx-2,ny-1,nz-2)
+    real(8), intent(out), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
     integer i, j, k, it, jt, kt, jj, j_base
+    logical :: ik_in_range
     real(8), dimension(-(io-1):threadsF%y+io+1, threadsF%x, threadsF%z), shared :: rho, u, v, w, p
     real(8), dimension(threadsF%y, threadsF%x, threadsF%z), shared :: rhor, ur, vr, wr, pr
     real(sp) fdy
@@ -140,12 +143,13 @@ contains
     i  = (blockIdx%x-1)*blockDim%x + it + 1
     k  = (blockIdx%z-1)*blockDim%z + kt + 1
     j_base = (blockIdx%y-1)*blockDim%y
+    ik_in_range = (i >= 1 .and. i <= nx .and. k >= 1 .and. k <= nz)
     do jj = jt-io, threadsF%y+io+1, blockDim%y
       j = j_base + jj
-      if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny .and. k >= 1 .and. k <= nz) then
-        rho(jj,it,kt) = Q(i,1,j,k);   u(jj,it,kt) = Q(i,2,j,k)
-          v(jj,it,kt) = Q(i,3,j,k);   w(jj,it,kt) = Q(i,4,j,k)
-          p(jj,it,kt) = Q(i,5,j,k)
+      if (ik_in_range .and. j >= 1 .and. j <= ny) then
+        rho(jj,it,kt) = Q_1(i,j,k);   u(jj,it,kt) = Q_2(i,j,k)
+          v(jj,it,kt) = Q_3(i,j,k);   w(jj,it,kt) = Q_4(i,j,k)
+          p(jj,it,kt) = Q_5(i,j,k)
       endif
     enddo
     call syncthreads()
@@ -157,7 +161,7 @@ contains
           real(8) tmp(2*io+2)
           tmp = T(i, j-io:j+io+1, k)
           associate(vv => v)
-            F(:,i-1,j,k-1) = KEEP(id_acc, &
+            F(i-1,j,k-1,:) = KEEP(id_acc, &
                                    rho(jt-io:jt+io+1,it,kt), u(jt-io:jt+io+1,it,kt), &
                                      v(jt-io:jt+io+1,it,kt), w(jt-io:jt+io+1,it,kt), &
                                     vv(jt-io:jt+io+1,it,kt), p(jt-io:jt+io+1,it,kt), tmp, Normal_y)
@@ -178,19 +182,20 @@ contains
       associate(un1 => v(jt,it,kt), un2 => vr(jt,it,kt))
         call SLAU(id_slau, rho(jt,it,kt), rhor(jt,it,kt), u(jt,it,kt), ur(jt,it,kt), v(jt,it,kt), vr(jt,it,kt), &
                   w(jt,it,kt), wr(jt,it,kt), un1, un2, p(jt,it,kt), pr(jt,it,kt), Normal_y, 1.0_sp, &
-                  F(1,i-1,j,k-1), F(2,i-1,j,k-1), F(3,i-1,j,k-1), F(4,i-1,j,k-1), F(5,i-1,j,k-1))
+                  F(i-1,j,k-1,1), F(i-1,j,k-1,2), F(i-1,j,k-1,3), F(i-1,j,k-1,4), F(i-1,j,k-1,5))
       end associate
     endif
   end subroutine calc_hybrid_y_in
 
 
-  attributes(global) subroutine calc_hybrid_z_in(nx, ny, nz, Q, T, sensor, G)
+  attributes(global) subroutine calc_hybrid_z_in(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, G)
     use mod_constant, only : Normal_z
     integer, intent(in), value                :: nx, ny, nz
-    real(8), intent(in), device, contiguous   :: Q(nx,5,ny,nz), T(nx,ny,nz)
+    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: G(5,nx-2,ny-2,nz-1)
+    real(8), intent(out), device, contiguous  :: G(nx-2,ny-2,nz-1,5)
     integer i, j, k, it, jt, kt, kk, k_base
+    logical :: ij_in_range
     real(8), dimension(-(io-1):threadsG%z+io+1, threadsG%y, threadsG%x), shared :: rho, u, v, w, p
     real(8), dimension(threadsG%z, threadsG%y, threadsG%x), shared :: rhor, ur, vr, wr, pr
     real(sp) fdz
@@ -199,12 +204,13 @@ contains
     i  = (blockIdx%x-1)*blockDim%x + it + 1
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
     k_base = (blockIdx%z-1)*blockDim%z
+    ij_in_range = (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny)
     do kk = kt-io, threadsG%z+io+1, blockDim%z
       k = k_base + kk
-      if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny .and. k >= 1 .and. k <= nz) then
-        rho(kk,jt,it) = Q(i,1,j,k);   u(kk,jt,it) = Q(i,2,j,k)
-          v(kk,jt,it) = Q(i,3,j,k);   w(kk,jt,it) = Q(i,4,j,k)
-          p(kk,jt,it) = Q(i,5,j,k)
+      if (ij_in_range .and. k >= 1 .and. k <= nz) then
+        rho(kk,jt,it) = Q_1(i,j,k);   u(kk,jt,it) = Q_2(i,j,k)
+          v(kk,jt,it) = Q_3(i,j,k);   w(kk,jt,it) = Q_4(i,j,k)
+          p(kk,jt,it) = Q_5(i,j,k)
       endif
     enddo
     call syncthreads()
@@ -216,7 +222,7 @@ contains
           real(8) tmp(2*io+2)
           tmp = T(i, j, k-io:k+io+1)
           associate(ww => w)
-            G(:,i-1,j-1,k) = KEEP(id_acc, &
+            G(i-1,j-1,k,:) = KEEP(id_acc, &
                                    rho(kt-io:kt+io+1,jt,it), u(kt-io:kt+io+1,jt,it), &
                                      v(kt-io:kt+io+1,jt,it), w(kt-io:kt+io+1,jt,it), &
                                     ww(kt-io:kt+io+1,jt,it), p(kt-io:kt+io+1,jt,it), tmp, Normal_z)
@@ -237,19 +243,20 @@ contains
       associate(un1 => w(kt,jt,it), un2 => wr(kt,jt,it))
         call SLAU(id_slau, rho(kt,jt,it), rhor(kt,jt,it), u(kt,jt,it), ur(kt,jt,it), v(kt,jt,it), vr(kt,jt,it), &
                   w(kt,jt,it), wr(kt,jt,it), un1, un2, p(kt,jt,it), pr(kt,jt,it), Normal_z, 1.0_sp, &
-                  G(1,i-1,j-1,k), G(2,i-1,j-1,k), G(3,i-1,j-1,k), G(4,i-1,j-1,k), G(5,i-1,j-1,k))
+                  G(i-1,j-1,k,1), G(i-1,j-1,k,2), G(i-1,j-1,k,3), G(i-1,j-1,k,4), G(i-1,j-1,k,5))
       end associate
     endif
   end subroutine calc_hybrid_z_in
 
 
-  attributes(global) subroutine calc_hybrid_z_in_koff(nx, ny, nz, Q, T, sensor, G, k_lo, k_hi)
+  attributes(global) subroutine calc_hybrid_z_in_koff(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, G, k_lo, k_hi)
     use mod_constant, only : Normal_z
     integer, intent(in), value                :: nx, ny, nz, k_lo, k_hi
-    real(8), intent(in), device, contiguous   :: Q(nx,5,ny,nz), T(nx,ny,nz)
+    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: G(5,nx-2,ny-2,nz-1)
+    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     integer i, j, k, it, jt, kt, kk, k_base
+    logical :: ij_in_range
     real(8), dimension(-(io-1):threadsG%z+io+1, threadsG%y, threadsG%x), shared :: rho, u, v, w, p
     real(8), dimension(threadsG%z, threadsG%y, threadsG%x), shared :: rhor, ur, vr, wr, pr
     real(sp) fdz
@@ -258,12 +265,13 @@ contains
     i  = (blockIdx%x-1)*blockDim%x + it + 1
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
     k_base = (blockIdx%z-1)*blockDim%z + k_lo - 1
+    ij_in_range = (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny)
     do kk = kt-io, threadsG%z+io+1, blockDim%z
       k = k_base + kk
-      if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny .and. k >= 1 .and. k <= nz) then
-        rho(kk,jt,it) = Q(i,1,j,k);   u(kk,jt,it) = Q(i,2,j,k)
-          v(kk,jt,it) = Q(i,3,j,k);   w(kk,jt,it) = Q(i,4,j,k)
-          p(kk,jt,it) = Q(i,5,j,k)
+      if (ij_in_range .and. k >= 1 .and. k <= nz) then
+        rho(kk,jt,it) = Q_1(i,j,k);   u(kk,jt,it) = Q_2(i,j,k)
+          v(kk,jt,it) = Q_3(i,j,k);   w(kk,jt,it) = Q_4(i,j,k)
+          p(kk,jt,it) = Q_5(i,j,k)
       endif
     enddo
     call syncthreads()
@@ -275,7 +283,7 @@ contains
           real(8) tmp(2*io+2)
           tmp = T(i, j, k-io:k+io+1)
           associate(ww => w)
-            G(:,i-1,j-1,k) = KEEP(id_acc, &
+            G(i-1,j-1,k,:) = KEEP(id_acc, &
                                    rho(kt-io:kt+io+1,jt,it), u(kt-io:kt+io+1,jt,it), &
                                      v(kt-io:kt+io+1,jt,it), w(kt-io:kt+io+1,jt,it), &
                                     ww(kt-io:kt+io+1,jt,it), p(kt-io:kt+io+1,jt,it), tmp, Normal_z)
@@ -296,7 +304,7 @@ contains
       associate(un1 => w(kt,jt,it), un2 => wr(kt,jt,it))
         call SLAU(id_slau, rho(kt,jt,it), rhor(kt,jt,it), u(kt,jt,it), ur(kt,jt,it), v(kt,jt,it), vr(kt,jt,it), &
                   w(kt,jt,it), wr(kt,jt,it), un1, un2, p(kt,jt,it), pr(kt,jt,it), Normal_z, 1.0_sp, &
-                  G(1,i-1,j-1,k), G(2,i-1,j-1,k), G(3,i-1,j-1,k), G(4,i-1,j-1,k), G(5,i-1,j-1,k))
+                  G(i-1,j-1,k,1), G(i-1,j-1,k,2), G(i-1,j-1,k,3), G(i-1,j-1,k,4), G(i-1,j-1,k,5))
       end associate
     endif
   end subroutine calc_hybrid_z_in_koff

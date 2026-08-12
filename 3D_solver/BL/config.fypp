@@ -1,15 +1,18 @@
-
-#:set VISC = 'NS'
-#:set SCHEME = 'Hybrid'
-#:set ORDER = 6
-#:set BC_X = True
-#:set BC_Y = True
-#:set BC_Z = False
-#:set RESCALE = False
-#:set RK = 3
-#:set COMMZ = False
-#:set RESTART = False
-#:set TVD = 'none'
-#:set SLAU_VARIANT = 'HRSLAU2'
+#:set VISC          = 'NS'
+#! Keep SLAU. KEEP is tempting here (no shocks, and its central stencil adds no
+#! upwind dissipation to thicken a laminar BL) but it diverges on this case, for
+#! the same reason as 2D_solver/BL: with TVD='none' nothing damps the mode
+#! seeded by the abrupt slip->no-slip switch at the leading edge.
+#:set SCHEME        = 'SLAU'
+#:set ORDER         = 6
+#:set TVD           = 'none'
+#:set SLAU_VARIANT  = 'HRSLAU2'
+#:set RESCALE       = False
+#:set RESTART       = False
+#:set RK            = 3
+#:set BC_X          = True
+#:set BC_Y          = True
+#:set BC_Z          = False
+#:set COMMZ         = False
 #:set ORDER_IO = ORDER // 2 - 1
 #:set OUTPUT_PRECISION = 4

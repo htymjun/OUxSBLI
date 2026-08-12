@@ -1,5 +1,6 @@
 *.d
 *.dat
+*.csv
 *.vtr
 *.vts
 *.vtk
@@ -13,14 +14,27 @@
 *.egg-info
 *.pyc
 .vscode
-2D_solver/*/build
-2D_solver/*/data
-3D_solver/*/build
-3D_solver/*/data
-3D_solver_curv/*/build
-3D_solver_curv/*/data
+2D_solver/*/build*
+2D_solver/*/data*
+3D_solver/*/build*
+3D_solver/*/data*
+3D_solver_curv/*/build*
+3D_solver_curv/*/data*
+3D_solver_fltflt/*/build*
+3D_solver_fltflt/*/data*
+3D_solver_fltflt/nsys_ncu
+3D_solver_mixed/*/build*
+3D_solver_mixed/*/data*
+3D_solver_mixed/nsys_ncu
 build
 data
 tmp
 ouxsbli/__pycache__
 ouxsbli/tests/tmp
+__pycache__
+recal
+nohup.out
+# reference data and its plotting scripts must survive the *.dat rule above;
+# generated figures in ref/ stay ignored via *.png
+!2D_solver/*/ref/*.dat
+!2D_solver/*/ref/*.py

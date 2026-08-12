@@ -27,7 +27,7 @@ contains
   subroutine allocate_device_mem_curv(myrank, nx, ny, nz, &
       dt_Szeta, n_xi_x, n_xi_y, n_eta_x, n_eta_y, &
       xi_x, xi_y, eta_x, eta_y, Jacobian, &
-      ruvwp, T, mu, E, F, G)
+      Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, E, F, G)
     use calc_flux_base_curv, only : init_sensor_curv
     integer, intent(in)                       :: myrank
     integer, intent(in)                       :: nx
@@ -39,14 +39,15 @@ contains
     real(8), intent(out), allocatable, device :: xi_x(:,:), xi_y(:,:)
     real(8), intent(out), allocatable, device :: eta_x(:,:), eta_y(:,:)
     real(8), intent(out), allocatable, device :: Jacobian(:,:)
-    real(8), intent(out), allocatable, device :: ruvwp(:,:,:,:)
+    real(8), intent(out), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
     real(8), intent(out), allocatable, device :: T(:,:,:)
     real(8), intent(out), allocatable, device :: mu(:,:,:)
     real(8), intent(out), allocatable, device :: E(:,:,:,:)
     real(8), intent(out), allocatable, device :: F(:,:,:,:)
     real(8), intent(out), allocatable, device :: G(:,:,:,:)
     integer ierr
-    allocate(ruvwp(nx,5,ny,nz), E(5,nx-1,ny-2,nz-2), F(5,nx-2,ny-1,nz-2), G(5,nx-2,ny-2,nz-1), stat=ierr)
+    allocate(Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), &
+             E(nx-1,ny-2,nz-2,5), F(nx-2,ny-1,nz-2,5), G(nx-2,ny-2,nz-1,5), stat=ierr)
     allocate(dt_Szeta(nx-2,ny-2), stat=ierr)
     allocate(n_xi_x(nx-1,ny-2), n_xi_y(nx-1,ny-2), stat=ierr)
     allocate(n_eta_x(nx-2,ny-1), n_eta_y(nx-2,ny-1), stat=ierr)
@@ -76,7 +77,7 @@ contains
       xi_x_cpu, xi_y_cpu, eta_x_cpu, eta_y_cpu, &
       x_phys, y_phys, z, Q, overlap, &
       dt_Szeta, n_xi_x, n_xi_y, n_eta_x, n_eta_y, &
-      xi_x, xi_y, eta_x, eta_y, Jacobian, QJ, ke0, entropy0)
+      xi_x, xi_y, eta_x, eta_y, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, ke0, entropy0)
     use mod_globals, only : dt
     use print_curv, only : print_vtk_curv, make_1d_for_print_curv
     integer, intent(in)                      :: nx
@@ -91,7 +92,7 @@ contains
     real(8), intent(in)                      :: xi_x_cpu(nx,ny), xi_y_cpu(nx,ny)
     real(8), intent(in)                      :: eta_x_cpu(nx,ny), eta_y_cpu(nx,ny)
     real(8), intent(in)                      :: x_phys(nx,ny), y_phys(nx,ny), z(nz)
-    real(8), intent(inout)                   :: Q(nx,5,ny,nz)
+    real(8), intent(inout)                   :: Q(nx,ny,nz,5)
     integer, intent(out)                     :: overlap
     real(8), intent(out), device, contiguous :: dt_Szeta(nx-2,ny-2)
     real(8), intent(out), device, contiguous :: n_xi_x(nx-1,ny-2), n_xi_y(nx-1,ny-2)
@@ -99,17 +100,18 @@ contains
     real(8), intent(out), device, contiguous :: xi_x(nx,ny), xi_y(nx,ny)
     real(8), intent(out), device, contiguous :: eta_x(nx,ny), eta_y(nx,ny)
     real(8), intent(out), device, contiguous :: Jacobian(nx,ny)
-    real(8), intent(out), device, contiguous :: QJ(nx,5,ny,nz)
+    real(8), intent(out), device, contiguous :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
+    real(8), intent(out), device, contiguous :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(4), intent(inout)                   :: ke0, entropy0
     real(8) dt_Szeta_cpu(nx-2,ny-2)
     real(4) rho_flat(nx*ny*nz), p_flat(nx*ny*nz), vel_flat(nx*ny*nz*3)
     integer i, j, k, l, ierr
     ! 1. Compute QJ = Q / Jacobian_code and dt_Szeta = dt / (Jacobian_code * dz) = dt * J_2D
-    do k = 1, nz
-      do j = 1, ny
-        do l = 1, 5
+    do l = 1, 5
+      do k = 1, nz
+        do j = 1, ny
           do i = 1, nx
-            Q(i,l,j,k) = Q(i,l,j,k) / Jac_cpu(i,j)
+            Q(i,j,k,l) = Q(i,j,k,l) / Jac_cpu(i,j)
     enddo;enddo;enddo;enddo
     ! dt_Szeta(i,j) = dt * J_2D(i+1,j+1) where Jac_cpu(i,j) = 1/(J_2D(i,j)*dz)
     do j = 1, ny-2
@@ -127,7 +129,11 @@ contains
     eta_x    = eta_x_cpu
     eta_y    = eta_y_cpu
     Jacobian = Jac_cpu
-    QJ       = Q
+    QJ_1 = Q(:,:,:,1)
+    QJ_2 = Q(:,:,:,2)
+    QJ_3 = Q(:,:,:,3)
+    QJ_4 = Q(:,:,:,4)
+    QJ_5 = Q(:,:,:,5)
     ! 3. Set overlap from compile-time ORDER
     overlap = ${ORDER_IO + 1}$
     ! 4. Output step 0

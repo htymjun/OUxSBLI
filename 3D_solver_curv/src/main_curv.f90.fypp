@@ -34,7 +34,7 @@ program main
                       blocks, blocksE, blocksEv, blocksF, blocksFv, blocksG, blocksGv)
   endif
 
-  allocate(Q(nx,5,ny,nz), x(nx), dx(nx-1), y(ny), dy(ny-1), z(nz), dz(nz-1), Jacobian(nx,ny))
+  allocate(Q(nx,ny,nz,5), x(nx), dx(nx-1), y(ny), dy(ny-1), z(nz), dz(nz-1), Jacobian(nx,ny))
 
   call set_grid(myrank, nx, ny, nz, Lx, Ly, Lz, x, y, z, dx, dy, dz, &
                x_phys_g, y_phys_g)
@@ -101,7 +101,7 @@ program main
       do j = 1, ny
         do i = 1, nx
           do m = 1, 5
-            Q(i,m,j,l) = Jacobian(i,j) * Q(i,m,j,l)
+            Q(i,j,l,m) = Jacobian(i,j) * Q(i,j,l,m)
     enddo;enddo;enddo;enddo
     call cpu_time(t_start)
 

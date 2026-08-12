@@ -18,19 +18,19 @@ contains
     use mod_constant, only : id_accuracy
     integer, intent(in)  :: myrank, nx, ny, nz
     real(8), intent(in)  :: x(nx), y(ny), z(nz)
-    real(8), intent(out) :: Q(nx,5,ny,nz)
+    real(8), intent(out) :: Q(nx,ny,nz,5)
     call init_spectral_velocity(nx, ny, nz, Q)
     call set_bc_cyclic(id_accuracy, nx, ny, nz, Q)
   end subroutine set_init
 
 
-  subroutine set_bc(myrank, nx, ny, nz, Jacobian, Q, Qre)
+  subroutine set_bc(myrank, nx, ny, nz, Jacobian, Q_1, Q_2, Q_3, Q_4, Q_5, Qre_1, Qre_2, Qre_3, Qre_4, Qre_5)
     use mod_constant, only : id_accuracy
     integer, intent(in), value     :: myrank, nx, ny, nz
     real(8), intent(in), device    :: Jacobian(nx,ny,nz)
-    real(8), intent(inout), device :: Q(nx,5,ny,nz)
-    real(8), intent(in), device, optional :: Qre(ny*(nz-6)*5)
-    call set_bc_cyclic(id_accuracy, nx, ny, nz, Q)
+    real(8), intent(inout), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    real(8), intent(in), device, optional :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
+    call set_bc_cyclic(id_accuracy, nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5)
   end subroutine set_bc
 
 

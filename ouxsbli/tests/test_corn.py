@@ -16,8 +16,9 @@ import pathlib
 import pytest
 import numpy as np
 from ouxsbli import Case
-from .utils.vtk_reader import latest_vtr, getGrid, getQ
+from .utils.vtk_reader import latest_vts, getGrid, getQ
 from .utils.oblique_shock import oblique_shock, beta
+from .conftest import assert_close_relative
 
 
 # CORN parameters (from mod_globals.f90)

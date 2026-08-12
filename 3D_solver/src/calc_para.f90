@@ -11,169 +11,201 @@ contains
 
   !> Flatten 3D Q data into 1D arrays for left and right boundaries
   !> Used for MPI halo exchange preparation
-  subroutine flatten(nx, ny, nz, overlap, Q, Q1d_left, Q1d_right)
+  subroutine flatten(nx, ny, nz, overlap, Q_1, Q_2, Q_3, Q_4, Q_5, Q1d_left, Q1d_right)
     integer, intent(in), value   :: nx                                      !< x dimension
     integer, intent(in), value   :: ny                                      !< y dimension
     integer, intent(in), value   :: nz                                      !< z dimension
     integer, intent(in), value   :: overlap                                 !< ghost cell width
-    real(8), intent(in), device  :: Q(nx,5,ny,nz)                           !< 3D conservative variables
+    real(8), intent(in), device  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz) !< 3D conservative variables
     real(8), intent(out), device :: Q1d_left(overlap*(ny-2)*(nz-6)*5)       !< left boundary 1D array
     real(8), intent(out), device :: Q1d_right(overlap*(ny-2)*(nz-6)*5)      !< right boundary 1D array
-    integer i, j, k, l, ni, nj, nk
+    integer i, j, k, ni, nj, nk
     ni = overlap
     nj = ny-2
     nk = nz-6
-    !$cuf kernel do(4)<<<*,*>>>
+    !$cuf kernel do(3)<<<*,*>>>
     do k = 1, nk
       do j = 1, nj
-        do l = 1, 5
-          do i = 1, ni
-            Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*(l-1)+i)  = Q(overlap+i,l,j+1,k+3)
-            Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*(l-1)+i) = Q(nx-2*overlap+i,l,j+1,k+3)
-    enddo;enddo;enddo;enddo
+        do i = 1, ni
+          Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*0+i) = Q_1(overlap+i,j+1,k+3)
+          Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*1+i) = Q_2(overlap+i,j+1,k+3)
+          Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*2+i) = Q_3(overlap+i,j+1,k+3)
+          Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*3+i) = Q_4(overlap+i,j+1,k+3)
+          Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*4+i) = Q_5(overlap+i,j+1,k+3)
+          Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*0+i) = Q_1(nx-2*overlap+i,j+1,k+3)
+          Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*1+i) = Q_2(nx-2*overlap+i,j+1,k+3)
+          Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*2+i) = Q_3(nx-2*overlap+i,j+1,k+3)
+          Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*3+i) = Q_4(nx-2*overlap+i,j+1,k+3)
+          Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*4+i) = Q_5(nx-2*overlap+i,j+1,k+3)
+    enddo;enddo;enddo
   end subroutine flatten
 
 
   !> Flatten 3D Q data into 1D array for left boundary only
-  subroutine flatten_left(nx, ny, nz, overlap, Q, Q1d_left)
+  subroutine flatten_left(nx, ny, nz, overlap, Q_1, Q_2, Q_3, Q_4, Q_5, Q1d_left)
     integer, intent(in), value   :: nx                                 !< x dimension
     integer, intent(in), value   :: ny                                 !< y dimension
     integer, intent(in), value   :: nz                                 !< z dimension
     integer, intent(in), value   :: overlap                            !< ghost cell width
-    real(8), intent(in), device  :: Q(nx,5,ny,nz)                      !< 3D conservative variables
+    real(8), intent(in), device  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz) !< 3D conservative variables
     real(8), intent(out), device :: Q1d_left(overlap*(ny-2)*(nz-6)*5) !< left boundary 1D array
-    integer i, j, k, l, ni, nj, nk
+    integer i, j, k, ni, nj, nk
     ni = overlap
     nj = ny-2
     nk = nz-6
-    !$cuf kernel do(4)<<<*,*>>>
+    !$cuf kernel do(3)<<<*,*>>>
     do k = 1, nk
       do j = 1, nj
-        do l = 1, 5
-          do i = 1, ni
-            Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*(l-1)+i)  = Q(overlap+i,l,j+1,k+3)
-    enddo;enddo;enddo;enddo
+        do i = 1, ni
+          Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*0+i) = Q_1(overlap+i,j+1,k+3)
+          Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*1+i) = Q_2(overlap+i,j+1,k+3)
+          Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*2+i) = Q_3(overlap+i,j+1,k+3)
+          Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*3+i) = Q_4(overlap+i,j+1,k+3)
+          Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*4+i) = Q_5(overlap+i,j+1,k+3)
+    enddo;enddo;enddo
   end subroutine flatten_left
 
 
   !> Flatten 3D Q data into 1D array for right boundary only
-  subroutine flatten_right(nx, ny, nz, overlap, Q, Q1d_right)
+  subroutine flatten_right(nx, ny, nz, overlap, Q_1, Q_2, Q_3, Q_4, Q_5, Q1d_right)
     integer, intent(in), value   :: nx                                  !< x dimension
     integer, intent(in), value   :: ny                                  !< y dimension
     integer, intent(in), value   :: nz                                  !< z dimension
     integer, intent(in), value   :: overlap                             !< ghost cell width
-    real(8), intent(in), device  :: Q(nx,5,ny,nz)                       !< 3D conservative variables
+    real(8), intent(in), device  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz) !< 3D conservative variables
     real(8), intent(out), device :: Q1d_right(overlap*(ny-2)*(nz-6)*5) !< right boundary 1D array
-    integer i, j, k, l, ni, nj, nk
+    integer i, j, k, ni, nj, nk
     ni = overlap
     nj = ny-2
     nk = nz-6
-    !$cuf kernel do(4)<<<*,*>>>
+    !$cuf kernel do(3)<<<*,*>>>
     do k = 1, nk
       do j = 1, nj
-        do l = 1, 5
-          do i = 1, ni
-            Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*(l-1)+i) = Q(nx-2*overlap+i,l,j+1,k+3)
-    enddo;enddo;enddo;enddo
+        do i = 1, ni
+          Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*0+i) = Q_1(nx-2*overlap+i,j+1,k+3)
+          Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*1+i) = Q_2(nx-2*overlap+i,j+1,k+3)
+          Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*2+i) = Q_3(nx-2*overlap+i,j+1,k+3)
+          Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*3+i) = Q_4(nx-2*overlap+i,j+1,k+3)
+          Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*4+i) = Q_5(nx-2*overlap+i,j+1,k+3)
+    enddo;enddo;enddo
   end subroutine flatten_right
 
 
-  subroutine flatten_rescale(nx, ny, nz, nre, overlap, Q, Q1d_right)
+  subroutine flatten_rescale(nx, ny, nz, nre, overlap, Q_1, Q_2, Q_3, Q_4, Q_5, Q1d_right)
     integer, intent(in), value   :: nx, ny, nz, nre, overlap
-    real(8), intent(in), device  :: Q(nx,5,ny,nz)
+    real(8), intent(in), device  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     real(8), intent(out), device :: Q1d_right(overlap*(ny-2)*(nz-6)*5)
-    integer i, j, k, l, ni, nj, nk
+    integer i, j, k, ni, nj, nk
     ni = overlap
     nj = ny-2
     nk = nz-6
-    !$cuf kernel do(4)<<<*,*>>>
+    !$cuf kernel do(3)<<<*,*>>>
     do k = 1, nk
       do j = 1, nj
-        do l = 1, 5
-          do i = 1, ni
-            Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*(l-1)+i) = Q(nre-2*overlap+i,l,j+1,k+3)
-    enddo;enddo;enddo;enddo
+        do i = 1, ni
+          Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*0+i) = Q_1(nre-2*overlap+i,j+1,k+3)
+          Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*1+i) = Q_2(nre-2*overlap+i,j+1,k+3)
+          Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*2+i) = Q_3(nre-2*overlap+i,j+1,k+3)
+          Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*3+i) = Q_4(nre-2*overlap+i,j+1,k+3)
+          Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*4+i) = Q_5(nre-2*overlap+i,j+1,k+3)
+    enddo;enddo;enddo
   end subroutine flatten_rescale
 
 
-  subroutine reconstruct(nx, ny, nz, overlap, Q1d_left, Q1d_right, Q)
+  subroutine reconstruct(nx, ny, nz, overlap, Q1d_left, Q1d_right, Q_1, Q_2, Q_3, Q_4, Q_5)
     integer, intent(in), value   :: nx, ny, nz, overlap
     real(8), intent(in), device  :: Q1d_left(overlap*(ny-2)*(nz-6)*5)
     real(8), intent(in), device  :: Q1d_right(overlap*(ny-2)*(nz-6)*5)
-    real(8), intent(out), device :: Q(nx,5,ny,nz)
-    integer i, j, k, l, ni, nj, nk
+    real(8), intent(out), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    integer i, j, k, ni, nj, nk
     ni = overlap
     nj = ny-2
     nk = nz-6
-    !$cuf kernel do(4)<<<*,*>>>
+    !$cuf kernel do(3)<<<*,*>>>
     do k = 1, nk
       do j = 1, nj
-        do l = 1, 5
-          do i = 1, ni
-            Q(i,l,j+1,k+3)            =  Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*(l-1)+i)
-            Q(nx-overlap+i,l,j+1,k+3) = Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*(l-1)+i)
-    enddo;enddo;enddo;enddo
+        do i = 1, ni
+          Q_1(i,j+1,k+3)            =  Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*0+i)
+          Q_2(i,j+1,k+3)            =  Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*1+i)
+          Q_3(i,j+1,k+3)            =  Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*2+i)
+          Q_4(i,j+1,k+3)            =  Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*3+i)
+          Q_5(i,j+1,k+3)            =  Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*4+i)
+          Q_1(nx-overlap+i,j+1,k+3) = Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*0+i)
+          Q_2(nx-overlap+i,j+1,k+3) = Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*1+i)
+          Q_3(nx-overlap+i,j+1,k+3) = Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*2+i)
+          Q_4(nx-overlap+i,j+1,k+3) = Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*3+i)
+          Q_5(nx-overlap+i,j+1,k+3) = Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*4+i)
+    enddo;enddo;enddo
   end subroutine reconstruct
 
 
-  subroutine reconstruct_left(nx, ny, nz, overlap, Q1d_left, Q)
+  subroutine reconstruct_left(nx, ny, nz, overlap, Q1d_left, Q_1, Q_2, Q_3, Q_4, Q_5)
     integer, intent(in), value   :: nx, ny, nz, overlap
     real(8), intent(in), device  :: Q1d_left(overlap*(ny-2)*(nz-6)*5)
-    real(8), intent(out), device :: Q(nx,5,ny,nz)
-    integer i, j, k, l, ni, nj, nk
+    real(8), intent(out), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    integer i, j, k, ni, nj, nk
     ni = overlap
     nj = ny-2
     nk = nz-6
-    !$cuf kernel do(4)<<<*,*>>>
+    !$cuf kernel do(3)<<<*,*>>>
     do k = 1, nk
       do j = 1, nj
-        do l = 1, 5
-          do i = 1, ni
-            Q(i,l,j+1,k+3) = Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*(l-1)+i)
-    enddo;enddo;enddo;enddo
+        do i = 1, ni
+          Q_1(i,j+1,k+3) = Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*0+i)
+          Q_2(i,j+1,k+3) = Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*1+i)
+          Q_3(i,j+1,k+3) = Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*2+i)
+          Q_4(i,j+1,k+3) = Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*3+i)
+          Q_5(i,j+1,k+3) = Q1d_left(nj*ni*5*(k-1)+ni*5*(j-1)+ni*4+i)
+    enddo;enddo;enddo
   end subroutine reconstruct_left
 
 
-  subroutine reconstruct_right(nx, ny, nz, overlap, Q1d_right, Q)
+  subroutine reconstruct_right(nx, ny, nz, overlap, Q1d_right, Q_1, Q_2, Q_3, Q_4, Q_5)
     integer, intent(in), value   :: nx, ny, nz, overlap
     real(8), intent(in), device  :: Q1d_right(overlap*(ny-2)*(nz-6)*5)
-    real(8), intent(out), device :: Q(nx,5,ny,nz)
-    integer i, j, k, l, ni, nj, nk
+    real(8), intent(out), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    integer i, j, k, ni, nj, nk
     ni = overlap
     nj = ny-2
     nk = nz-6
-    !$cuf kernel do(4)<<<*,*>>>
+    !$cuf kernel do(3)<<<*,*>>>
     do k = 1, nk
       do j = 1, nj
-        do l = 1, 5
-          do i = 1, ni
-            Q(nx-overlap+i,l,j+1,k+3) = Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*(l-1)+i)
-    enddo;enddo;enddo;enddo
+        do i = 1, ni
+          Q_1(nx-overlap+i,j+1,k+3) = Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*0+i)
+          Q_2(nx-overlap+i,j+1,k+3) = Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*1+i)
+          Q_3(nx-overlap+i,j+1,k+3) = Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*2+i)
+          Q_4(nx-overlap+i,j+1,k+3) = Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*3+i)
+          Q_5(nx-overlap+i,j+1,k+3) = Q1d_right(nj*ni*5*(k-1)+ni*5*(j-1)+ni*4+i)
+    enddo;enddo;enddo
   end subroutine reconstruct_right
 
 
-  subroutine reconstruct_sbli_inlet(nx, ny1, ny2, nz, overlap, Q1d, Q)
+  subroutine reconstruct_sbli_inlet(nx, ny1, ny2, nz, overlap, Q1d, Q_1, Q_2, Q_3, Q_4, Q_5)
     integer, intent(in), value     :: nx, ny1, ny2, nz, overlap
     real(8), intent(in), device    :: Q1d(overlap*(ny1-2)*(nz-6)*5)
-    real(8), intent(inout), device :: Q(nx,5,ny2,nz)
-    integer i, j, k, l, ni, nj, nk
+    real(8), intent(inout), device :: Q_1(nx,ny2,nz), Q_2(nx,ny2,nz), Q_3(nx,ny2,nz), Q_4(nx,ny2,nz), Q_5(nx,ny2,nz)
+    integer i, j, k, ni, nj, nk
     ni = overlap
     nj = ny1-2
     nk = nz-6
-    !$cuf kernel do(4)<<<*,*>>>
+    !$cuf kernel do(3)<<<*,*>>>
     do k = 1, nk
       do j = 1, nj
-        do l = 1, 5
-          do i = 1, overlap
-            Q(i,l,j+1,k+3) = Q1d(nj*ni*5*(k-1)+ni*5*(j-1)+ni*(l-1)+i)
-    enddo;enddo;enddo;enddo
+        do i = 1, overlap
+          Q_1(i,j+1,k+3) = Q1d(nj*ni*5*(k-1)+ni*5*(j-1)+ni*0+i)
+          Q_2(i,j+1,k+3) = Q1d(nj*ni*5*(k-1)+ni*5*(j-1)+ni*1+i)
+          Q_3(i,j+1,k+3) = Q1d(nj*ni*5*(k-1)+ni*5*(j-1)+ni*2+i)
+          Q_4(i,j+1,k+3) = Q1d(nj*ni*5*(k-1)+ni*5*(j-1)+ni*3+i)
+          Q_5(i,j+1,k+3) = Q1d(nj*ni*5*(k-1)+ni*5*(j-1)+ni*4+i)
+    enddo;enddo;enddo
   end subroutine reconstruct_sbli_inlet
 
 
-  subroutine exchange_cyclic(id_rescale, myrank, nranks, overlap, nx, ny, nz, QJ)
+  subroutine exchange_cyclic(id_rescale, myrank, nranks, overlap, nx, ny, nz, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     integer(kind=2), intent(in), value :: id_rescale
     integer, intent(in), value         :: myrank, nranks, overlap, nx, ny, nz
-    real(8), intent(inout), device     :: QJ(nx,5,ny,nz) ! Q / Jacobian
+    real(8), intent(inout), device     :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz) ! Q / Jacobian
     integer rank1, rank2, stat, ierr, istat(MPI_STATUS_SIZE)
     real(8), allocatable                                 :: Qs_left(:),   Qs_right(:),   Qr_left(:),   Qr_right(:)
     real(8), dimension(overlap*(ny-2)*(nz-6)*5), device :: Qs1d_left, Qs1d_right, Qr1d_left, Qr1d_right
@@ -191,7 +223,7 @@ contains
       rank2 = 0
     endif
 
-    call flatten(nx, ny, nz, overlap, QJ, Qs1d_left, Qs1d_right)
+    call flatten(nx, ny, nz, overlap, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Qs1d_left, Qs1d_right)
 
     stat = cudaMemcpy(Qs_left, Qs1d_left, 5*overlap*(ny-2)*(nz-6), cudaMemcpyDeviceToHost)
     call MPI_SENDRECV(Qs_left,  5*overlap*(ny-2)*(nz-6), MPI_REAL8, rank1, 0, &
@@ -205,15 +237,15 @@ contains
 
     stat = cudaStreamSynchronize(1)
     stat = cudaStreamSynchronize(2)
-    call reconstruct(nx, ny, nz, overlap, Qr1d_left, Qr1d_right, QJ)
+    call reconstruct(nx, ny, nz, overlap, Qr1d_left, Qr1d_right, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     deallocate(Qs_left, Qs_right, Qr_left, Qr_right)
   end subroutine exchange_cyclic
 
 
-  subroutine exchange_rescale(id_rescale, myrank, nranks, overlap, nx, ny, nz, QJ)
+  subroutine exchange_rescale(id_rescale, myrank, nranks, overlap, nx, ny, nz, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     integer(kind=4), intent(in), value :: id_rescale
     integer, intent(in), value         :: myrank, nranks, overlap, nx, ny, nz
-    real(8), intent(inout), device     :: QJ(nx,5,ny,nz) ! Q / Jacobian
+    real(8), intent(inout), device     :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz) ! Q / Jacobian
     integer rank1, rank2, stat, ierr, istat(MPI_STATUS_SIZE)
     real(8), allocatable                                 :: Qs_left(:),   Qs_right(:),   Qr_left(:),   Qr_right(:)
     real(8), dimension(overlap*(ny-2)*(nz-6)*5), device :: Qs1d_left, Qs1d_right, Qr1d_left, Qr1d_right
@@ -224,7 +256,7 @@ contains
       rank1 = myrank-2
       rank2 = myrank+2
 
-      call flatten(nx, ny, nz, overlap, QJ, Qs1d_left, Qs1d_right)
+      call flatten(nx, ny, nz, overlap, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Qs1d_left, Qs1d_right)
 
       stat = cudaMemcpy(Qs_left, Qs1d_left, 5*overlap*(ny-2)*(nz-6), cudaMemcpyDeviceToHost)
       call MPI_SENDRECV(Qs_left,  5*overlap*(ny-2)*(nz-6), MPI_REAL8, rank1, 0, &
@@ -238,11 +270,11 @@ contains
       stat = cudaStreamSynchronize(1)
       stat = cudaStreamSynchronize(2)
 
-      call reconstruct(nx, ny, nz, overlap, Qr1d_left, Qr1d_right, QJ)
+      call reconstruct(nx, ny, nz, overlap, Qr1d_left, Qr1d_right, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     elseif (myrank == 0 .and. 4 <= nranks) then
       rank2 = myrank+2
 
-      call flatten_right(nx, ny, nz, overlap, QJ, Qs1d_right)
+      call flatten_right(nx, ny, nz, overlap, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Qs1d_right)
 
       call MPI_RECV(Qr_right, 5*overlap*(ny-2)*(nz-6), MPI_REAL8, rank2, 0, MPI_COMM_WORLD, istat, ierr)
       stat = cudaMemcpyAsync(Qr1d_right, Qr_right, 5*overlap*(ny-2)*(nz-6), cudaMemcpyHostToDevice, 1)
@@ -251,11 +283,11 @@ contains
       call MPI_SEND(Qs_right, 5*overlap*(ny-2)*(nz-6), MPI_REAL8, rank2, 0, MPI_COMM_WORLD, ierr)
 
       stat = cudaStreamSynchronize(1)
-      call reconstruct_right(nx, ny, nz, overlap, Qr1d_right, QJ)
+      call reconstruct_right(nx, ny, nz, overlap, Qr1d_right, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     elseif (myrank == nranks-2 .and. 4 <= nranks) then
       rank1 = myrank-2
 
-      call flatten_left(nx, ny, nz, overlap, QJ, Qs1d_left)
+      call flatten_left(nx, ny, nz, overlap, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Qs1d_left)
 
       stat = cudaMemcpy(Qs_left, Qs1d_left, 5*overlap*(ny-2)*(nz-6), cudaMemcpyDeviceToHost)
       call MPI_SEND(Qs_left, 5*overlap*(ny-2)*(nz-6), MPI_REAL8, rank1, 0, MPI_COMM_WORLD, ierr)
@@ -263,73 +295,85 @@ contains
       call MPI_RECV(Qr_left, 5*overlap*(ny-2)*(nz-6), MPI_REAL8, rank1, 0, MPI_COMM_WORLD, istat, ierr)
       stat = cudaMemcpy(Qr1d_left, Qr_left, 5*overlap*(ny-2)*(nz-6), cudaMemcpyHostToDevice)
 
-      call reconstruct_left(nx, ny, nz, overlap, Qr1d_left, QJ)
+      call reconstruct_left(nx, ny, nz, overlap, Qr1d_left, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     endif
     deallocate(Qs_left, Qs_right, Qr_left, Qr_right)
   end subroutine exchange_rescale
 
 
   !> Pack bottom z interior slab (z=overlap+1..2*overlap) for sending to rank_lo
-  subroutine flatten_z_lo(nx, ny, nz, overlap, Q, Q1d_lo)
+  subroutine flatten_z_lo(nx, ny, nz, overlap, Q_1, Q_2, Q_3, Q_4, Q_5, Q1d_lo)
     integer, intent(in), value   :: nx, ny, nz, overlap
-    real(8), intent(in), device  :: Q(nx,5,ny,nz)
+    real(8), intent(in), device  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     real(8), intent(out), device :: Q1d_lo(nx*ny*overlap*5)
-    integer i, j, k, l
-    !$cuf kernel do(4)<<<*,*>>>
+    integer i, j, k
+    !$cuf kernel do(3)<<<*,*>>>
     do k = 1, overlap
       do j = 1, ny
-        do l = 1, 5
-          do i = 1, nx
-            Q1d_lo(ny*nx*5*(k-1)+nx*5*(j-1)+nx*(l-1)+i) = Q(i,l,j,overlap+k)
-    enddo;enddo;enddo;enddo
+        do i = 1, nx
+          Q1d_lo(ny*nx*5*(k-1)+nx*5*(j-1)+nx*0+i) = Q_1(i,j,overlap+k)
+          Q1d_lo(ny*nx*5*(k-1)+nx*5*(j-1)+nx*1+i) = Q_2(i,j,overlap+k)
+          Q1d_lo(ny*nx*5*(k-1)+nx*5*(j-1)+nx*2+i) = Q_3(i,j,overlap+k)
+          Q1d_lo(ny*nx*5*(k-1)+nx*5*(j-1)+nx*3+i) = Q_4(i,j,overlap+k)
+          Q1d_lo(ny*nx*5*(k-1)+nx*5*(j-1)+nx*4+i) = Q_5(i,j,overlap+k)
+    enddo;enddo;enddo
   end subroutine flatten_z_lo
 
 
   !> Pack top z interior slab (z=nz-2*overlap+1..nz-overlap) for sending to rank_hi
-  subroutine flatten_z_hi(nx, ny, nz, overlap, Q, Q1d_hi)
+  subroutine flatten_z_hi(nx, ny, nz, overlap, Q_1, Q_2, Q_3, Q_4, Q_5, Q1d_hi)
     integer, intent(in), value   :: nx, ny, nz, overlap
-    real(8), intent(in), device  :: Q(nx,5,ny,nz)
+    real(8), intent(in), device  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     real(8), intent(out), device :: Q1d_hi(nx*ny*overlap*5)
-    integer i, j, k, l
-    !$cuf kernel do(4)<<<*,*>>>
+    integer i, j, k
+    !$cuf kernel do(3)<<<*,*>>>
     do k = 1, overlap
       do j = 1, ny
-        do l = 1, 5
-          do i = 1, nx
-            Q1d_hi(ny*nx*5*(k-1)+nx*5*(j-1)+nx*(l-1)+i) = Q(i,l,j,nz-2*overlap+k)
-    enddo;enddo;enddo;enddo
+        do i = 1, nx
+          Q1d_hi(ny*nx*5*(k-1)+nx*5*(j-1)+nx*0+i) = Q_1(i,j,nz-2*overlap+k)
+          Q1d_hi(ny*nx*5*(k-1)+nx*5*(j-1)+nx*1+i) = Q_2(i,j,nz-2*overlap+k)
+          Q1d_hi(ny*nx*5*(k-1)+nx*5*(j-1)+nx*2+i) = Q_3(i,j,nz-2*overlap+k)
+          Q1d_hi(ny*nx*5*(k-1)+nx*5*(j-1)+nx*3+i) = Q_4(i,j,nz-2*overlap+k)
+          Q1d_hi(ny*nx*5*(k-1)+nx*5*(j-1)+nx*4+i) = Q_5(i,j,nz-2*overlap+k)
+    enddo;enddo;enddo
   end subroutine flatten_z_hi
 
 
   !> Fill bottom z ghost cells (z=1..overlap) from data received from rank_lo
-  subroutine reconstruct_z_lo(nx, ny, nz, overlap, Q1d_lo, Q)
+  subroutine reconstruct_z_lo(nx, ny, nz, overlap, Q1d_lo, Q_1, Q_2, Q_3, Q_4, Q_5)
     integer, intent(in), value     :: nx, ny, nz, overlap
     real(8), intent(in), device    :: Q1d_lo(nx*ny*overlap*5)
-    real(8), intent(inout), device :: Q(nx,5,ny,nz)
-    integer i, j, k, l
-    !$cuf kernel do(4)<<<*,*>>>
+    real(8), intent(inout), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    integer i, j, k
+    !$cuf kernel do(3)<<<*,*>>>
     do k = 1, overlap
       do j = 1, ny
-        do l = 1, 5
-          do i = 1, nx
-            Q(i,l,j,k) = Q1d_lo(ny*nx*5*(k-1)+nx*5*(j-1)+nx*(l-1)+i)
-    enddo;enddo;enddo;enddo
+        do i = 1, nx
+          Q_1(i,j,k) = Q1d_lo(ny*nx*5*(k-1)+nx*5*(j-1)+nx*0+i)
+          Q_2(i,j,k) = Q1d_lo(ny*nx*5*(k-1)+nx*5*(j-1)+nx*1+i)
+          Q_3(i,j,k) = Q1d_lo(ny*nx*5*(k-1)+nx*5*(j-1)+nx*2+i)
+          Q_4(i,j,k) = Q1d_lo(ny*nx*5*(k-1)+nx*5*(j-1)+nx*3+i)
+          Q_5(i,j,k) = Q1d_lo(ny*nx*5*(k-1)+nx*5*(j-1)+nx*4+i)
+    enddo;enddo;enddo
   end subroutine reconstruct_z_lo
 
 
   !> Fill top z ghost cells (z=nz-overlap+1..nz) from data received from rank_hi
-  subroutine reconstruct_z_hi(nx, ny, nz, overlap, Q1d_hi, Q)
+  subroutine reconstruct_z_hi(nx, ny, nz, overlap, Q1d_hi, Q_1, Q_2, Q_3, Q_4, Q_5)
     integer, intent(in), value     :: nx, ny, nz, overlap
     real(8), intent(in), device    :: Q1d_hi(nx*ny*overlap*5)
-    real(8), intent(inout), device :: Q(nx,5,ny,nz)
-    integer i, j, k, l
-    !$cuf kernel do(4)<<<*,*>>>
+    real(8), intent(inout), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    integer i, j, k
+    !$cuf kernel do(3)<<<*,*>>>
     do k = 1, overlap
       do j = 1, ny
-        do l = 1, 5
-          do i = 1, nx
-            Q(i,l,j,nz-overlap+k) = Q1d_hi(ny*nx*5*(k-1)+nx*5*(j-1)+nx*(l-1)+i)
-    enddo;enddo;enddo;enddo
+        do i = 1, nx
+          Q_1(i,j,nz-overlap+k) = Q1d_hi(ny*nx*5*(k-1)+nx*5*(j-1)+nx*0+i)
+          Q_2(i,j,nz-overlap+k) = Q1d_hi(ny*nx*5*(k-1)+nx*5*(j-1)+nx*1+i)
+          Q_3(i,j,nz-overlap+k) = Q1d_hi(ny*nx*5*(k-1)+nx*5*(j-1)+nx*2+i)
+          Q_4(i,j,nz-overlap+k) = Q1d_hi(ny*nx*5*(k-1)+nx*5*(j-1)+nx*3+i)
+          Q_5(i,j,nz-overlap+k) = Q1d_hi(ny*nx*5*(k-1)+nx*5*(j-1)+nx*4+i)
+    enddo;enddo;enddo
   end subroutine reconstruct_z_hi
 
 
@@ -340,11 +384,11 @@ contains
   !> req(1)=Isend to rank_lo  req(2)=Isend to rank_hi
   !> req(3)=Irecv from rank_lo  req(4)=Irecv from rank_hi
   !> Caller must not modify send_lo/send_hi until after MPI_Waitall on req
-  subroutine start_exchange_z(myrank, nranks, overlap, nx, ny, nz, QJ, &
+  subroutine start_exchange_z(myrank, nranks, overlap, nx, ny, nz, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, &
                                Qs1d_lo, Qs1d_hi, Qr1d_lo, Qr1d_hi, &
                                send_lo, send_hi, recv_lo, recv_hi, req)
     integer, intent(in)            :: myrank, nranks, overlap, nx, ny, nz
-    real(8), intent(in), device    :: QJ(nx,5,ny,nz)
+    real(8), intent(in), device    :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8), intent(inout), device :: Qs1d_lo(nx*ny*overlap*5), Qs1d_hi(nx*ny*overlap*5)
     real(8), intent(inout), device :: Qr1d_lo(nx*ny*overlap*5), Qr1d_hi(nx*ny*overlap*5)
     real(8), intent(inout)         :: send_lo(nx*ny*overlap*5), send_hi(nx*ny*overlap*5)
@@ -354,8 +398,8 @@ contains
     rank_lo = mod(myrank - 2 + nranks, nranks)
     rank_hi = mod(myrank + 2, nranks)
     msglen  = nx * ny * overlap * 5
-    call flatten_z_lo(nx, ny, nz, overlap, QJ, Qs1d_lo)
-    call flatten_z_hi(nx, ny, nz, overlap, QJ, Qs1d_hi)
+    call flatten_z_lo(nx, ny, nz, overlap, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Qs1d_lo)
+    call flatten_z_hi(nx, ny, nz, overlap, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Qs1d_hi)
     stat = cudaMemcpy(send_lo, Qs1d_lo, msglen, cudaMemcpyDeviceToHost)
     stat = cudaMemcpy(send_hi, Qs1d_hi, msglen, cudaMemcpyDeviceToHost)
     call MPI_Isend(send_lo, msglen, MPI_REAL8, rank_lo, 20, MPI_COMM_WORLD, req(1), ierr)
@@ -367,11 +411,11 @@ contains
 
   !> Complete z-halo exchange: MPI_Waitall, H2D copy, unpack ghost cells into QJ
   subroutine finish_exchange_z(overlap, nx, ny, nz, &
-                                recv_lo, recv_hi, Qr1d_lo, Qr1d_hi, QJ, req)
+                                recv_lo, recv_hi, Qr1d_lo, Qr1d_hi, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, req)
     integer, intent(in)            :: overlap, nx, ny, nz
     real(8), intent(in)            :: recv_lo(nx*ny*overlap*5), recv_hi(nx*ny*overlap*5)
     real(8), intent(inout), device :: Qr1d_lo(nx*ny*overlap*5), Qr1d_hi(nx*ny*overlap*5)
-    real(8), intent(inout), device :: QJ(nx,5,ny,nz)
+    real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     integer, intent(inout)         :: req(4)
     integer msglen, stat, ierr
     integer istat4(MPI_STATUS_SIZE,4)
@@ -379,8 +423,7 @@ contains
     call MPI_Waitall(4, req, istat4, ierr)
     stat = cudaMemcpy(Qr1d_lo, recv_lo, msglen, cudaMemcpyHostToDevice)
     stat = cudaMemcpy(Qr1d_hi, recv_hi, msglen, cudaMemcpyHostToDevice)
-    call reconstruct_z_lo(nx, ny, nz, overlap, Qr1d_lo, QJ)
-    call reconstruct_z_hi(nx, ny, nz, overlap, Qr1d_hi, QJ)
+    call reconstruct_z_lo(nx, ny, nz, overlap, Qr1d_lo, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
+    call reconstruct_z_hi(nx, ny, nz, overlap, Qr1d_hi, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
   end subroutine finish_exchange_z
 end module calc_para
-

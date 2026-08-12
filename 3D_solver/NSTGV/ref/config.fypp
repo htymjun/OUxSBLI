@@ -1,0 +1,14 @@
+
+#:set VISC = 'NS'
+#:set SCHEME = 'SLAU'
+#:set ORDER = 6
+#:set BC_X = False
+#:set BC_Y = False
+#:set BC_Z = False
+#:set RESCALE = False
+#:set RK = 3
+#:set COMMZ = False
+#:set RESTART = False
+#:set TVD = 'hybrid'
+#:set SLAU_VARIANT = 'HRSLAU2'
+#:set ORDER_IO = ORDER // 2 - 1

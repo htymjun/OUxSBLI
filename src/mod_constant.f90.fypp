@@ -11,10 +11,17 @@
 #:if not defined('BC_Z')
   #:set BC_Z = False
 #:endif
+#:if not defined('FLTFLT_FORK')
+  #:set FLTFLT_FORK = False
+#:endif
 module mod_constant
   use cudafor
   use mod_globals, only : R, gamma, Pr, dimension
+  #:if FLTFLT_FORK
+  use fltflt
+  #:endif
   implicit none
+  ! real(8)
   real(8), parameter :: gamma_1        = gamma - 1.d0
   real(8), parameter :: over_gamma     = 1.d0 / gamma
   real(8), parameter :: over_gamma_1   = 1.d0 / (gamma - 1.d0)
@@ -33,6 +40,40 @@ module mod_constant
   real(8), constant  :: Normal_x(5) = (/0.d0, 1.d0, 0.d0, 0.d0, 0.d0/)
   real(8), constant  :: Normal_y(5) = (/0.d0, 0.d0, 1.d0, 0.d0, 0.d0/)
   real(8), constant  :: Normal_z(5) = (/0.d0, 0.d0, 0.d0, 1.d0, 0.d0/)
+  #:if FLTFLT_FORK
+  ! fltflt (FP32-pair) counterparts -- 3D_solver_fltflt's convective (KEEP/SLAU/
+  ! Hybrid/MUSCL) kernels only. Baseline 3D_solver never defines FLTFLT_FORK, so
+  ! this whole block (and the `use fltflt` above, a module baseline doesn't
+  ! have) is compiled out for it.
+  !
+  ! These have NO compile-time initializer: nvfortran doesn't support a
+  ! type(fltflt) PARAMETER (or a `constant` with a compile-time initializer)
+  ! computed from an expression -- confirmed by direct test, "Too few data
+  ! constants in initialization statement" even for a pure real(8) literal
+  ! expression like `1.d0/3.d0`. Instead each is a plain `constant` (device
+  ! broadcast memory) with no initializer, set once at startup by
+  ! `init_fltflt_constants` below via `fltflt_init` (host+device callable),
+  ! called from `init_streams` (mod_streams.f90) before any kernel runs.
+  type(fltflt), constant :: gamma_1_ff, over_gamma_ff, over_gamma_1_ff, R_over_gamma_1_ff
+  type(fltflt), constant :: Cp_ff, over_Cp_ff, Cp_over_Pr_ff, over_T0_ff, mu0_T0_S_over_T0_2_3_ff
+  type(fltflt), constant :: one_third_ff, two_third_ff, one_sixth_ff, one_twelfth_ff, one_sixty_ff, tan10deg2_ff
+  type(fltflt), constant :: Normal_x_ff(5), Normal_y_ff(5), Normal_z_ff(5)
+  ! Common small-integer/rational literals shared by the KEEP/SLAU fltflt kernels
+  ! (calc_keep_3d_ff.f90, calc_slau_3d_ff.f90) -- precomputed once here instead of
+  ! each call site mixing a bare `d0` literal with a fltflt operand, which would
+  ! silently re-split the real(8) literal into a fresh fltflt value on every call
+  ! via the `_r8` overloads in fltflt.f90.
+  type(fltflt), constant :: c0_25_ff, c0_5_ff, c1_ff, c2_ff
+  ! KEEP6_ff-only literal constants (KEEP6_ff is `include`d into 3 different
+  ! modules -- calc_keep_kernel_internal, calc_hybrid_kernel,
+  ! calc_hybrid_kernel_internal -- so these must live here, not locally in any
+  ! one of them).
+  type(fltflt), constant :: c0_375_ff, c0_075_ff, c0_1875_ff, c0_0375_ff, c8_ff, c37_ff, c0_75_ff, c0_15_ff
+  ! phi_ff (calc_slau_3d_ff.f90) used to recompute `gamma * over_gamma_1_ff` on
+  ! every call (twice per flux point); gamma and over_gamma_1_ff are both fixed
+  ! for the whole run, so precompute once.
+  type(fltflt), constant :: gamma_over_gamma_1_ff
+  #:endif
   ! Fypp-generated kind-dispatch parameters
   #:if VISC == 'Euler'
   integer(2), parameter :: id_visc = 0
@@ -73,8 +114,6 @@ module mod_constant
   integer(2), parameter :: id_scheme = 0
   #:elif SCHEME == 'SLAU'
   real(2),    parameter :: id_scheme = 0
-  #:elif SCHEME == 'Roe'
-  real(4),    parameter :: id_scheme = 0
   #:elif SCHEME == 'Hybrid'
   real(8),    parameter :: id_scheme = 0
   #:endif
@@ -97,5 +136,44 @@ module mod_constant
   integer(4), parameter :: id_rescale = 0
   #:else
   integer(2), parameter :: id_rescale = 0
+  #:endif
+  #:if FLTFLT_FORK
+contains
+  !> One-time host-side init for the fltflt `constant` block above -- must run
+  !> before any device kernel reads these. Called from init_streams
+  !> (mod_streams.f90), which itself already runs once before the time loop.
+  subroutine init_fltflt_constants()
+    gamma_1_ff        = fltflt_init(gamma - 1.d0)
+    over_gamma_ff     = fltflt_init(1.d0 / gamma)
+    over_gamma_1_ff   = fltflt_init(1.d0 / (gamma - 1.d0))
+    R_over_gamma_1_ff = fltflt_init(R / (gamma - 1.d0))
+    Cp_ff             = fltflt_init(gamma * R / (gamma - 1.d0))
+    over_Cp_ff        = fltflt_init(1.d0 / (gamma * R / (gamma - 1.d0)))
+    Cp_over_Pr_ff     = fltflt_init((gamma * R / (gamma - 1.d0)) / Pr)
+    over_T0_ff        = fltflt_init(1.d0 / 273.2d0)
+    mu0_T0_S_over_T0_2_3_ff = fltflt_init(1.716d-5 * 384.2d0 * 273.2d0**(-1.5d0))
+    one_third_ff      = fltflt_init(1.d0 / 3.d0)
+    two_third_ff      = fltflt_init(2.d0 / 3.d0)
+    one_sixth_ff      = fltflt_init(1.d0 / 6.d0)
+    one_twelfth_ff    = fltflt_init(1.d0 / 12.d0)
+    one_sixty_ff      = fltflt_init(1.d0 / 60.d0)
+    tan10deg2_ff      = fltflt_init((tan(10.d0 * acos(-1.d0) / 180.d0))**2)
+    Normal_x_ff = [fltflt_init(0.d0), fltflt_init(1.d0), fltflt_init(0.d0), fltflt_init(0.d0), fltflt_init(0.d0)]
+    Normal_y_ff = [fltflt_init(0.d0), fltflt_init(0.d0), fltflt_init(1.d0), fltflt_init(0.d0), fltflt_init(0.d0)]
+    Normal_z_ff = [fltflt_init(0.d0), fltflt_init(0.d0), fltflt_init(0.d0), fltflt_init(1.d0), fltflt_init(0.d0)]
+    c0_25_ff = fltflt_init(0.25d0)
+    c0_5_ff  = fltflt_init(0.5d0)
+    c1_ff    = fltflt_init(1.d0)
+    c2_ff    = fltflt_init(2.d0)
+    gamma_over_gamma_1_ff = fltflt_init(gamma / (gamma - 1.d0))
+    c0_375_ff  = fltflt_init(0.375d0)
+    c0_075_ff  = fltflt_init(0.075d0)
+    c0_1875_ff = fltflt_init(0.1875d0)
+    c0_0375_ff = fltflt_init(0.0375d0)
+    c8_ff      = fltflt_init(8.d0)
+    c37_ff     = fltflt_init(37.d0)
+    c0_75_ff   = fltflt_init(0.75d0)
+    c0_15_ff   = fltflt_init(0.15d0)
+  end subroutine init_fltflt_constants
   #:endif
 end module mod_constant

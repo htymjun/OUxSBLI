@@ -6,7 +6,7 @@ module calc_visc2_curv
   private
   public calc_Ev2_curv, calc_Ev_LES2_curv, calc_Fv2_curv, calc_Fv_LES2_curv, calc_Gv2_curv, calc_Gv_LES2_curv
 contains
-  attributes(global) subroutine calc_Ev2_curv(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, n_xi_x, n_xi_y, Q, T, mu, E)
+  attributes(global) subroutine calc_Ev2_curv(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, n_xi_x, n_xi_y, Q_2, Q_3, Q_4, T, mu, E)
     integer, intent(in), value                 :: nx
     integer, intent(in), value                 :: ny
     integer, intent(in), value                 :: nz
@@ -17,10 +17,12 @@ contains
     real(8), intent(in), device, contiguous    :: eta_y(nx,ny)
     real(8), intent(in), device, contiguous    :: n_xi_x(nx-1,ny-2)
     real(8), intent(in), device, contiguous    :: n_xi_y(nx-1,ny-2)
-    real(8), intent(in), device, contiguous    :: Q(nx,5,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: T(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: E(5,nx-1,ny-2,nz-2)
+    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
     integer, parameter :: sx = threadsEv%x + 1
     integer, parameter :: sy = threadsEv%y
     integer, parameter :: sz = threadsEv%z
@@ -39,7 +41,7 @@ contains
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
     k  = (blockIdx%z-1)*blockDim%z + kt + 1
     idx = (it-1) + (jt-1)*sx + (kt-1)*sx*sy
-    call load_smem_visc2_curv_x(it, jt, kt, j, k, idx, nx, ny, nz, Q, u, v, w)
+    call load_smem_visc2_curv_x(it, jt, kt, j, k, idx, nx, ny, nz, Q_2, Q_3, Q_4, u, v, w)
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
     nxx = n_xi_x(i, j-1)
     nxy = n_xi_y(i, j-1)
@@ -59,23 +61,23 @@ contains
     ! Block B: η-tangential stencil (4-corner mu, unit Δη)
     my1 = 0.0625d0 * (mu(i,j-1,k) + mu(i,j,k) + mu(i+1,j-1,k) + mu(i+1,j,k))
     my2 = 0.0625d0 * (mu(i,j,k) + mu(i,j+1,k) + mu(i+1,j,k) + mu(i+1,j+1,k))
-    mu_eta_u = my1*(-Q(i,2,j-1,k)-Q(i+1,2,j-1,k)) + (my1-my2)*(u(idx)+u(idx+1)) &
-             + my2*(Q(i,2,j+1,k)+Q(i+1,2,j+1,k))
-    mu_eta_v = my1*(-Q(i,3,j-1,k)-Q(i+1,3,j-1,k)) + (my1-my2)*(v(idx)+v(idx+1)) &
-             + my2*(Q(i,3,j+1,k)+Q(i+1,3,j+1,k))
-    mu_eta_w = my1*(-Q(i,4,j-1,k)-Q(i+1,4,j-1,k)) + (my1-my2)*(w(idx)+w(idx+1)) &
-             + my2*(Q(i,4,j+1,k)+Q(i+1,4,j+1,k))
+    mu_eta_u = my1*(-Q_2(i,j-1,k)-Q_2(i+1,j-1,k)) + (my1-my2)*(u(idx)+u(idx+1)) &
+             + my2*(Q_2(i,j+1,k)+Q_2(i+1,j+1,k))
+    mu_eta_v = my1*(-Q_3(i,j-1,k)-Q_3(i+1,j-1,k)) + (my1-my2)*(v(idx)+v(idx+1)) &
+             + my2*(Q_3(i,j+1,k)+Q_3(i+1,j+1,k))
+    mu_eta_w = my1*(-Q_4(i,j-1,k)-Q_4(i+1,j-1,k)) + (my1-my2)*(w(idx)+w(idx+1)) &
+             + my2*(Q_4(i,j+1,k)+Q_4(i+1,j+1,k))
     dT_deta = 0.25d0 * ((T(i,j+1,k)+T(i+1,j+1,k)) - (T(i,j-1,k)+T(i+1,j-1,k)))
     
     ! Block C: z-tangential stencil (4-corner mu × 1/dz)
     mz1 = 0.0625d0 * (mu(i,j,k-1) + mu(i,j,k) + mu(i+1,j,k-1) + mu(i+1,j,k))
     mz2 = 0.0625d0 * (mu(i,j,k) + mu(i,j,k+1) + mu(i+1,j,k) + mu(i+1,j,k+1))
-    muz = (mz1*(-Q(i,2,j,k-1)-Q(i+1,2,j,k-1)) + (mz1-mz2)*(u(idx)+u(idx+1)) &
-         + mz2*(Q(i,2,j,k+1)+Q(i+1,2,j,k+1))) / dz
-    mwz = (mz1*(-Q(i,4,j,k-1)-Q(i+1,4,j,k-1)) + (mz1-mz2)*(w(idx)+w(idx+1)) &
-         + mz2*(Q(i,4,j,k+1)+Q(i+1,4,j,k+1))) / dz
-    muz_v = (mz1*(-Q(i,3,j,k-1)-Q(i+1,3,j,k-1)) + (mz1-mz2)*(v(idx)+v(idx+1)) &
-           + mz2*(Q(i,3,j,k+1)+Q(i+1,3,j,k+1))) / dz
+    muz = (mz1*(-Q_2(i,j,k-1)-Q_2(i+1,j,k-1)) + (mz1-mz2)*(u(idx)+u(idx+1)) &
+         + mz2*(Q_2(i,j,k+1)+Q_2(i+1,j,k+1))) / dz
+    mwz = (mz1*(-Q_4(i,j,k-1)-Q_4(i+1,j,k-1)) + (mz1-mz2)*(w(idx)+w(idx+1)) &
+         + mz2*(Q_4(i,j,k+1)+Q_4(i+1,j,k+1))) / dz
+    muz_v = (mz1*(-Q_3(i,j,k-1)-Q_3(i+1,j,k-1)) + (mz1-mz2)*(v(idx)+v(idx+1)) &
+           + mz2*(Q_3(i,j,k+1)+Q_3(i+1,j,k+1))) / dz
     
     ! Block D: Physical gradients via chain rule
     mux = mu_f * du_dxi * xi_x_f + mu_eta_u * eta_x_f
@@ -101,14 +103,14 @@ contains
     viscous_work = Cp_over_Pr*mu_f*(dTdx*nxx+dTdy*nxy)/S &
                  + 0.5d0*((u(idx)+u(idx+1))*txx+(v(idx)+v(idx+1))*txy+(w(idx)+w(idx+1))*txz)
     
-    E(2,i,j-1,k-1) = E(2,i,j-1,k-1) - txx * S
-    E(3,i,j-1,k-1) = E(3,i,j-1,k-1) - txy * S
-    E(4,i,j-1,k-1) = E(4,i,j-1,k-1) - txz * S
-    E(5,i,j-1,k-1) = E(5,i,j-1,k-1) - viscous_work * S
+    E(i,j-1,k-1,2) = E(i,j-1,k-1,2) - txx * S
+    E(i,j-1,k-1,3) = E(i,j-1,k-1,3) - txy * S
+    E(i,j-1,k-1,4) = E(i,j-1,k-1,4) - txz * S
+    E(i,j-1,k-1,5) = E(i,j-1,k-1,5) - viscous_work * S
   end subroutine calc_Ev2_curv
 
 
-  attributes(global) subroutine calc_Fv2_curv(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, n_eta_x, n_eta_y, Q, T, mu, F)
+  attributes(global) subroutine calc_Fv2_curv(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, n_eta_x, n_eta_y, Q_2, Q_3, Q_4, T, mu, F)
     integer, intent(in), value                 :: nx
     integer, intent(in), value                 :: ny
     integer, intent(in), value                 :: nz
@@ -119,10 +121,12 @@ contains
     real(8), intent(in), device, contiguous    :: eta_y(nx,ny)
     real(8), intent(in), device, contiguous    :: n_eta_x(nx-2,ny-1)
     real(8), intent(in), device, contiguous    :: n_eta_y(nx-2,ny-1)
-    real(8), intent(in), device, contiguous    :: Q(nx,5,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: T(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: F(5,nx-2,ny-1,nz-2)
+    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
     integer, parameter :: sx = threadsFv%x
     integer, parameter :: sy = threadsFv%y + 1
     integer, parameter :: sz = threadsFv%z
@@ -141,7 +145,7 @@ contains
     j  = (blockIdx%y-1)*blockDim%y + jt
     k  = (blockIdx%z-1)*blockDim%z + kt + 1
     idx = (jt-1) + (it-1)*sy + (kt-1)*sy*sx
-    call load_smem_visc2_curv_y(it, jt, kt, i, k, idx, nx, ny, nz, Q, u, v, w)
+    call load_smem_visc2_curv_y(it, jt, kt, i, k, idx, nx, ny, nz, Q_2, Q_3, Q_4, u, v, w)
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
     
     nex = n_eta_x(i-1, j)
@@ -162,23 +166,23 @@ contains
     ! ξ-cross stencil (mx1, mx2 at ξ-face corners, unit Δξ)
     mx1 = 0.0625d0 * (mu(i-1,j,k) + mu(i,j,k) + mu(i-1,j+1,k) + mu(i,j+1,k))
     mx2 = 0.0625d0 * (mu(i,j,k) + mu(i+1,j,k) + mu(i,j+1,k) + mu(i+1,j+1,k))
-    mu_xi_u = mx1*(-Q(i-1,2,j,k)-Q(i-1,2,j+1,k)) + (mx1-mx2)*(u(idx)+u(idx+1)) &
-            + mx2*(Q(i+1,2,j,k)+Q(i+1,2,j+1,k))
-    mu_xi_v = mx1*(-Q(i-1,3,j,k)-Q(i-1,3,j+1,k)) + (mx1-mx2)*(v(idx)+v(idx+1)) &
-            + mx2*(Q(i+1,3,j,k)+Q(i+1,3,j+1,k))
-    mu_xi_w = mx1*(-Q(i-1,4,j,k)-Q(i-1,4,j+1,k)) + (mx1-mx2)*(w(idx)+w(idx+1)) &
-            + mx2*(Q(i+1,4,j,k)+Q(i+1,4,j+1,k))
+    mu_xi_u = mx1*(-Q_2(i-1,j,k)-Q_2(i-1,j+1,k)) + (mx1-mx2)*(u(idx)+u(idx+1)) &
+            + mx2*(Q_2(i+1,j,k)+Q_2(i+1,j+1,k))
+    mu_xi_v = mx1*(-Q_3(i-1,j,k)-Q_3(i-1,j+1,k)) + (mx1-mx2)*(v(idx)+v(idx+1)) &
+            + mx2*(Q_3(i+1,j,k)+Q_3(i+1,j+1,k))
+    mu_xi_w = mx1*(-Q_4(i-1,j,k)-Q_4(i-1,j+1,k)) + (mx1-mx2)*(w(idx)+w(idx+1)) &
+            + mx2*(Q_4(i+1,j,k)+Q_4(i+1,j+1,k))
     dT_dxi = 0.25d0 * ((T(i+1,j,k)+T(i+1,j+1,k)) - (T(i-1,j,k)+T(i-1,j+1,k)))
     
     ! z-tangential stencil
     mz1 = 0.0625d0 * (mu(i,j,k-1) + mu(i,j,k) + mu(i,j+1,k-1) + mu(i,j+1,k))
     mz2 = 0.0625d0 * (mu(i,j,k) + mu(i,j,k+1) + mu(i,j+1,k) + mu(i,j+1,k+1))
-    mvz = (mz1*(-Q(i,3,j,k-1)-Q(i,3,j+1,k-1)) + (mz1-mz2)*(v(idx)+v(idx+1)) &
-         + mz2*(Q(i,3,j,k+1)+Q(i,3,j+1,k+1))) / dz
-    muz = (mz1*(-Q(i,2,j,k-1)-Q(i,2,j+1,k-1)) + (mz1-mz2)*(u(idx)+u(idx+1)) &
-         + mz2*(Q(i,2,j,k+1)+Q(i,2,j+1,k+1))) / dz
-    mwz = (mz1*(-Q(i,4,j,k-1)-Q(i,4,j+1,k-1)) + (mz1-mz2)*(w(idx)+w(idx+1)) &
-         + mz2*(Q(i,4,j,k+1)+Q(i,4,j+1,k+1))) / dz
+    mvz = (mz1*(-Q_3(i,j,k-1)-Q_3(i,j+1,k-1)) + (mz1-mz2)*(v(idx)+v(idx+1)) &
+         + mz2*(Q_3(i,j,k+1)+Q_3(i,j+1,k+1))) / dz
+    muz = (mz1*(-Q_2(i,j,k-1)-Q_2(i,j+1,k-1)) + (mz1-mz2)*(u(idx)+u(idx+1)) &
+         + mz2*(Q_2(i,j,k+1)+Q_2(i,j+1,k+1))) / dz
+    mwz = (mz1*(-Q_4(i,j,k-1)-Q_4(i,j+1,k-1)) + (mz1-mz2)*(w(idx)+w(idx+1)) &
+         + mz2*(Q_4(i,j,k+1)+Q_4(i,j+1,k+1))) / dz
     
     ! Physical gradients
     mux = mu_xi_u * xi_x_f + mu_f * du_deta * eta_x_f
@@ -204,14 +208,14 @@ contains
     viscous_work = Cp_over_Pr*mu_f*(dTdx*nex+dTdy*ney)/S &
                  + 0.5d0*((u(idx)+u(idx+1))*tyx+(v(idx)+v(idx+1))*tyy+(w(idx)+w(idx+1))*tyz)
     
-    F(2,i-1,j,k-1) = F(2,i-1,j,k-1) - tyx * S
-    F(3,i-1,j,k-1) = F(3,i-1,j,k-1) - tyy * S
-    F(4,i-1,j,k-1) = F(4,i-1,j,k-1) - tyz * S
-    F(5,i-1,j,k-1) = F(5,i-1,j,k-1) - viscous_work * S
+    F(i-1,j,k-1,2) = F(i-1,j,k-1,2) - tyx * S
+    F(i-1,j,k-1,3) = F(i-1,j,k-1,3) - tyy * S
+    F(i-1,j,k-1,4) = F(i-1,j,k-1,4) - tyz * S
+    F(i-1,j,k-1,5) = F(i-1,j,k-1,5) - viscous_work * S
   end subroutine calc_Fv2_curv
 
 
-  attributes(global) subroutine calc_Gv2_curv(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, Q, T, mu, G)
+  attributes(global) subroutine calc_Gv2_curv(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, Q_2, Q_3, Q_4, T, mu, G)
     integer, intent(in), value                 :: nx
     integer, intent(in), value                 :: ny
     integer, intent(in), value                 :: nz
@@ -220,10 +224,12 @@ contains
     real(8), intent(in), device, contiguous    :: xi_y(nx,ny)
     real(8), intent(in), device, contiguous    :: eta_x(nx,ny)
     real(8), intent(in), device, contiguous    :: eta_y(nx,ny)
-    real(8), intent(in), device, contiguous    :: Q(nx,5,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: T(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: G(5,nx-2,ny-2,nz-1)
+    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     integer, parameter :: sx = threadsGv%x
     integer, parameter :: sy = threadsGv%y
     integer, parameter :: sz = threadsGv%z + 1
@@ -242,7 +248,7 @@ contains
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
     k  = (blockIdx%z-1)*blockDim%z + kt
     idx = (kt-1) + (jt-1)*sz + (it-1)*sz*sy
-    call load_smem_visc2_curv_z(it, jt, kt, i, j, idx, nx, ny, nz, Q, u, v, w)
+    call load_smem_visc2_curv_z(it, jt, kt, i, j, idx, nx, ny, nz, Q_2, Q_3, Q_4, u, v, w)
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
     
     ! Metrics at z-face (cell-center values since z is uniform)
@@ -258,22 +264,22 @@ contains
     ! ξ-cross (at z-face corners: mu at (i-1/2, j, k+1/2))
     mx1 = 0.0625d0 * (mu(i-1,j,k) + mu(i,j,k) + mu(i-1,j,k+1) + mu(i,j,k+1))
     mx2 = 0.0625d0 * (mu(i,j,k) + mu(i+1,j,k) + mu(i,j,k+1) + mu(i+1,j,k+1))
-    mu_xi_u = mx1*(-Q(i-1,2,j,k)-Q(i-1,2,j,k+1)) + (mx1-mx2)*(u(idx)+u(idx+1)) &
-            + mx2*(Q(i+1,2,j,k)+Q(i+1,2,j,k+1))
-    mu_xi_v = mx1*(-Q(i-1,3,j,k)-Q(i-1,3,j,k+1)) + (mx1-mx2)*(v(idx)+v(idx+1)) &
-            + mx2*(Q(i+1,3,j,k)+Q(i+1,3,j,k+1))
-    mu_xi_w = mx1*(-Q(i-1,4,j,k)-Q(i-1,4,j,k+1)) + (mx1-mx2)*(w(idx)+w(idx+1)) &
-            + mx2*(Q(i+1,4,j,k)+Q(i+1,4,j,k+1))
+    mu_xi_u = mx1*(-Q_2(i-1,j,k)-Q_2(i-1,j,k+1)) + (mx1-mx2)*(u(idx)+u(idx+1)) &
+            + mx2*(Q_2(i+1,j,k)+Q_2(i+1,j,k+1))
+    mu_xi_v = mx1*(-Q_3(i-1,j,k)-Q_3(i-1,j,k+1)) + (mx1-mx2)*(v(idx)+v(idx+1)) &
+            + mx2*(Q_3(i+1,j,k)+Q_3(i+1,j,k+1))
+    mu_xi_w = mx1*(-Q_4(i-1,j,k)-Q_4(i-1,j,k+1)) + (mx1-mx2)*(w(idx)+w(idx+1)) &
+            + mx2*(Q_4(i+1,j,k)+Q_4(i+1,j,k+1))
     
     ! η-cross (at z-face corners: mu at (i, j-1/2, k+1/2))
     my1 = 0.0625d0 * (mu(i,j-1,k) + mu(i,j,k) + mu(i,j-1,k+1) + mu(i,j,k+1))
     my2 = 0.0625d0 * (mu(i,j,k) + mu(i,j+1,k) + mu(i,j,k+1) + mu(i,j+1,k+1))
-    mu_eta_u = my1*(-Q(i,2,j-1,k)-Q(i,2,j-1,k+1)) + (my1-my2)*(u(idx)+u(idx+1)) &
-             + my2*(Q(i,2,j+1,k)+Q(i,2,j+1,k+1))
-    mu_eta_v = my1*(-Q(i,3,j-1,k)-Q(i,3,j-1,k+1)) + (my1-my2)*(v(idx)+v(idx+1)) &
-             + my2*(Q(i,3,j+1,k)+Q(i,3,j+1,k+1))
-    mu_eta_w = my1*(-Q(i,4,j-1,k)-Q(i,4,j-1,k+1)) + (my1-my2)*(w(idx)+w(idx+1)) &
-             + my2*(Q(i,4,j+1,k)+Q(i,4,j+1,k+1))
+    mu_eta_u = my1*(-Q_2(i,j-1,k)-Q_2(i,j-1,k+1)) + (my1-my2)*(u(idx)+u(idx+1)) &
+             + my2*(Q_2(i,j+1,k)+Q_2(i,j+1,k+1))
+    mu_eta_v = my1*(-Q_3(i,j-1,k)-Q_3(i,j-1,k+1)) + (my1-my2)*(v(idx)+v(idx+1)) &
+             + my2*(Q_3(i,j+1,k)+Q_3(i,j+1,k+1))
+    mu_eta_w = my1*(-Q_4(i,j-1,k)-Q_4(i,j-1,k+1)) + (my1-my2)*(w(idx)+w(idx+1)) &
+             + my2*(Q_4(i,j+1,k)+Q_4(i,j+1,k+1))
     
     ! Physical gradients
     mux = mu_xi_u * xi_x_f + mu_eta_u * eta_x_f
@@ -290,17 +296,17 @@ contains
     viscous_work = Cp_over_Pr * mu_f * dTdz / dz &
                  + 0.5d0 * ((u(idx)+u(idx+1))*tzx + (v(idx)+v(idx+1))*tzy + (w(idx)+w(idx+1))*tzz)
     
-    G(2,i-1,j-1,k) = G(2,i-1,j-1,k) - tzx
-    G(3,i-1,j-1,k) = G(3,i-1,j-1,k) - tzy
-    G(4,i-1,j-1,k) = G(4,i-1,j-1,k) - tzz
-    G(5,i-1,j-1,k) = G(5,i-1,j-1,k) - viscous_work
+    G(i-1,j-1,k,2) = G(i-1,j-1,k,2) - tzx
+    G(i-1,j-1,k,3) = G(i-1,j-1,k,3) - tzy
+    G(i-1,j-1,k,4) = G(i-1,j-1,k,4) - tzz
+    G(i-1,j-1,k,5) = G(i-1,j-1,k,5) - viscous_work
   end subroutine calc_Gv2_curv
 
 
   ! LES versions follow (calc_Ev_LES2_curv, calc_Fv_LES2_curv, calc_Gv_LES2_curv)
   ! For brevity, these follow the same pattern with SGS stress computed from mut
 
-  attributes(global) subroutine calc_Ev_LES2_curv(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, n_xi_x, n_xi_y, Q, T, mu, mut, qc2, E)
+  attributes(global) subroutine calc_Ev_LES2_curv(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, n_xi_x, n_xi_y, Q_2, Q_3, Q_4, T, mu, mut, qc2, E)
     integer, intent(in), value                 :: nx
     integer, intent(in), value                 :: ny
     integer, intent(in), value                 :: nz
@@ -311,12 +317,14 @@ contains
     real(8), intent(in), device, contiguous    :: eta_y(nx,ny)
     real(8), intent(in), device, contiguous    :: n_xi_x(nx-1,ny-2)
     real(8), intent(in), device, contiguous    :: n_xi_y(nx-1,ny-2)
-    real(8), intent(in), device, contiguous    :: Q(nx,5,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: T(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: mut(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: qc2(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: E(5,nx-1,ny-2,nz-2)
+    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
     integer, parameter :: sx = threadsEv%x + 1
     integer, parameter :: sy = threadsEv%y
     integer, parameter :: sz = threadsEv%z
@@ -338,7 +346,7 @@ contains
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
     k  = (blockIdx%z-1)*blockDim%z + kt + 1
     idx = (it-1) + (jt-1)*sx + (kt-1)*sx*sy
-    call load_smem_visc2_curv_x(it, jt, kt, j, k, idx, nx, ny, nz, Q, u, v, w)
+    call load_smem_visc2_curv_x(it, jt, kt, j, k, idx, nx, ny, nz, Q_2, Q_3, Q_4, u, v, w)
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
     nxx = n_xi_x(i, j-1)
     nxy = n_xi_y(i, j-1)
@@ -364,36 +372,36 @@ contains
     ! Molecular viscous terms (same as NS)
     my1 = 0.0625d0 * (mu(i,j-1,k) + mu(i,j,k) + mu(i+1,j-1,k) + mu(i+1,j,k))
     my2 = 0.0625d0 * (mu(i,j,k) + mu(i,j+1,k) + mu(i+1,j,k) + mu(i+1,j+1,k))
-    mu_eta_u = my1*(-Q(i,2,j-1,k)-Q(i+1,2,j-1,k)) + (my1-my2)*(u(idx)+u(idx+1)) &
-             + my2*(Q(i,2,j+1,k)+Q(i+1,2,j+1,k))
-    mu_eta_v = my1*(-Q(i,3,j-1,k)-Q(i+1,3,j-1,k)) + (my1-my2)*(v(idx)+v(idx+1)) &
-             + my2*(Q(i,3,j+1,k)+Q(i+1,3,j+1,k))
-    mu_eta_w = my1*(-Q(i,4,j-1,k)-Q(i+1,4,j-1,k)) + (my1-my2)*(w(idx)+w(idx+1)) &
-             + my2*(Q(i,4,j+1,k)+Q(i+1,4,j+1,k))
+    mu_eta_u = my1*(-Q_2(i,j-1,k)-Q_2(i+1,j-1,k)) + (my1-my2)*(u(idx)+u(idx+1)) &
+             + my2*(Q_2(i,j+1,k)+Q_2(i+1,j+1,k))
+    mu_eta_v = my1*(-Q_3(i,j-1,k)-Q_3(i+1,j-1,k)) + (my1-my2)*(v(idx)+v(idx+1)) &
+             + my2*(Q_3(i,j+1,k)+Q_3(i+1,j+1,k))
+    mu_eta_w = my1*(-Q_4(i,j-1,k)-Q_4(i+1,j-1,k)) + (my1-my2)*(w(idx)+w(idx+1)) &
+             + my2*(Q_4(i,j+1,k)+Q_4(i+1,j+1,k))
     dT_deta = 0.25d0 * ((T(i,j+1,k)+T(i+1,j+1,k)) - (T(i,j-1,k)+T(i+1,j-1,k)))
     
     mz1 = 0.0625d0 * (mu(i,j,k-1) + mu(i,j,k) + mu(i+1,j,k-1) + mu(i+1,j,k))
     mz2 = 0.0625d0 * (mu(i,j,k) + mu(i,j,k+1) + mu(i+1,j,k) + mu(i+1,j,k+1))
-    muz = (mz1*(-Q(i,2,j,k-1)-Q(i+1,2,j,k-1)) + (mz1-mz2)*(u(idx)+u(idx+1)) &
-         + mz2*(Q(i,2,j,k+1)+Q(i+1,2,j,k+1))) / dz
-    mwz = (mz1*(-Q(i,4,j,k-1)-Q(i+1,4,j,k-1)) + (mz1-mz2)*(w(idx)+w(idx+1)) &
-         + mz2*(Q(i,4,j,k+1)+Q(i+1,4,j,k+1))) / dz
-    mvz = (mz1*(-Q(i,3,j,k-1)-Q(i+1,3,j,k-1)) + (mz1-mz2)*(v(idx)+v(idx+1)) &
-         + mz2*(Q(i,3,j,k+1)+Q(i+1,3,j,k+1))) / dz
+    muz = (mz1*(-Q_2(i,j,k-1)-Q_2(i+1,j,k-1)) + (mz1-mz2)*(u(idx)+u(idx+1)) &
+         + mz2*(Q_2(i,j,k+1)+Q_2(i+1,j,k+1))) / dz
+    mwz = (mz1*(-Q_4(i,j,k-1)-Q_4(i+1,j,k-1)) + (mz1-mz2)*(w(idx)+w(idx+1)) &
+         + mz2*(Q_4(i,j,k+1)+Q_4(i+1,j,k+1))) / dz
+    mvz = (mz1*(-Q_3(i,j,k-1)-Q_3(i+1,j,k-1)) + (mz1-mz2)*(v(idx)+v(idx+1)) &
+         + mz2*(Q_3(i,j,k+1)+Q_3(i+1,j,k+1))) / dz
     
     ! SGS viscous terms
-    muysgs = my1sgs*(-Q(i,2,j-1,k)-Q(i+1,2,j-1,k)) + (my1sgs-my2sgs)*(u(idx)+u(idx+1)) &
-           + my2sgs*(Q(i,2,j+1,k)+Q(i+1,2,j+1,k))
-    mvysgs = my1sgs*(-Q(i,3,j-1,k)-Q(i+1,3,j-1,k)) + (my1sgs-my2sgs)*(v(idx)+v(idx+1)) &
-           + my2sgs*(Q(i,3,j+1,k)+Q(i+1,3,j+1,k))
-    muzsgs = (mz1sgs*(-Q(i,2,j,k-1)-Q(i+1,2,j,k-1)) + (mz1sgs-mz2sgs)*(u(idx)+u(idx+1)) &
-            + mz2sgs*(Q(i,2,j,k+1)+Q(i+1,2,j,k+1))) / dz
-    mvzsgs = (mz1sgs*(-Q(i,3,j,k-1)-Q(i+1,3,j,k-1)) + (mz1sgs-mz2sgs)*(v(idx)+v(idx+1)) &
-            + mz2sgs*(Q(i,3,j,k+1)+Q(i+1,3,j,k+1))) / dz
-    mwzsgs = (mz1sgs*(-Q(i,4,j,k-1)-Q(i+1,4,j,k-1)) + (mz1sgs-mz2sgs)*(w(idx)+w(idx+1)) &
-            + mz2sgs*(Q(i,4,j,k+1)+Q(i+1,4,j,k+1))) / dz
-    mwysgs = my1sgs*(-Q(i,4,j-1,k)-Q(i+1,4,j-1,k)) + (my1sgs-my2sgs)*(w(idx)+w(idx+1)) &
-           + my2sgs*(Q(i,4,j+1,k)+Q(i+1,4,j+1,k))
+    muysgs = my1sgs*(-Q_2(i,j-1,k)-Q_2(i+1,j-1,k)) + (my1sgs-my2sgs)*(u(idx)+u(idx+1)) &
+           + my2sgs*(Q_2(i,j+1,k)+Q_2(i+1,j+1,k))
+    mvysgs = my1sgs*(-Q_3(i,j-1,k)-Q_3(i+1,j-1,k)) + (my1sgs-my2sgs)*(v(idx)+v(idx+1)) &
+           + my2sgs*(Q_3(i,j+1,k)+Q_3(i+1,j+1,k))
+    muzsgs = (mz1sgs*(-Q_2(i,j,k-1)-Q_2(i+1,j,k-1)) + (mz1sgs-mz2sgs)*(u(idx)+u(idx+1)) &
+            + mz2sgs*(Q_2(i,j,k+1)+Q_2(i+1,j,k+1))) / dz
+    mvzsgs = (mz1sgs*(-Q_3(i,j,k-1)-Q_3(i+1,j,k-1)) + (mz1sgs-mz2sgs)*(v(idx)+v(idx+1)) &
+            + mz2sgs*(Q_3(i,j,k+1)+Q_3(i+1,j,k+1))) / dz
+    mwzsgs = (mz1sgs*(-Q_4(i,j,k-1)-Q_4(i+1,j,k-1)) + (mz1sgs-mz2sgs)*(w(idx)+w(idx+1)) &
+            + mz2sgs*(Q_4(i,j,k+1)+Q_4(i+1,j,k+1))) / dz
+    mwysgs = my1sgs*(-Q_4(i,j-1,k)-Q_4(i+1,j-1,k)) + (my1sgs-my2sgs)*(w(idx)+w(idx+1)) &
+           + my2sgs*(Q_4(i,j+1,k)+Q_4(i+1,j+1,k))
 
     ! Heat flux SGS
     H1 = Cp*T(i,j,k) + 0.5d0*(u(idx)**2+v(idx)**2+w(idx)**2) + qc2(i,j,k)
@@ -446,14 +454,14 @@ contains
     viscous_work = Cp_over_Pr*mu_f*(dTdx*nxx+dTdy*nxy)/S &
                  + 0.5d0*((u(idx)+u(idx+1))*txx+(v(idx)+v(idx+1))*txy+(w(idx)+w(idx+1))*txz)
     
-    E(2,i,j-1,k-1) = E(2,i,j-1,k-1) - txx * S
-    E(3,i,j-1,k-1) = E(3,i,j-1,k-1) - txy * S
-    E(4,i,j-1,k-1) = E(4,i,j-1,k-1) - txz * S
-    E(5,i,j-1,k-1) = E(5,i,j-1,k-1) - (viscous_work + Hsgs) * S
+    E(i,j-1,k-1,2) = E(i,j-1,k-1,2) - txx * S
+    E(i,j-1,k-1,3) = E(i,j-1,k-1,3) - txy * S
+    E(i,j-1,k-1,4) = E(i,j-1,k-1,4) - txz * S
+    E(i,j-1,k-1,5) = E(i,j-1,k-1,5) - (viscous_work + Hsgs) * S
   end subroutine calc_Ev_LES2_curv
 
 
-  attributes(global) subroutine calc_Fv_LES2_curv(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, n_eta_x, n_eta_y, Q, T, mu, mut, qc2, F)
+  attributes(global) subroutine calc_Fv_LES2_curv(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, n_eta_x, n_eta_y, Q_2, Q_3, Q_4, T, mu, mut, qc2, F)
     integer, intent(in), value                 :: nx
     integer, intent(in), value                 :: ny
     integer, intent(in), value                 :: nz
@@ -464,12 +472,14 @@ contains
     real(8), intent(in), device, contiguous    :: eta_y(nx,ny)
     real(8), intent(in), device, contiguous    :: n_eta_x(nx-2,ny-1)
     real(8), intent(in), device, contiguous    :: n_eta_y(nx-2,ny-1)
-    real(8), intent(in), device, contiguous    :: Q(nx,5,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: T(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: mut(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: qc2(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: F(5,nx-2,ny-1,nz-2)
+    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
     integer, parameter :: sx = threadsFv%x
     integer, parameter :: sy = threadsFv%y + 1
     integer, parameter :: sz = threadsFv%z
@@ -490,7 +500,7 @@ contains
     j  = (blockIdx%y-1)*blockDim%y + jt
     k  = (blockIdx%z-1)*blockDim%z + kt + 1
     idx = (jt-1) + (it-1)*sy + (kt-1)*sy*sx
-    call load_smem_visc2_curv_y(it, jt, kt, i, k, idx, nx, ny, nz, Q, u, v, w)
+    call load_smem_visc2_curv_y(it, jt, kt, i, k, idx, nx, ny, nz, Q_2, Q_3, Q_4, u, v, w)
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
     
     nex = n_eta_x(i-1, j)
@@ -511,12 +521,12 @@ contains
     ! ξ-cross stencil (molecular)
     mx1 = 0.0625d0 * (mu(i-1,j,k) + mu(i,j,k) + mu(i-1,j+1,k) + mu(i,j+1,k))
     mx2 = 0.0625d0 * (mu(i,j,k) + mu(i+1,j,k) + mu(i,j+1,k) + mu(i+1,j+1,k))
-    mu_xi_u = mx1*(-Q(i-1,2,j,k)-Q(i-1,2,j+1,k)) + (mx1-mx2)*(u(idx)+u(idx+1)) &
-            + mx2*(Q(i+1,2,j,k)+Q(i+1,2,j+1,k))
-    mu_xi_v = mx1*(-Q(i-1,3,j,k)-Q(i-1,3,j+1,k)) + (mx1-mx2)*(v(idx)+v(idx+1)) &
-            + mx2*(Q(i+1,3,j,k)+Q(i+1,3,j+1,k))
-    mu_xi_w = mx1*(-Q(i-1,4,j,k)-Q(i-1,4,j+1,k)) + (mx1-mx2)*(w(idx)+w(idx+1)) &
-            + mx2*(Q(i+1,4,j,k)+Q(i+1,4,j+1,k))
+    mu_xi_u = mx1*(-Q_2(i-1,j,k)-Q_2(i-1,j+1,k)) + (mx1-mx2)*(u(idx)+u(idx+1)) &
+            + mx2*(Q_2(i+1,j,k)+Q_2(i+1,j+1,k))
+    mu_xi_v = mx1*(-Q_3(i-1,j,k)-Q_3(i-1,j+1,k)) + (mx1-mx2)*(v(idx)+v(idx+1)) &
+            + mx2*(Q_3(i+1,j,k)+Q_3(i+1,j+1,k))
+    mu_xi_w = mx1*(-Q_4(i-1,j,k)-Q_4(i-1,j+1,k)) + (mx1-mx2)*(w(idx)+w(idx+1)) &
+            + mx2*(Q_4(i+1,j,k)+Q_4(i+1,j+1,k))
     dT_dxi = 0.25d0 * ((T(i+1,j,k)+T(i+1,j+1,k)) - (T(i-1,j,k)+T(i-1,j+1,k)))
     
     ! ξ-cross stencil (SGS)
@@ -526,12 +536,12 @@ contains
     ! z-tangential stencil (molecular)
     mz1 = 0.0625d0 * (mu(i,j,k-1) + mu(i,j,k) + mu(i,j+1,k-1) + mu(i,j+1,k))
     mz2 = 0.0625d0 * (mu(i,j,k) + mu(i,j,k+1) + mu(i,j+1,k) + mu(i,j+1,k+1))
-    mvz = (mz1*(-Q(i,3,j,k-1)-Q(i,3,j+1,k-1)) + (mz1-mz2)*(v(idx)+v(idx+1)) &
-         + mz2*(Q(i,3,j,k+1)+Q(i,3,j+1,k+1))) / dz
-    muz = (mz1*(-Q(i,2,j,k-1)-Q(i,2,j+1,k-1)) + (mz1-mz2)*(u(idx)+u(idx+1)) &
-         + mz2*(Q(i,2,j,k+1)+Q(i,2,j+1,k+1))) / dz
-    mwz = (mz1*(-Q(i,4,j,k-1)-Q(i,4,j+1,k-1)) + (mz1-mz2)*(w(idx)+w(idx+1)) &
-         + mz2*(Q(i,4,j,k+1)+Q(i,4,j+1,k+1))) / dz
+    mvz = (mz1*(-Q_3(i,j,k-1)-Q_3(i,j+1,k-1)) + (mz1-mz2)*(v(idx)+v(idx+1)) &
+         + mz2*(Q_3(i,j,k+1)+Q_3(i,j+1,k+1))) / dz
+    muz = (mz1*(-Q_2(i,j,k-1)-Q_2(i,j+1,k-1)) + (mz1-mz2)*(u(idx)+u(idx+1)) &
+         + mz2*(Q_2(i,j,k+1)+Q_2(i,j+1,k+1))) / dz
+    mwz = (mz1*(-Q_4(i,j,k-1)-Q_4(i,j+1,k-1)) + (mz1-mz2)*(w(idx)+w(idx+1)) &
+         + mz2*(Q_4(i,j,k+1)+Q_4(i,j+1,k+1))) / dz
     
     ! z-tangential stencil (SGS)
     mz1sgs = 0.0625d0 * (mut(i,j,k-1) + mut(i,j,k) + mut(i,j+1,k-1) + mut(i,j+1,k))
@@ -546,18 +556,18 @@ contains
     mwy = mu_xi_w * xi_y_f + mu_f * dw_deta * eta_y_f
     
     ! SGS gradients
-    muysgs = (mx1sgs*(-Q(i-1,2,j,k)-Q(i-1,2,j+1,k)) + (mx1sgs-mx2sgs)*(u(idx)+u(idx+1)) &
-            + mx2sgs*(Q(i+1,2,j,k)+Q(i+1,2,j+1,k)))
-    mvysgs = (mx1sgs*(-Q(i-1,3,j,k)-Q(i-1,3,j+1,k)) + (mx1sgs-mx2sgs)*(v(idx)+v(idx+1)) &
-            + mx2sgs*(Q(i+1,3,j,k)+Q(i+1,3,j+1,k)))
-    mwysgs = (mx1sgs*(-Q(i-1,4,j,k)-Q(i-1,4,j+1,k)) + (mx1sgs-mx2sgs)*(w(idx)+w(idx+1)) &
-            + mx2sgs*(Q(i+1,4,j,k)+Q(i+1,4,j+1,k)))
-    muzsgs = (mz1sgs*(-Q(i,2,j,k-1)-Q(i,2,j+1,k-1)) + (mz1sgs-mz2sgs)*(u(idx)+u(idx+1)) &
-            + mz2sgs*(Q(i,2,j,k+1)+Q(i,2,j+1,k+1))) / dz
-    mvzsgs = (mz1sgs*(-Q(i,3,j,k-1)-Q(i,3,j+1,k-1)) + (mz1sgs-mz2sgs)*(v(idx)+v(idx+1)) &
-            + mz2sgs*(Q(i,3,j,k+1)+Q(i,3,j+1,k+1))) / dz
-    mwzsgs = (mz1sgs*(-Q(i,4,j,k-1)-Q(i,4,j+1,k-1)) + (mz1sgs-mz2sgs)*(w(idx)+w(idx+1)) &
-            + mz2sgs*(Q(i,4,j,k+1)+Q(i,4,j+1,k+1))) / dz
+    muysgs = (mx1sgs*(-Q_2(i-1,j,k)-Q_2(i-1,j+1,k)) + (mx1sgs-mx2sgs)*(u(idx)+u(idx+1)) &
+            + mx2sgs*(Q_2(i+1,j,k)+Q_2(i+1,j+1,k)))
+    mvysgs = (mx1sgs*(-Q_3(i-1,j,k)-Q_3(i-1,j+1,k)) + (mx1sgs-mx2sgs)*(v(idx)+v(idx+1)) &
+            + mx2sgs*(Q_3(i+1,j,k)+Q_3(i+1,j+1,k)))
+    mwysgs = (mx1sgs*(-Q_4(i-1,j,k)-Q_4(i-1,j+1,k)) + (mx1sgs-mx2sgs)*(w(idx)+w(idx+1)) &
+            + mx2sgs*(Q_4(i+1,j,k)+Q_4(i+1,j+1,k)))
+    muzsgs = (mz1sgs*(-Q_2(i,j,k-1)-Q_2(i,j+1,k-1)) + (mz1sgs-mz2sgs)*(u(idx)+u(idx+1)) &
+            + mz2sgs*(Q_2(i,j,k+1)+Q_2(i,j+1,k+1))) / dz
+    mvzsgs = (mz1sgs*(-Q_3(i,j,k-1)-Q_3(i,j+1,k-1)) + (mz1sgs-mz2sgs)*(v(idx)+v(idx+1)) &
+            + mz2sgs*(Q_3(i,j,k+1)+Q_3(i,j+1,k+1))) / dz
+    mwzsgs = (mz1sgs*(-Q_4(i,j,k-1)-Q_4(i,j+1,k-1)) + (mz1sgs-mz2sgs)*(w(idx)+w(idx+1)) &
+            + mz2sgs*(Q_4(i,j,k+1)+Q_4(i,j+1,k+1))) / dz
     
     ! Heat flux SGS
     H1 = Cp*T(i,j,k) + 0.5d0*(u(idx)**2+v(idx)**2+w(idx)**2) + qc2(i,j,k)
@@ -602,14 +612,14 @@ contains
     viscous_work = Cp_over_Pr*mu_f*(dTdx*nex+dTdy*ney)/S &
                  + 0.5d0*((u(idx)+u(idx+1))*tyx+(v(idx)+v(idx+1))*tyy+(w(idx)+w(idx+1))*tyz)
     
-    F(2,i-1,j,k-1) = F(2,i-1,j,k-1) - tyx * S
-    F(3,i-1,j,k-1) = F(3,i-1,j,k-1) - tyy * S
-    F(4,i-1,j,k-1) = F(4,i-1,j,k-1) - tyz * S
-    F(5,i-1,j,k-1) = F(5,i-1,j,k-1) - (viscous_work + Hsgs) * S
+    F(i-1,j,k-1,2) = F(i-1,j,k-1,2) - tyx * S
+    F(i-1,j,k-1,3) = F(i-1,j,k-1,3) - tyy * S
+    F(i-1,j,k-1,4) = F(i-1,j,k-1,4) - tyz * S
+    F(i-1,j,k-1,5) = F(i-1,j,k-1,5) - (viscous_work + Hsgs) * S
   end subroutine calc_Fv_LES2_curv
 
 
-  attributes(global) subroutine calc_Gv_LES2_curv(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, Q, T, mu, mut, qc2, G)
+  attributes(global) subroutine calc_Gv_LES2_curv(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, Q_2, Q_3, Q_4, T, mu, mut, qc2, G)
     integer, intent(in), value                 :: nx
     integer, intent(in), value                 :: ny
     integer, intent(in), value                 :: nz
@@ -618,12 +628,14 @@ contains
     real(8), intent(in), device, contiguous    :: xi_y(nx,ny)
     real(8), intent(in), device, contiguous    :: eta_x(nx,ny)
     real(8), intent(in), device, contiguous    :: eta_y(nx,ny)
-    real(8), intent(in), device, contiguous    :: Q(nx,5,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
+    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: T(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: mut(nx,ny,nz)
     real(8), intent(in), device, contiguous    :: qc2(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: G(5,nx-2,ny-2,nz-1)
+    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     integer, parameter :: sx = threadsGv%x
     integer, parameter :: sy = threadsGv%y
     integer, parameter :: sz = threadsGv%z + 1
@@ -644,7 +656,7 @@ contains
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
     k  = (blockIdx%z-1)*blockDim%z + kt
     idx = (kt-1) + (jt-1)*sz + (it-1)*sz*sy
-    call load_smem_visc2_curv_z(it, jt, kt, i, j, idx, nx, ny, nz, Q, u, v, w)
+    call load_smem_visc2_curv_z(it, jt, kt, i, j, idx, nx, ny, nz, Q_2, Q_3, Q_4, u, v, w)
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
     
     ! Metrics at z-face (cell-center values since z is uniform)
@@ -660,12 +672,12 @@ contains
     ! ξ-cross (at z-face corners: mu at (i-1/2, j, k+1/2))
     mx1 = 0.0625d0 * (mu(i-1,j,k) + mu(i,j,k) + mu(i-1,j,k+1) + mu(i,j,k+1))
     mx2 = 0.0625d0 * (mu(i,j,k) + mu(i+1,j,k) + mu(i,j,k+1) + mu(i+1,j,k+1))
-    mu_xi_u = mx1*(-Q(i-1,2,j,k)-Q(i-1,2,j,k+1)) + (mx1-mx2)*(u(idx)+u(idx+1)) &
-            + mx2*(Q(i+1,2,j,k)+Q(i+1,2,j,k+1))
-    mu_xi_v = mx1*(-Q(i-1,3,j,k)-Q(i-1,3,j,k+1)) + (mx1-mx2)*(v(idx)+v(idx+1)) &
-            + mx2*(Q(i+1,3,j,k)+Q(i+1,3,j,k+1))
-    mu_xi_w = mx1*(-Q(i-1,4,j,k)-Q(i-1,4,j,k+1)) + (mx1-mx2)*(w(idx)+w(idx+1)) &
-            + mx2*(Q(i+1,4,j,k)+Q(i+1,4,j,k+1))
+    mu_xi_u = mx1*(-Q_2(i-1,j,k)-Q_2(i-1,j,k+1)) + (mx1-mx2)*(u(idx)+u(idx+1)) &
+            + mx2*(Q_2(i+1,j,k)+Q_2(i+1,j,k+1))
+    mu_xi_v = mx1*(-Q_3(i-1,j,k)-Q_3(i-1,j,k+1)) + (mx1-mx2)*(v(idx)+v(idx+1)) &
+            + mx2*(Q_3(i+1,j,k)+Q_3(i+1,j,k+1))
+    mu_xi_w = mx1*(-Q_4(i-1,j,k)-Q_4(i-1,j,k+1)) + (mx1-mx2)*(w(idx)+w(idx+1)) &
+            + mx2*(Q_4(i+1,j,k)+Q_4(i+1,j,k+1))
     
     ! ξ-cross (SGS)
     mx1sgs = 0.0625d0 * (mut(i-1,j,k) + mut(i,j,k) + mut(i-1,j,k+1) + mut(i,j,k+1))
@@ -674,12 +686,12 @@ contains
     ! η-cross (at z-face corners: mu at (i, j-1/2, k+1/2))
     my1 = 0.0625d0 * (mu(i,j-1,k) + mu(i,j,k) + mu(i,j-1,k+1) + mu(i,j,k+1))
     my2 = 0.0625d0 * (mu(i,j,k) + mu(i,j+1,k) + mu(i,j,k+1) + mu(i,j+1,k+1))
-    mu_eta_u = my1*(-Q(i,2,j-1,k)-Q(i,2,j-1,k+1)) + (my1-my2)*(u(idx)+u(idx+1)) &
-             + my2*(Q(i,2,j+1,k)+Q(i,2,j+1,k+1))
-    mu_eta_v = my1*(-Q(i,3,j-1,k)-Q(i,3,j-1,k+1)) + (my1-my2)*(v(idx)+v(idx+1)) &
-             + my2*(Q(i,3,j+1,k)+Q(i,3,j+1,k+1))
-    mu_eta_w = my1*(-Q(i,4,j-1,k)-Q(i,4,j-1,k+1)) + (my1-my2)*(w(idx)+w(idx+1)) &
-             + my2*(Q(i,4,j+1,k)+Q(i,4,j+1,k+1))
+    mu_eta_u = my1*(-Q_2(i,j-1,k)-Q_2(i,j-1,k+1)) + (my1-my2)*(u(idx)+u(idx+1)) &
+             + my2*(Q_2(i,j+1,k)+Q_2(i,j+1,k+1))
+    mu_eta_v = my1*(-Q_3(i,j-1,k)-Q_3(i,j-1,k+1)) + (my1-my2)*(v(idx)+v(idx+1)) &
+             + my2*(Q_3(i,j+1,k)+Q_3(i,j+1,k+1))
+    mu_eta_w = my1*(-Q_4(i,j-1,k)-Q_4(i,j-1,k+1)) + (my1-my2)*(w(idx)+w(idx+1)) &
+             + my2*(Q_4(i,j+1,k)+Q_4(i,j+1,k+1))
     
     ! η-cross (SGS)
     my1sgs = 0.0625d0 * (mut(i,j-1,k) + mut(i,j,k) + mut(i,j-1,k+1) + mut(i,j,k+1))
@@ -692,18 +704,18 @@ contains
     mwy = mu_xi_w * xi_y_f + mu_eta_w * eta_y_f
     
     ! SGS gradients (ξ and η cross-stencils)
-    muxsgs = (mx1sgs*(-Q(i-1,2,j,k)-Q(i-1,2,j,k+1)) + (mx1sgs-mx2sgs)*(u(idx)+u(idx+1)) &
-            + mx2sgs*(Q(i+1,2,j,k)+Q(i+1,2,j,k+1)))
-    mu_eta_usgs = (my1sgs*(-Q(i,2,j-1,k)-Q(i,2,j-1,k+1)) + (my1sgs-my2sgs)*(u(idx)+u(idx+1)) &
-                + my2sgs*(Q(i,2,j+1,k)+Q(i,2,j+1,k+1)))
-    mvysgs = (my1sgs*(-Q(i,3,j-1,k)-Q(i,3,j-1,k+1)) + (my1sgs-my2sgs)*(v(idx)+v(idx+1)) &
-            + my2sgs*(Q(i,3,j+1,k)+Q(i,3,j+1,k+1)))
-    mvxsgs = (mx1sgs*(-Q(i-1,3,j,k)-Q(i-1,3,j,k+1)) + (mx1sgs-mx2sgs)*(v(idx)+v(idx+1)) &
-            + mx2sgs*(Q(i+1,3,j,k)+Q(i+1,3,j,k+1)))
-    mwxsgs = (mx1sgs*(-Q(i-1,4,j,k)-Q(i-1,4,j,k+1)) + (mx1sgs-mx2sgs)*(w(idx)+w(idx+1)) &
-            + mx2sgs*(Q(i+1,4,j,k)+Q(i+1,4,j,k+1)))
-    mwysgs = (my1sgs*(-Q(i,4,j-1,k)-Q(i,4,j-1,k+1)) + (my1sgs-my2sgs)*(w(idx)+w(idx+1)) &
-            + my2sgs*(Q(i,4,j+1,k)+Q(i,4,j+1,k+1)))
+    muxsgs = (mx1sgs*(-Q_2(i-1,j,k)-Q_2(i-1,j,k+1)) + (mx1sgs-mx2sgs)*(u(idx)+u(idx+1)) &
+            + mx2sgs*(Q_2(i+1,j,k)+Q_2(i+1,j,k+1)))
+    mu_eta_usgs = (my1sgs*(-Q_2(i,j-1,k)-Q_2(i,j-1,k+1)) + (my1sgs-my2sgs)*(u(idx)+u(idx+1)) &
+                + my2sgs*(Q_2(i,j+1,k)+Q_2(i,j+1,k+1)))
+    mvysgs = (my1sgs*(-Q_3(i,j-1,k)-Q_3(i,j-1,k+1)) + (my1sgs-my2sgs)*(v(idx)+v(idx+1)) &
+            + my2sgs*(Q_3(i,j+1,k)+Q_3(i,j+1,k+1)))
+    mvxsgs = (mx1sgs*(-Q_3(i-1,j,k)-Q_3(i-1,j,k+1)) + (mx1sgs-mx2sgs)*(v(idx)+v(idx+1)) &
+            + mx2sgs*(Q_3(i+1,j,k)+Q_3(i+1,j,k+1)))
+    mwxsgs = (mx1sgs*(-Q_4(i-1,j,k)-Q_4(i-1,j,k+1)) + (mx1sgs-mx2sgs)*(w(idx)+w(idx+1)) &
+            + mx2sgs*(Q_4(i+1,j,k)+Q_4(i+1,j,k+1)))
+    mwysgs = (my1sgs*(-Q_4(i,j-1,k)-Q_4(i,j-1,k+1)) + (my1sgs-my2sgs)*(w(idx)+w(idx+1)) &
+            + my2sgs*(Q_4(i,j+1,k)+Q_4(i,j+1,k+1)))
 
     ! Heat flux SGS
     H1 = Cp*T(i,j,k) + 0.5d0*(u(idx)**2+v(idx)**2+w(idx)**2) + qc2(i,j,k)
@@ -736,10 +748,10 @@ contains
     viscous_work = Cp_over_Pr * mu_f * dTdz / dz &
                  + 0.5d0 * ((u(idx)+u(idx+1))*tzx + (v(idx)+v(idx+1))*tzy + (w(idx)+w(idx+1))*tzz)
     
-    G(2,i-1,j-1,k) = G(2,i-1,j-1,k) - tzx
-    G(3,i-1,j-1,k) = G(3,i-1,j-1,k) - tzy
-    G(4,i-1,j-1,k) = G(4,i-1,j-1,k) - tzz
-    G(5,i-1,j-1,k) = G(5,i-1,j-1,k) - (viscous_work + Hsgs)
+    G(i-1,j-1,k,2) = G(i-1,j-1,k,2) - tzx
+    G(i-1,j-1,k,3) = G(i-1,j-1,k,3) - tzy
+    G(i-1,j-1,k,4) = G(i-1,j-1,k,4) - tzz
+    G(i-1,j-1,k,5) = G(i-1,j-1,k,5) - (viscous_work + Hsgs)
   end subroutine calc_Gv_LES2_curv
 
 end module calc_visc2_curv

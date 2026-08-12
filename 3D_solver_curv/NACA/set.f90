@@ -168,16 +168,16 @@ contains
     use mod_globals, only : Ma_inf, rho_inf, p_inf, T_inf
     integer, intent(in)  :: myrank, nx, ny, nz
     real(8), intent(in)  :: x(nx), y(ny), z(nz)
-    real(8), intent(out) :: Q(nx,5,ny,nz)
+    real(8), intent(out) :: Q(nx,ny,nz,5)
     real(8) u_inf, v_inf, E_inf
     u_inf   = Ma_inf * sqrt(gamma * R * T_inf)
     v_inf   = 0.d0
     E_inf   = p_inf / (gamma - 1.d0) + 0.5d0 * rho_inf * (u_inf**2 + v_inf**2)
-    Q(:,1,:,:) = rho_inf
-    Q(:,2,:,:) = rho_inf * u_inf
-    Q(:,3,:,:) = rho_inf * v_inf
-    Q(:,4,:,:) = 0.d0
-    Q(:,5,:,:) = E_inf
+    Q(:,:,:,1) = rho_inf
+    Q(:,:,:,2) = rho_inf * u_inf
+    Q(:,:,:,3) = rho_inf * v_inf
+    Q(:,:,:,4) = 0.d0
+    Q(:,:,:,5) = E_inf
     if (myrank == 0) then
       print *, "Flow: M_inf =", Ma_inf, " aoa =", aoa*180.d0/acos(-1.d0), " deg"
       print *, "  rho_inf =", rho_inf, " p_inf =", p_inf, " E_inf =", E_inf
@@ -190,12 +190,12 @@ contains
   !> (b) eta j=1:      Euler slip wall on airfoil surface
   !> (c) eta j=ny:     Dirichlet far-field free-stream
   !> (d) z-periodic:   k=1 and k=nz ghost cells
-  subroutine set_bc(myrank, nx, ny, nz, Jacobian, eta_x, eta_y, Q)
+  subroutine set_bc(myrank, nx, ny, nz, Jacobian, eta_x, eta_y, Q_1, Q_2, Q_3, Q_4, Q_5)
     use mod_globals, only : Ma_inf, rho_inf, p_inf, T_inf
     integer, intent(in) :: myrank, nx, ny, nz
     real(8), intent(in),    device :: Jacobian(nx,ny)
     real(8), intent(in),    device :: eta_x(nx,ny), eta_y(nx,ny)
-    real(8), intent(inout), device :: Q(nx,5,ny,nz)
+    real(8), intent(inout), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     integer :: i, j, k
     real(8) :: u_inf, v_inf, E_inf
     real(8) :: nxw, nyw, nmag, u_int, v_int, u_n, Jratio
@@ -207,16 +207,16 @@ contains
     !$cuf kernel do(2) <<<*,(16,16)>>>
     do k = 1, nz
       do j = 1, ny
-        Q(1, 1,j,k) = Q(nx-1,1,j,k)
-        Q(1, 2,j,k) = Q(nx-1,2,j,k)
-        Q(1, 3,j,k) = Q(nx-1,3,j,k)
-        Q(1, 4,j,k) = Q(nx-1,4,j,k)
-        Q(1, 5,j,k) = Q(nx-1,5,j,k)
-        Q(nx,1,j,k) = Q(2,   1,j,k)
-        Q(nx,2,j,k) = Q(2,   2,j,k)
-        Q(nx,3,j,k) = Q(2,   3,j,k)
-        Q(nx,4,j,k) = Q(2,   4,j,k)
-        Q(nx,5,j,k) = Q(2,   5,j,k)
+        Q_1(1,j,k) = Q_1(nx-1,j,k)
+        Q_2(1,j,k) = Q_2(nx-1,j,k)
+        Q_3(1,j,k) = Q_3(nx-1,j,k)
+        Q_4(1,j,k) = Q_4(nx-1,j,k)
+        Q_5(1,j,k) = Q_5(nx-1,j,k)
+        Q_1(nx,j,k) = Q_1(2,j,k)
+        Q_2(nx,j,k) = Q_2(2,j,k)
+        Q_3(nx,j,k) = Q_3(2,j,k)
+        Q_4(nx,j,k) = Q_4(2,j,k)
+        Q_5(nx,j,k) = Q_5(2,j,k)
       enddo
     enddo
     ! (b) eta j=1: wall on airfoil
@@ -227,36 +227,44 @@ contains
         !nxw   = eta_x(i,1);  nyw = eta_y(i,1)
         !nmag  = sqrt(nxw*nxw + nyw*nyw)
         !nxw   = nxw / nmag;  nyw = nyw / nmag
-        !u_int = Q(i,2,2,k) / Q(i,1,2,k)
-        !v_int = Q(i,3,2,k) / Q(i,1,2,k)
+        !u_int = Q_2(i,2,k) / Q_1(i,2,k)
+        !v_int = Q_3(i,2,k) / Q_1(i,2,k)
         !u_n   = u_int*nxw + v_int*nyw
         Jratio = Jacobian(i,2) / Jacobian(i,1)
-        !Q(i,1,1,k) = Q(i,1,2,k) * Jratio
-        !Q(i,2,1,k) = (Q(i,2,2,k) - 2.d0*u_n*nxw*Q(i,1,2,k)) * Jratio
-        !Q(i,3,1,k) = (Q(i,3,2,k) - 2.d0*u_n*nyw*Q(i,1,2,k)) * Jratio
-        !Q(i,4,1,k) = Q(i,4,2,k) * Jratio
-        !Q(i,5,1,k) = Q(i,5,2,k) * Jratio
+        !Q_1(i,1,k) = Q_1(i,2,k) * Jratio
+        !Q_2(i,1,k) = (Q_2(i,2,k) - 2.d0*u_n*nxw*Q_1(i,2,k)) * Jratio
+        !Q_3(i,1,k) = (Q_3(i,2,k) - 2.d0*u_n*nyw*Q_1(i,2,k)) * Jratio
+        !Q_4(i,1,k) = Q_4(i,2,k) * Jratio
+        !Q_5(i,1,k) = Q_5(i,2,k) * Jratio
         ! NS no-slip wall
-        Q(i,1,1,k) = Q(i,1,2,k) * Jratio
-        Q(i,2,1,k) =-Q(i,2,2,k) * Jratio
-        Q(i,3,1,k) =-Q(i,3,2,k) * Jratio
-        Q(i,4,1,k) =-Q(i,4,2,k) * Jratio
-        Q(i,5,1,k) = Q(i,5,2,k) * Jratio
+        Q_1(i,1,k) = Q_1(i,2,k) * Jratio
+        Q_2(i,1,k) =-Q_2(i,2,k) * Jratio
+        Q_3(i,1,k) =-Q_3(i,2,k) * Jratio
+        Q_4(i,1,k) =-Q_4(i,2,k) * Jratio
+        Q_5(i,1,k) = Q_5(i,2,k) * Jratio
       enddo
     enddo
     ! (c) eta j=ny: Dirichlet far-field free-stream
     !$cuf kernel do(2) <<<*,(16,16)>>>
     do k = 1, nz
       do i = 1, nx
-        Q(i,1,ny,k) = rho_inf / Jacobian(i,ny)
-        Q(i,2,ny,k) = rho_inf * u_inf / Jacobian(i,ny)
-        Q(i,3,ny,k) = rho_inf * v_inf / Jacobian(i,ny)
-        Q(i,4,ny,k) = 0.d0
-        Q(i,5,ny,k) = E_inf / Jacobian(i,ny)
+        Q_1(i,ny,k) = rho_inf / Jacobian(i,ny)
+        Q_2(i,ny,k) = rho_inf * u_inf / Jacobian(i,ny)
+        Q_3(i,ny,k) = rho_inf * v_inf / Jacobian(i,ny)
+        Q_4(i,ny,k) = 0.d0
+        Q_5(i,ny,k) = E_inf / Jacobian(i,ny)
       enddo
     enddo
     ! (d) z-periodic
-    Q(:,:,:,1)  = Q(:,:,:,nz-1)
-    Q(:,:,:,nz) = Q(:,:,:,2)
+    Q_1(:,:,1)  = Q_1(:,:,nz-1)
+    Q_2(:,:,1)  = Q_2(:,:,nz-1)
+    Q_3(:,:,1)  = Q_3(:,:,nz-1)
+    Q_4(:,:,1)  = Q_4(:,:,nz-1)
+    Q_5(:,:,1)  = Q_5(:,:,nz-1)
+    Q_1(:,:,nz) = Q_1(:,:,2)
+    Q_2(:,:,nz) = Q_2(:,:,2)
+    Q_3(:,:,nz) = Q_3(:,:,2)
+    Q_4(:,:,nz) = Q_4(:,:,2)
+    Q_5(:,:,nz) = Q_5(:,:,2)
   end subroutine set_bc
 end module set

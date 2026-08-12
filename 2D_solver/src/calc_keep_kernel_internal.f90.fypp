@@ -1,7 +1,8 @@
 #:include 'config.fypp'
 module calc_keep_kernel_internal
-  use mod_globals, only : threadsE, threadsF
+  use mod_globals, only : gamma, threadsE, threadsF
   use mod_constant, only : R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
+  use libm
   implicit none
   private
   public calc_keep_x_in, calc_keep_y_in
@@ -25,13 +26,13 @@ module calc_keep_kernel_internal
     module procedure KEEP2, KEEP4, KEEP6
   end interface KEEP
 contains
-  include 'calc_keep_2d.f90'
+  include 'calc_scheme_math.f90'
 
-  attributes(global) subroutine calc_keep_x_in(nx, ny, Q, T, E)
+  attributes(global) subroutine calc_keep_x_in(nx, ny, Q_1, Q_2, Q_3, Q_4, T, E)
     use mod_constant, only : Normal_x
     integer, intent(in), value                :: nx, ny
-    real(8), intent(in), device, contiguous   :: Q(nx,4,ny), T(nx,ny)
-    real(8), intent(out), device, contiguous  :: E(4,nx-1,ny-2)
+    real(8), intent(in), device, contiguous   :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny), T(nx,ny)
+    real(8), intent(out), device, contiguous  :: E(nx-1,ny-2,4)
     integer i, j, it, jt
     integer :: ii, i_base, idx, offset_y
     integer, parameter :: sx = threadsE%x + 2*io + 1
@@ -46,8 +47,8 @@ contains
       i = i_base + ii
       if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny) then
         idx = ii + offset_y
-        rho(idx) = Q(i,1,j); u(idx) = Q(i,2,j)
-          v(idx) = Q(i,3,j); p(idx) = Q(i,4,j); tmp(idx) = T(i,j)
+        rho(idx) = Q_1(i,j); u(idx) = Q_2(i,j)
+          v(idx) = Q_3(i,j); p(idx) = Q_4(i,j); tmp(idx) = T(i,j)
       endif
     enddo
     call syncthreads()
@@ -55,7 +56,7 @@ contains
     if (io+1 <= i .and. i <= nx-(io+1) .and. j <= ny-1) then
       associate(uu => u)
       idx = it + offset_y
-      E(:,i,j-1) = KEEP(id_acc, &
+      E(i,j-1,:) = KEEP(id_acc, &
                         rho(idx-io:idx+io+1), u(idx-io:idx+io+1), &
                           v(idx-io:idx+io+1), &
                          uu(idx-io:idx+io+1), p(idx-io:idx+io+1), &
@@ -65,11 +66,11 @@ contains
   end subroutine calc_keep_x_in
 
 
-  attributes(global) subroutine calc_keep_y_in(nx, ny, Q, T, F)
+  attributes(global) subroutine calc_keep_y_in(nx, ny, Q_1, Q_2, Q_3, Q_4, T, F)
     use mod_constant, only : Normal_y
     integer, intent(in), value                :: nx, ny
-    real(8), intent(in), device, contiguous   :: Q(nx,4,ny), T(nx,ny)
-    real(8), intent(out), device, contiguous  :: F(4,nx-2,ny-1)
+    real(8), intent(in), device, contiguous   :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny), T(nx,ny)
+    real(8), intent(out), device, contiguous  :: F(nx-2,ny-1,4)
     integer i, j, it, jt
     integer :: jj, j_base, idx, offset_x
     integer, parameter :: sx = threadsF%x
@@ -84,8 +85,8 @@ contains
       j = j_base + jj
       if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny) then
         idx = jj + offset_x
-        rho(idx) = Q(i,1,j); u(idx) = Q(i,2,j)
-          v(idx) = Q(i,3,j); p(idx) = Q(i,4,j); tmp(idx) = T(i,j)
+        rho(idx) = Q_1(i,j); u(idx) = Q_2(i,j)
+          v(idx) = Q_3(i,j); p(idx) = Q_4(i,j); tmp(idx) = T(i,j)
       endif
     enddo
     call syncthreads()
@@ -93,7 +94,7 @@ contains
     if (io+1 <= j .and. j <= ny-(io+1) .and. i <= nx-1) then
       associate(vv => v)
       idx = jt + offset_x
-      F(:,i-1,j) = KEEP(id_acc, &
+      F(i-1,j,:) = KEEP(id_acc, &
                         rho(idx-io:idx+io+1), u(idx-io:idx+io+1), &
                           v(idx-io:idx+io+1), &
                          vv(idx-io:idx+io+1), p(idx-io:idx+io+1), &

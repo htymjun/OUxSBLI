@@ -1,7 +1,15 @@
 #:set VISC          = 'NS'
-#:set SCHEME        = 'Hybrid'
+#! Keep SLAU. KEEP is tempting here (no shocks, and its central stencil adds no
+#! upwind dissipation to thicken a laminar BL) but it diverges on this case: with
+#! TVD='none' nothing damps the mode seeded by the abrupt slip->no-slip switch at
+#! the leading edge, and the run NaNs at t ~ 2.5 ms. Lowering dt does not help --
+#! at dt = 3e-9 (CFL_y = 0.011) it blows up at the same physical time, with the
+#! intermediate peak u/u0 matching the dt = 2e-8 run to four digits, so the growth
+#! is dt-independent and this is the scheme, not a CFL violation. Also reproduced
+#! with both the old and the new top BC, against SLAU which is stable throughout.
+#! HRSLAU2's dissipation was never what inflated Cf; the BCs were (see set.f90).
+#:set SCHEME        = 'SLAU'
 #:set ORDER         = 6
-#:set VISC_ORDER    = 4
 #:set TVD           = 'none'
 #:set SLAU_VARIANT  = 'HRSLAU2'
 #:set RESCALE       = False
@@ -11,3 +19,4 @@
 #:set BC_Y          = True
 #:set COMMZ         = False
 #:set ORDER_IO = ORDER // 2 - 1
+#:set OUTPUT_PRECISION = 4

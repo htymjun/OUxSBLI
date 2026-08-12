@@ -7,13 +7,23 @@ module mod_globals
   real(8), parameter  :: blt         = 1.d-3
 
   ! mesh
-  real(8), parameter :: Lx = 150.d0 * blt !140!20
-  real(8), parameter :: Ly = 12.5d0 * blt !10!5
-  ! DNS
-  integer, parameter :: nx = 1921 !257
-  integer, parameter :: ny = 321 !129
+  real(8), parameter :: Lx = 120.d0 * blt
+  ! Ly must keep the top boundary out of the boundary layer: 15 mm is ~7.2 * delta99
+  ! at the trailing edge, where delta* / Ly = 4.7%. Cheaper than 30 mm and still
+  ! generous now that the top/outlet impose p = p0 directly instead of coupling
+  ! pressure to v -- that coupling (now removed) was the reason a tall domain used
+  ! to matter.
+  real(8), parameter :: Ly = 15.d0 * blt
+  ! ny is halved along with Ly, so with the s = 2.4 tanh stretch in set_grid this
+  ! keeps dy_wall ~= 26 um (was 25.3 um at 30mm/97) -- near-wall resolution, where
+  ! Cf is measured, is essentially unchanged. Point count halves: 24,929 -> 12,593.
+  integer, parameter :: nx = 257
+  integer, parameter :: ny = 49
 
-  ! RTX 4090
+  ! flat-plate geometry
+  integer, parameter :: i_LE = 2 * nx / 12 + 1 ! first no-slip wall point; set_grid places the leading edge at x = 0
+
+  ! GPU thread blocks
   type(dim3), parameter :: threadsE  = dim3(128,1,1)
   type(dim3), parameter :: threadsF  = dim3(32,2,1)
   type(dim3), parameter :: threadsEv = dim3(64,1,1)
@@ -23,87 +33,33 @@ module mod_globals
 
   ! time
   integer, parameter :: step_offset = 0
-  real(8), parameter :: endT  = 8.d-3 !0.3d-3
-  integer, parameter :: np    = 800 !30
-  real(8), parameter :: R     = 287.03d0
+  ! 2.84 flow-through times (Lx / u0 = 3.526 ms); the production run's own
+  ! snapshot history showed full convergence by 2.27 flow-throughs (t=8ms of a
+  ! 20ms/5.67-FT run) with no change out to 5.67, so this keeps margin at half
+  ! the step count. This is also what ouxsbli/tests/test_bl.py already uses.
+  real(8), parameter :: endT  = 1.d-2
+  integer, parameter :: np    = 100
+  real(8), parameter :: R     = 287.15d0
   real(8), parameter :: gamma = 1.4d0
-  real(8), parameter :: M0    = 2.d0
-  real(8), parameter :: p_tot = 100.d3
-  real(8), parameter :: T_tot = 518.4d0 !295.d0
+  real(8), parameter :: M0    = 0.1
+  real(8), parameter :: p_tot = 25.d3
   real(8), parameter :: p0    = p_tot / ((1.d0 + 0.5d0 * (gamma - 1.d0) * M0**2)**(gamma/(gamma-1.d0)))
-  real(8), parameter :: T0    = T_tot /  (1.d0 + 0.5d0 * (gamma - 1.d0) * M0**2)
+  real(8), parameter :: T0    = 288.15d0
   real(8), parameter :: rho0  = p0 / (R * T0)
   real(8), parameter :: u0    = M0 * sqrt(gamma * R * T0)
-  real(8), parameter :: dt    = 3.d-9
+  ! acoustic CFL_y = (u0+c0)*dt/dy_wall ~= 0.58 at the new dy_wall (~26 um).
+  ! Short probes (0.4ms transient, 257x49/Ly=15mm) ran clean with no NaN and no
+  ! leading-edge ringing all the way through dt=8e-8 (CFL~1.16); this keeps a
+  ! ~2x margin below the highest value actually tested rather than running at
+  ! the edge. SLAU's upwind dissipation is what buys this margin -- KEEP does
+  ! not have it and diverges on this case regardless of dt (see config.fypp).
+  real(8), parameter :: dt    = 4.d-8
   integer, parameter :: nt    = int(endT / (dble(np) * dt))
 
   ! physical properties
   real(8), parameter :: Pr    = 0.72d0
   real(8), parameter :: Prt   = 0.9d0
   ! wall temperature
-  real(8), parameter :: rf    = dsqrt(Pr) !0.89d0
-  real(8), parameter :: Taw   = 1.676 * T0 !T0 * (1.d0 + rf * 0.5d0 * (gamma - 1.d0) * M0**2) !M=2
-  ! oblique shock
-  real(8), parameter :: beta  = dacos(-1.d0) * 31.65d0 / 180.d0 !theta=2 !M2, 40.03(theta=10.65)
-  real(8), parameter :: Ms    = M0 * dsin(beta)
-  real(8), parameter :: Ms2   = Ms**2
-  real(8), parameter :: theta = datan(2.d0 * (1.d0 / dtan(beta)) * (Ms2 - 1.d0) / (M0**2 * (gamma + dcos(2.d0 * beta)) + 2.d0))
-  real(8), parameter :: T2    = T0 * (1.d0 + 2.d0 * (gamma - 1.d0) * (Ms2 - 1.d0) * (1.d0 + gamma * Ms2) / (Ms2 * (gamma + 1.d0)**2))
-  real(8), parameter :: p2    = p0 * (1.d0 + 2.d0 * gamma * (Ms2 - 1.d0) / (gamma + 1.d0))
-  real(8), parameter :: rho2  = p2 / (R * T2)
-  real(8), parameter :: u1    = u0 * dsin(beta)
-  real(8), parameter :: v1    = u0 * dcos(beta)
-  real(8), parameter :: a1    = u0 / M0
-  real(8), parameter :: u2    = u1 - 2.d0 * a1 * (Ms - 1.d0 / Ms) / (gamma + 1.d0)
-  real(8), parameter :: v2    = u0 * dcos(beta)
-  real(8), parameter :: u_magnitude = sqrt(u2**2 + v2**2)
-  real(8), parameter :: ux    = u_magnitude * dcos(theta)
-  real(8), parameter :: uy    = - u_magnitude * dsin(theta)
+  real(8), parameter :: rf    = dsqrt(Pr)
+  real(8), parameter :: Taw   = T0 * (1.d0 + rf * 0.5d0 * (gamma - 1.d0) * M0**2)
 end module mod_globals
-
-module mod_shock
-  use mod_globals, only : gamma, R, T0, T2, M0, Ms, Ms2, beta, theta
-  implicit none
-
-  real(8) :: p0_init
-  real(8) :: rho0_init
-  real(8) :: p2_init
-  real(8) :: rho2_init
-  real(8) :: u0_init
-  real(8) :: v0_init
-  real(8) :: u1_init
-  real(8) :: v1_init
-  real(8) :: a1_init
-  real(8) :: u2_init
-  real(8) :: v2_init
-  real(8) :: u_magnitude_init
-  real(8) :: ux_init
-  real(8) :: uy_init
-
-  contains
-
-  subroutine Qin_init(Qp)
-
-    real(8), intent(in) :: Qp(4)
-
-    p0_init   = Qp(4)
-    !rho0_init = p0_init / (R * T0)
-    rho0_init = Qp(1)
-    p2_init   = p0_init * (1.d0 + 2.d0 * gamma * (Ms2 - 1.d0) / (gamma + 1.d0))
-    rho2_init = p2_init / (R * T2)
-
-    u0_init    = Qp(2)
-    v0_init    = Qp(3)
-
-    u1_init    = u0_init * dsin(beta)
-    v1_init    = u0_init * dcos(beta)
-    a1_init    = u0_init / M0
-    u2_init    = u1_init - 2.d0 * a1_init * (Ms - 1.d0 / Ms) / (gamma + 1.d0)
-    v2_init    = u0_init * dcos(beta)
-    u_magnitude_init = sqrt(u2_init**2 + v2_init**2)
-    ux_init    = u_magnitude_init * dcos(theta)
-    uy_init    = - u_magnitude_init * dsin(theta)    
-
-  end subroutine Qin_init
-
-end module mod_shock

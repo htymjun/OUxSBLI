@@ -5,6 +5,10 @@ import vtk
 from vtk.util import numpy_support
 
 
+def get_ext(file_path):
+  return os.path.splitext(str(file_path))[1].lstrip('.')
+
+
 def extract_number(filename, ext='vtr'):
   match = re.search(r'Q(\d+)\.' + ext + r'$', filename)
   if match:
@@ -49,17 +53,6 @@ def getGrid_Str(file_path):
   points = numpy_support.vtk_to_numpy(grid.GetPoints().GetData())
   points = points.reshape((Nz, Ny, Nx, 3))
   return Nx, Ny, Nz, points[:,:,:,0], points[:,:,:,1], points[:,:,:,2]
-
-
-def getGrid(file_path):
-  ext = get_ext(file_path)
-  if ext == 'vtr':
-    Nx, Ny, Nz, x, y, z = getGrid_Rect(file_path)
-  elif ext == 'vts':
-    Nx, Ny, Nz, x, y, z = getGrid_Str(file_path)
-  else:
-    raise ValueError("Invalid file type:", file_path)
-  return Nx, Ny, Nz, x, y, z
 
 
 def getVector(file_path, Nx, Ny, Nz, name):

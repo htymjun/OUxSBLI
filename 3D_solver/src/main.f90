@@ -30,7 +30,7 @@ program main
     call set_block_3D(nx, ny, nz, threads, threadsE, threadsEv, threadsF, threadsFv, threadsG, threadsGv, &
                       blocks, blocksE, blocksEv, blocksF, blocksFv, blocksG, blocksGv)
   endif
-  allocate(Q(nx,dimension+2,ny,nz), x(nx), dx(nx-1), y(ny), dy(ny-1), z(nz), dz(nz-1), Jacobian(nx,ny))
+  allocate(Q(nx,ny,nz,dimension+2), x(nx), dx(nx-1), y(ny), dy(ny-1), z(nz), dz(nz-1), Jacobian(nx,ny))
   call set_grid(myrank, nx, ny, nz, Lx, Ly, Lz, x, y, z, dx, dy, dz)
   call set_Jacobian_xy3(nx, ny, nz, dx, dy, dz, Jacobian)
 
@@ -83,7 +83,7 @@ program main
       do j = 1, ny
         do m = 1, dimension+2
           do i = 1, nx
-            Q(i,m,j,l) = Jacobian(i,j) * Q(i,m,j,l)
+            Q(i,j,l,m) = Jacobian(i,j) * Q(i,j,l,m)
     enddo;enddo;enddo;enddo
     call cpu_time(t_start)
     

@@ -1,13 +1,23 @@
 #:include 'config.fypp'
 module calc_slau_kernel_internal
   use mod_globals, only : threadsE, threadsF
-  use mod_constant, only : over_gamma_1, id_slau
+  use mod_constant, only : over_gamma_1, id_slau, R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
   use calc_muscl
   use calc_hybrid
+  use libm
   implicit none
   private
   public calc_slau_x_in, calc_slau_y_in
   integer, parameter :: io = ${ORDER_IO}$
+  ! KEEP2/4/6 are compiled here too (calc_scheme_math.f90 include below covers
+  ! both schemes) even though this module never calls them -- these constants
+  ! are the ones their bodies reference.
+  real(8), parameter :: one_24        = 1.d0 / 24.d0
+  real(8), parameter :: one_48        = 1.d0 / 48.d0
+  real(8), parameter :: one_60        = 1.d0 / 60.d0
+  real(8), parameter :: one_120       = 1.d0 / 120.d0
+  real(8), parameter :: one_240       = 1.d0 / 240.d0
+  real(8), parameter :: seven_twelfth = 7.d0 / 12.d0
 
 #:if ORDER == 6
   integer(8), parameter :: id_acc = 0_8
@@ -25,7 +35,7 @@ module calc_slau_kernel_internal
     module procedure SLAU1, HRSLAU2
   end interface SLAU
 contains
-  include 'calc_slau_2d.f90'
+  include 'calc_scheme_math.f90'
 
   !$dir inline
   attributes(device) subroutine interp6(id_accuracy, rho,  u,  v, p, &
@@ -78,12 +88,12 @@ contains
   end subroutine interp2
 
 
-  attributes(global) subroutine calc_slau_x_in(nx, ny, Q, sensor, E)
+  attributes(global) subroutine calc_slau_x_in(nx, ny, Q_1, Q_2, Q_3, Q_4, sensor, E)
     use mod_constant, only : Normal_x
     integer, intent(in), value                :: nx, ny
-    real(8), intent(in), device, contiguous   :: Q(nx,4,ny)
+    real(8), intent(in), device, contiguous   :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny)
-    real(8), intent(out), device, contiguous  :: E(4,nx-1,ny-2)
+    real(8), intent(out), device, contiguous  :: E(nx-1,ny-2,4)
     integer i, j, it, jt, ii, i_base, idx, idx_r, offset_yz, offset_yzr, i1, i2
     integer, parameter :: sx  = threadsE%x + 2*io + 1
     integer, parameter :: sxr = threadsE%x
@@ -102,7 +112,7 @@ contains
       i = i_base + ii
       if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny) then
         idx = ii + offset_yz
-        rho(idx) = Q(i,1,j); u(idx) = Q(i,2,j); v(idx) = Q(i,3,j); p(idx) = Q(i,4,j)
+        rho(idx) = Q_1(i,j); u(idx) = Q_2(i,j); v(idx) = Q_3(i,j); p(idx) = Q_4(i,j)
       endif
     enddo
     call syncthreads()
@@ -124,18 +134,18 @@ contains
       associate(un1 => u(idx), un2 => ur(idx_r))
         call SLAU(id_slau, rho(idx), rhor(idx_r), u(idx), ur(idx_r), v(idx), vr(idx_r), &
                   un1, un2, p(idx), pr(idx_r), Normal_x, fdx, &
-                  E(1,i,j-1), E(2,i,j-1), E(3,i,j-1), E(4,i,j-1))
+                  E(i,j-1,1), E(i,j-1,2), E(i,j-1,3), E(i,j-1,4))
       end associate
     endif
   end subroutine calc_slau_x_in
 
 
-  attributes(global) subroutine calc_slau_y_in(nx, ny, Q, sensor, F)
+  attributes(global) subroutine calc_slau_y_in(nx, ny, Q_1, Q_2, Q_3, Q_4, sensor, F)
     use mod_constant, only : Normal_y
     integer, intent(in), value                :: nx, ny
-    real(8), intent(in), device, contiguous   :: Q(nx,4,ny)
+    real(8), intent(in), device, contiguous   :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny)
-    real(8), intent(out), device, contiguous  :: F(4,nx-2,ny-1)
+    real(8), intent(out), device, contiguous  :: F(nx-2,ny-1,4)
     integer i, j, it, jt, jj, j_base, idx, idx_r, offset_xz, offset_xzr, i1, i2
     integer, parameter :: sx  = threadsF%x
     integer, parameter :: sy  = threadsF%y + 2*io + 1
@@ -154,7 +164,7 @@ contains
       j = j_base + jj
       if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny) then
         idx = jj + offset_xz
-        rho(idx) = Q(i,1,j); u(idx) = Q(i,2,j); v(idx) = Q(i,3,j); p(idx) = Q(i,4,j)
+        rho(idx) = Q_1(i,j); u(idx) = Q_2(i,j); v(idx) = Q_3(i,j); p(idx) = Q_4(i,j)
       endif
     enddo
     call syncthreads()
@@ -176,7 +186,7 @@ contains
       associate(un1 => v(idx), un2 => vr(idx_r))
         call SLAU(id_slau, rho(idx), rhor(idx_r), u(idx), ur(idx_r), v(idx), vr(idx_r), &
                   un1, un2, p(idx), pr(idx_r), Normal_y, fdy, &
-                  F(1,i-1,j), F(2,i-1,j), F(3,i-1,j), F(4,i-1,j))
+                  F(i-1,j,1), F(i-1,j,2), F(i-1,j,3), F(i-1,j,4))
       end associate
     endif
   end subroutine calc_slau_y_in

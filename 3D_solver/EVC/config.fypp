@@ -1,0 +1,14 @@
+#:set VISC          = 'Euler'
+#:set SCHEME        = 'KEEP'
+#:set ORDER         = 6
+#:set TVD           = 'none'
+#:set SLAU_VARIANT  = 'HRSLAU2'
+#:set RESCALE       = False
+#:set RESTART       = False
+#:set RK            = 4
+#:set BC_X          = False
+#:set BC_Y          = False
+#:set BC_Z          = False
+#:set COMMZ         = False
+#:set ORDER_IO = ORDER // 2 - 1
+#:set OUTPUT_PRECISION = 8

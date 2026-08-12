@@ -8,27 +8,28 @@ contains
   !> Compute Ducros shock sensor for hybrid scheme
   !> Uses ratio of dilatation (divergence) to vorticity to detect shocks
   !> Values closer to 1 indicate shock regions, close to 0 indicates smooth flow
-  attributes(global) subroutine calc_Ducros(nx, ny, dx, dy, Q, fd)
+  attributes(global) subroutine calc_Ducros(nx, ny, dx, dy, Q_2, Q_3, fd)
     integer, intent(in), value                      :: nx, ny
     real(8), intent(in), dimension(nx-1), device    :: dx ! 1 / dx
     real(8), intent(in), dimension(ny-1), device    :: dy ! 1 / dy
-    real(8), intent(in), dimension(nx,4,ny), device :: Q 
+    real(8), intent(in), dimension(nx,ny), device   :: Q_2 ! u
+    real(8), intent(in), dimension(nx,ny), device   :: Q_3 ! v
     real(sp), intent(out), device                   :: fd(nx,ny)
     integer i, j
     real(8) dudx, dudy, dvdx, dvdy
     real(8) dx_tmp, dy_tmp
     real(sp) div, rot
     real(sp), parameter :: eps = 1.0e-12_sp
-    i = (blockIdx%x-1)*blockDim%x + threadIdx%x + 1 
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x + 1
     j = (blockIdx%y-1)*blockDim%y + threadIdx%y + 1
-    
-    if (nx-1 < i .or. ny-1 < j) return             
+
+    if (nx-1 < i .or. ny-1 < j) return
     dx_tmp = 0.25d0 * (dx(i-1) + dx(i))
     dy_tmp = 0.25d0 * (dy(j-1) + dy(j))
-    dudx = (-Q(i-1,2,j) + Q(i+1,2,j)) * dx_tmp
-    dvdx = (-Q(i-1,3,j) + Q(i+1,3,j)) * dx_tmp
-    dudy = (-Q(i,2,j-1) + Q(i,2,j+1)) * dy_tmp
-    dvdy = (-Q(i,3,j-1) + Q(i,3,j+1)) * dy_tmp
+    dudx = (-Q_2(i-1,j) + Q_2(i+1,j)) * dx_tmp
+    dvdx = (-Q_3(i-1,j) + Q_3(i+1,j)) * dx_tmp
+    dudy = (-Q_2(i,j-1) + Q_2(i,j+1)) * dy_tmp
+    dvdy = (-Q_3(i,j-1) + Q_3(i,j+1)) * dy_tmp
     ! Ducros shock sensor: detector based on dilatation vs. vorticity
     div = real(dudx + dvdy, kind=sp) ! Divergence: ∇·u  !div = real(dudx + dvdy, kind=sp)
     

@@ -1,0 +1,14 @@
+#:set VISC          = 'Euler'
+#:set SCHEME        = 'SLAU'
+#:set ORDER         = 6
+#:set TVD           = 'hybrid'
+#:set SLAU_VARIANT  = 'HRSLAU2'
+#:set RESCALE       = False
+#:set RESTART       = False
+#:set RK            = 3
+#:set BC_X          = True
+#:set BC_Y          = True
+#:set BC_Z          = False
+#:set COMMZ         = False
+#:set ORDER_IO = ORDER // 2 - 1
+#:set OUTPUT_PRECISION = 4
