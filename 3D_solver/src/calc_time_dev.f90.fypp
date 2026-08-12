@@ -70,6 +70,7 @@ contains
       endif
       call pre_calc(nx, ny, nz, myrank, nranks, x, dx_cpu, y, dy_cpu, z, dz_cpu, Jacobian_cpu, Q, &
                     dtdxdy, dtdydz, dtdzdx, xix, etay, zetaz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, ke0, entropy0)
+      QJ2_1 = QJ_1; QJ2_2 = QJ_2; QJ2_3 = QJ_3; QJ2_4 = QJ_4; QJ2_5 = QJ_5 ! initialize QJ2
     else
       call MPI_RECV(ke0,      1, MPI_REAL4, myrank-1, myrank,   MPI_COMM_WORLD, istat, ierr)
       call MPI_RECV(entropy0, 1, MPI_REAL4, myrank-1, myrank,   MPI_COMM_WORLD, istat, ierr)
@@ -166,6 +167,7 @@ contains
       endif
       call pre_calc(nx, ny, nz, myrank, nranks, x, dx_cpu, y, dy_cpu, z, dz_cpu, Jacobian_cpu, Q, &
                     dtdxdy, dtdydz, dtdzdx, xix, etay, zetaz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, ke0, entropy0)
+      QJ2_1 = QJ_1; QJ2_2 = QJ_2; QJ2_3 = QJ_3; QJ2_4 = QJ_4; QJ2_5 = QJ_5 ! initialize QJ2
     else
       call MPI_RECV(ke0,      1, MPI_REAL4, myrank-1, myrank,   MPI_COMM_WORLD, istat, ierr)
       call MPI_RECV(entropy0, 1, MPI_REAL4, myrank-1, myrank,   MPI_COMM_WORLD, istat, ierr)
@@ -273,6 +275,7 @@ contains
       print *, "myrank is ", myrank, " memory allocation has completed"
       call pre_calc(nx, ny, nz, myrank, nranks, x, dx_cpu, y, dy_cpu, z, dz_cpu, Jacobian_cpu, Q, &
                     dtdxdy, dtdydz, dtdzdx, xix, etay, zetaz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, ke0, entropy0)
+      QJs_1 = QJ_1; QJs_2 = QJ_2; QJs_3 = QJ_3; QJs_4 = QJ_4; QJs_5 = QJ_5 ! initialize QJs
       Rs = 0.d0
     else
       call MPI_RECV(ke0,      1, MPI_REAL4, myrank-1, myrank,   MPI_COMM_WORLD, istat, ierr)
@@ -369,6 +372,7 @@ contains
       print *, "myrank is ", myrank, " memory allocation has completed"
       call pre_calc(nx, ny, nz, myrank, nranks, x, dx_cpu, y, dy_cpu, z, dz_cpu, Jacobian_cpu, Q, &
                     dtdxdy, dtdydz, dtdzdx, xix, etay, zetaz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, ke0, entropy0)
+      QJs_1 = QJ_1; QJs_2 = QJ_2; QJs_3 = QJ_3; QJs_4 = QJ_4; QJs_5 = QJ_5 ! initialize QJs
       Rs = 0.d0
     else
       call MPI_RECV(ke0,      1, MPI_REAL4, myrank-1, myrank,   MPI_COMM_WORLD, istat, ierr)
@@ -497,6 +501,7 @@ contains
       call pre_calc(nx, ny, nz, myrank, nranks, x, dx_cpu, y, dy_cpu, z, dz_cpu, &
                     Jacobian_cpu, Q, dtdxdy, dtdydz, dtdzdx, xix, etay, zetaz, &
                     Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, ke0, entropy0)
+      QJ2_1 = QJ_1; QJ2_2 = QJ_2; QJ2_3 = QJ_3; QJ2_4 = QJ_4; QJ2_5 = QJ_5 ! initialize QJ2
       allocate(Qs1d_lo(nx*ny*overlap*5), Qs1d_hi(nx*ny*overlap*5), &
                Qr1d_lo(nx*ny*overlap*5), Qr1d_hi(nx*ny*overlap*5), stat=ierr)
       allocate(send_lo(nx*ny*overlap*5), send_hi(nx*ny*overlap*5), &
@@ -616,6 +621,7 @@ contains
                Qr1d_lo(nx*ny*overlap*5), Qr1d_hi(nx*ny*overlap*5), stat=ierr)
       allocate(send_lo(nx*ny*overlap*5), send_hi(nx*ny*overlap*5), &
                recv_lo(nx*ny*overlap*5), recv_hi(nx*ny*overlap*5), stat=ierr)
+      QJs_1 = QJ_1; QJs_2 = QJ_2; QJs_3 = QJ_3; QJs_4 = QJ_4; QJs_5 = QJ_5 ! initialize QJs
       Rs = 0.d0
       call MPI_BARRIER(MPI_COMM_WORLD, ierr)
       print *, "myrank is ", myrank, " start Runge-Kutta (z-decomp, RK4)"
