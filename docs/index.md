@@ -66,11 +66,14 @@ case.run(nranks=2)
 
 | Case | Physics | Description |
 |------|---------|-------------|
+| BL   | NS | Quasi-2D laminar flat-plate boundary layer (extrudes 2D_solver/BL; validated vs. Blasius) |
 | DHIT | NS | Decaying homogeneous isotropic turbulence |
 | ETGV | Euler | Entropy-preserving Taylor-Green vortex |
+| EVC  | Euler | Quasi-2D Euler vortex convection (extrudes 2D_solver/EVC; grid-convergence study) |
 | IVST | Euler | Inviscid vortex smooth test case |
 | KHI  | Euler | Kelvin-Helmholtz instability |
 | NSTGV | NS | NS Taylor-Green vortex (Re=1600, M=1.25) |
+| OS   | Euler | Quasi-2D oblique shock + wall reflection (extrudes 2D_solver/OS; validated vs. Rankine-Hugoniot) |
 | SBLI | NS | Shock-boundary layer interaction |
 | STZ  | NS | z-direction MPI halo exchange validation |
 | TBL  | LES | Turbulent boundary layer |

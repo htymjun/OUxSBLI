@@ -26,8 +26,7 @@ module calc_hybrid_kernel_curv
   end interface SLAU
 
 contains
-  include '../../3D_solver/src/calc_keep_3d.f90'
-  include '../../3D_solver/src/calc_slau_3d.f90'
+  include 'calc_scheme_math.f90'
 
 
   !> Hybrid flux at xi-faces (i+1/2, j, k). Area-scaled.

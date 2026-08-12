@@ -81,6 +81,7 @@ pip install -e ".[dev]"
 This installs:
 - `ouxsbli` — the Python API for parametric runs (editable install)
 - `numpy` — array operations
+- `scipy` — analytical reference solutions (Blasius, oblique-shock, Sod)
 - `vtk` — VTK file reading
 - `pytest` — for running the test suite
 
@@ -134,11 +135,14 @@ VTK output files (`Q00000.vtr`, `Q00001.vtr`, …) appear in `data/`. Open them 
 
 | Directory | Physics | Description |
 |-----------|---------|-------------|
+| `BL/` | Navier-Stokes | Quasi-2D laminar flat-plate boundary layer (extrudes 2D_solver/BL; validated vs. Blasius) |
 | `DHIT/` | Navier-Stokes | Decaying homogeneous isotropic turbulence |
 | `ETGV/` | Euler | Entropy-preserving Taylor-Green vortex |
+| `EVC/` | Euler | Quasi-2D Euler vortex convection (extrudes 2D_solver/EVC; grid-convergence study) |
 | `IVST/` | Euler | Inviscid vortex smooth test case |
 | `KHI/` | Euler | Kelvin-Helmholtz instability |
 | `NSTGV/` | Navier-Stokes | NS Taylor-Green vortex (Re=1600, M=1.25) |
+| `OS/` | Euler | Quasi-2D oblique shock + wall reflection (extrudes 2D_solver/OS; validated vs. Rankine-Hugoniot) |
 | `SBLI/` | Navier-Stokes | Shock-boundary layer interaction (RESCALE=True) |
 | `STZ/` | Navier-Stokes | z-direction MPI halo exchange validation |
 | `TBL/` | LES | Turbulent boundary layer (Hybrid scheme) |
@@ -170,7 +174,6 @@ At a glance, the dispatch encoding used internally by `mod_constant.f90`:
 |-------------|------|--------|
 | `integer(2)` | KEEP | Kinetic Energy & Entropy Preserving |
 | `real(2)` | SLAU | Simple Low-dissipation AUSM |
-| `real(4)` | Roe | Roe approximate Riemann |
 | `real(8)` | Hybrid | KEEP ↔ SLAU via Ducros sensor |
 
 These Fortran parameters are **generated automatically** from `config.fypp` — you do not edit them directly.

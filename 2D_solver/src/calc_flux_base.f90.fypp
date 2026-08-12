@@ -22,6 +22,9 @@ module calc_flux_base
   use calc_visc4
   use calc_visc4_internal
   #:endif
+  #:if VISC == 'NS' and VISC_ORDER > 2
+  use calc_div, only : calc_div_ux_4_in, calc_div_vy_4_in
+  #:endif
   use set
   implicit none
   private
@@ -55,47 +58,51 @@ contains
   !> Preserves vortex structures (f_d≈0) and captures shocks accurately (f_d≈1)
   !> Ducros shock sensor: f_d = (∇·u)²/[(∇·u)² + (∇×u)² + ε]
   #:endif
-  subroutine calc_conv(nx, ny, inv_dx, inv_dy, Q, T, E, F)
+  subroutine calc_conv(nx, ny, inv_dx, inv_dy, Q_1, Q_2, Q_3, Q_4, T, E, F)
     implicit none
     integer, intent(in), value               :: nx             !< number of grid points in x direction
     integer, intent(in), value               :: ny             !< number of grid points in y direction
     real(8), intent(in), device, contiguous  :: inv_dx(nx-1)   !< inverse grid spacing x (1/dx)
     real(8), intent(in), device, contiguous  :: inv_dy(ny-1)   !< inverse grid spacing y (1/dy)
-    real(8), intent(in), device, contiguous  :: Q(nx,4,ny)     !< conservative variables Q(rho, u, v, p)
+    real(8), intent(in), device, contiguous  :: Q_1(nx,ny)     !< rho
+    real(8), intent(in), device, contiguous  :: Q_2(nx,ny)     !< u
+    real(8), intent(in), device, contiguous  :: Q_3(nx,ny)     !< v
+    real(8), intent(in), device, contiguous  :: Q_4(nx,ny)     !< p
     real(8), intent(in), device, contiguous  :: T(nx,ny)       !< temperature field
-    real(8), intent(out), device, contiguous :: E(4,nx-1,ny-2) !< convective flux in x direction
-    real(8), intent(out), device, contiguous :: F(4,nx-2,ny-1) !< convective flux in y direction
+    real(8), intent(out), device, contiguous :: E(nx-1,ny-2,4) !< convective flux in x direction
+    real(8), intent(out), device, contiguous :: F(nx-2,ny-1,4) !< convective flux in y direction
     ! set fypp
     #:set scheme_name = SCHEME.lower()
     #:set args_t = ", T" if SCHEME in ('KEEP', 'Hybrid') else ""
     #:set args_sensor = ", sensor" if SCHEME in ('SLAU', 'Hybrid') else ""
     ! shock sensor
     #:if SCHEME in ('SLAU', 'Hybrid')
-    call calc_Ducros<<<blocks,threads>>>(nx, ny, inv_dx, inv_dy, Q, sensor)
+    call calc_Ducros<<<blocks,threads>>>(nx, ny, inv_dx, inv_dy, Q_2, Q_3, sensor)
     #:endif
     ! flux
-    call calc_${scheme_name}$_x${'' if BC_X else '_in'}$<<<blocksE,threadsE>>>(nx, ny, Q${args_t}$${args_sensor}$, E)
-    call calc_${scheme_name}$_y${'' if BC_Y else '_in'}$<<<blocksF,threadsF>>>(nx, ny, Q${args_t}$${args_sensor}$, F)
+    call calc_${scheme_name}$_x${'' if BC_X else '_in'}$<<<blocksE,threadsE>>>(nx, ny, Q_1, Q_2, Q_3, Q_4${args_t}$${args_sensor}$, E)
+    call calc_${scheme_name}$_y${'' if BC_Y else '_in'}$<<<blocksF,threadsF>>>(nx, ny, Q_1, Q_2, Q_3, Q_4${args_t}$${args_sensor}$, F)
   end subroutine calc_conv
 
 
 #:if VISC == 'Euler'
   !< calc Flux of Euler equation
-  subroutine calc_EF(nx, ny, inv_dx, inv_dy, Jacobian, QJ, Q, T, mu, E, F)
-    integer, intent(in), value               :: nx              !> number of grid points in x direction
-    integer, intent(in), value               :: ny              !> number of grid points in y direction
-    real(8), intent(in), device, contiguous  :: inv_dx(nx-1)    !> 1 / dx
-    real(8), intent(in), device, contiguous  :: inv_dy(ny-1)    !> 1 / dy
-    real(8), intent(in), device, contiguous  :: Jacobian(nx,ny) !> Jacobian
-    real(8), intent(in), device, contiguous  :: QJ(nx,4,ny)     !> Q(rho, rhou, rhov, rhow, E) / Jacobian
-    real(8), intent(out), device, contiguous :: Q(nx,4,ny)      !> Q(rho, u, v, p)
-    real(8), intent(out), device, contiguous :: T(nx,ny)        !> temperature
-    real(8), intent(out), device, contiguous :: mu(1,1)         !> viscosity, size is (1,1,1) in case of Euler
-    real(8), intent(out), device, contiguous :: E(4,nx-1,ny-2)  !> Flux in x direction
-    real(8), intent(out), device, contiguous :: F(4,nx-2,ny-1)  !> Flux in y direction
-    integer stat, i, j, k
-    call calc_quantities_2D(nx, ny,  Jacobian, QJ, Q, T)
-    call calc_conv(nx, ny, inv_dx, inv_dy, Q, T, E, F)
+  subroutine calc_EF(nx, ny, inv_dx, inv_dy, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T, mu, ux, vy, E, F)
+    integer, intent(in), value                 :: nx              !> number of grid points in x direction
+    integer, intent(in), value                 :: ny              !> number of grid points in y direction
+    real(8), intent(in), device, contiguous    :: inv_dx(nx-1)    !> 1 / dx
+    real(8), intent(in), device, contiguous    :: inv_dy(ny-1)    !> 1 / dy
+    real(8), intent(in), device, contiguous    :: Jacobian(nx,ny) !> Jacobian
+    real(8), intent(in), device, contiguous    :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny) !> Q(rho, rhou, rhov, E) / Jacobian
+    real(8), intent(inout), device, contiguous :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)      !> Q(rho, u, v, p)
+    real(8), intent(inout), device, contiguous :: T(nx,ny)        !> temperature
+    real(8), intent(inout), device, contiguous :: mu(1,1)         !> viscosity, size is (1,1) in case of Euler
+    real(8), intent(inout), device, contiguous :: ux(1,1)         !> unused (Euler)
+    real(8), intent(inout), device, contiguous :: vy(1,1)         !> unused (Euler)
+    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,4)  !> Flux in x direction
+    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,4)  !> Flux in y direction
+    call calc_quantities_2D(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T)
+    call calc_conv(nx, ny, inv_dx, inv_dy, Q_1, Q_2, Q_3, Q_4, T, E, F)
   end subroutine calc_EF
 #:endif
 
@@ -104,30 +111,42 @@ contains
   !> Compute fluxes for viscous (Navier-Stokes) flow - convective + viscous components
   !> Computes stress tensor tau_ij = mu*(du_i/dx_j + du_j/dx_i) - (2/3)*mu*delta_ij*(div u)
   !> and heat flux via Fourier's law: q = -k*dT/dx where k depends on Prandtl number
-  subroutine calc_EF(nx, ny, inv_dx, inv_dy, Jacobian, QJ, Q, T, mu, E, F)
-    integer, intent(in), value               :: nx              !> number of grid points in x direction
-    integer, intent(in), value               :: ny              !> number of grid points in y direction
-    real(8), intent(in), device, contiguous  :: inv_dx(nx-1)    !> 1 / dx (for finite differences)
-    real(8), intent(in), device, contiguous  :: inv_dy(ny-1)    !> 1 / dy
-    real(8), intent(in), device, contiguous  :: Jacobian(nx,ny) !> Jacobian determinant for scaling
-    real(8), intent(in), device, contiguous  :: QJ(nx,4,ny)     !> Q/Jacobian (scaled conserved variables)
-    real(8), intent(out), device, contiguous :: Q(nx,4,ny)      !> Q(rho, u, v, w, p) primitive variables
-    real(8), intent(out), device, contiguous :: T(nx,ny)        !> temperature field (for viscosity & heat flux)
-    real(8), intent(out), device, contiguous :: mu(nx,ny)       !> molecular viscosity via Sutherland's law
-    real(8), intent(out), device, contiguous :: E(4,nx-1,ny-2)  !> x-direction flux (convective + viscous)
-    real(8), intent(out), device, contiguous :: F(4,nx-2,ny-1)  !> y-direction flux (convective + viscous)
-    integer stat
-    ! Step 1: Decode Q and compute T(rho) and mu(T) via Sutherland's formula
-    call calc_quantities_T_2D(nx, ny, Jacobian, QJ, Q, T, mu)
-    ! Step 2: Compute convective fluxes (KEEP/SLAU/Roe/Hybrid depending on id_scheme)
-    call calc_conv(nx, ny, inv_dx, inv_dy, Q, T, E, F)
-    ! Step 3: Add viscous fluxes (choose 2nd or 4th-order stencils)
-    #:if VISC_ORDER == 4
-      call calc_Ev4<<<blocksEv,threadsEv>>>(nx, ny, inv_dx, inv_dy, Q, T, mu, E)
-      call calc_Fv4<<<blocksFv,threadsFv>>>(nx, ny, inv_dy, inv_dx, Q, T, mu, F)
+  subroutine calc_EF(nx, ny, inv_dx, inv_dy, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T, mu, ux, vy, E, F)
+    integer, intent(in), value                 :: nx              !> number of grid points in x direction
+    integer, intent(in), value                 :: ny              !> number of grid points in y direction
+    real(8), intent(in), device, contiguous    :: inv_dx(nx-1)    !> 1 / dx (for finite differences)
+    real(8), intent(in), device, contiguous    :: inv_dy(ny-1)    !> 1 / dy
+    real(8), intent(in), device, contiguous    :: Jacobian(nx,ny) !> Jacobian determinant for scaling
+    real(8), intent(in), device, contiguous    :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny) !> Q/Jacobian (scaled conserved variables)
+    real(8), intent(inout), device, contiguous :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)      !> Q(rho, u, v, p) primitive variables
+    real(8), intent(inout), device, contiguous :: T(nx,ny)        !> temperature field (for viscosity & heat flux)
+    real(8), intent(inout), device, contiguous :: mu(nx,ny)       !> molecular viscosity via Sutherland's law
+    #:if VISC_ORDER > 2
+    real(8), intent(inout), device, contiguous :: ux(nx,ny)       !> cell-center du/dx, precomputed once per stage
+    real(8), intent(inout), device, contiguous :: vy(nx,ny)       !> cell-center dv/dy, precomputed once per stage
     #:else
-      call calc_Ev2<<<blocksEv,threadsEv>>>(nx, ny, inv_dx, inv_dy, Q, T, mu, E)
-      call calc_Fv2<<<blocksFv,threadsFv>>>(nx, ny, inv_dy, inv_dx, Q, T, mu, F)
+    real(8), intent(inout), device, contiguous :: ux(1,1)         !> unused (VISC_ORDER<=2)
+    real(8), intent(inout), device, contiguous :: vy(1,1)         !> unused (VISC_ORDER<=2)
+    #:endif
+    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,4)  !> x-direction flux (convective + viscous)
+    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,4)  !> y-direction flux (convective + viscous)
+    ! Step 1: Decode Q and compute T(rho) and mu(T) via Sutherland's formula
+    call calc_quantities_T_2D(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T, mu)
+    ! Step 2: Compute convective fluxes (KEEP/SLAU/Hybrid depending on id_scheme)
+    call calc_conv(nx, ny, inv_dx, inv_dy, Q_1, Q_2, Q_3, Q_4, T, E, F)
+    ! Step 3: Add viscous fluxes (choose 2nd or 4th-order stencils)
+    #:if VISC_ORDER > 2
+      ! ux/vy (cell-center velocity gradients) are precomputed once here and
+      ! reused by calc_Ev4/calc_Fv4 below instead of each direction independently
+      ! recomputing the other one -- see calc_div.f90 (mirrors 3D_solver's
+      ! ux/vy/wz precompute in calc_flux_base.f90.fypp).
+      call calc_div_ux_4_in(nx, ny, inv_dx, Q_2, ux)
+      call calc_div_vy_4_in(nx, ny, inv_dy, Q_3, vy)
+      call calc_Ev4<<<blocksEv,threadsEv>>>(nx, ny, inv_dx, inv_dy, Q_2, Q_3, T, mu, vy, E)
+      call calc_Fv4<<<blocksFv,threadsFv>>>(nx, ny, inv_dy, inv_dx, Q_2, Q_3, T, mu, ux, F)
+    #:else
+      call calc_Ev2<<<blocksEv,threadsEv>>>(nx, ny, inv_dx, inv_dy, Q_2, Q_3, T, mu, E)
+      call calc_Fv2<<<blocksFv,threadsFv>>>(nx, ny, inv_dy, inv_dx, Q_2, Q_3, T, mu, F)
     #:endif
   end subroutine calc_EF
 #:endif

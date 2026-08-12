@@ -1,7 +1,7 @@
 #:include 'config.fypp'
 module calc_slau_kernel
   use mod_globals, only : gamma, threadsE, threadsF, threadsG
-  use mod_constant, only : id_slau, over_gamma_1
+  use mod_constant, only : id_slau, over_gamma_1, R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
   use calc_muscl
   use calc_hybrid
   use libm
@@ -10,12 +10,21 @@ module calc_slau_kernel
   public calc_slau_x, calc_slau_y, calc_slau_z
   integer, parameter :: io = ${ORDER_IO}$
   !> io = 0, 1, 2 (2nd, 4th, 6th)
+  ! KEEP2/4/6 are compiled here too (calc_scheme_math.f90 include below covers
+  ! both schemes) even though this module never calls them -- these constants
+  ! are the ones their bodies reference.
+  real(8), parameter :: one_24        = 1.d0 / 24.d0
+  real(8), parameter :: one_48        = 1.d0 / 48.d0
+  real(8), parameter :: one_60        = 1.d0 / 60.d0
+  real(8), parameter :: one_120       = 1.d0 / 120.d0
+  real(8), parameter :: one_240       = 1.d0 / 240.d0
+  real(8), parameter :: seven_twelfth = 7.d0 / 12.d0
 
   interface SLAU
     module procedure SLAU1, HRSLAU2
   end interface SLAU
 contains
-  include 'calc_slau_3d.f90'
+  include 'calc_scheme_math.f90'
 
   attributes(global) subroutine calc_slau_x(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, sensor, E)
     use mod_constant, only : Normal_x

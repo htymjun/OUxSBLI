@@ -12,14 +12,18 @@ module calc_flux_base
   use calc_keep_kernel_internal
   use calc_slau_kernel
   use calc_slau_kernel_internal
-  use calc_roe_kernel
-  use calc_roe_kernel_internal
   use calc_hybrid_kernel
   use calc_hybrid_kernel_internal
   #:if VISC in ('NS', 'LES')
   use calc_visc2
   use calc_visc_high
   use calc_visc_high_internal
+  #:endif
+  #:set fused_conv_visc = (SCHEME in ('KEEP', 'SLAU') and VISC == 'NS' and ORDER == 6 and VISC_ORDER == 6 and not BC_X and not BC_Y and not BC_Z and not COMMZ)
+  #:if fused_conv_visc and SCHEME == 'KEEP'
+  use calc_keep_visc_kernel_internal
+  #:elif fused_conv_visc and SCHEME == 'SLAU'
+  use calc_slau_visc_kernel_internal
   #:endif
   #:if VISC in ('NS', 'LES') and VISC_ORDER > 2
   use calc_div, only : calc_div_ux_${VISC_ORDER}$_in, calc_div_vy_${VISC_ORDER}$_in, calc_div_wz_${VISC_ORDER}$_in
@@ -55,9 +59,9 @@ contains
     ! set fypp
     #:set scheme_name = SCHEME.lower()
     #:set args_t = ", T" if SCHEME in ('KEEP', 'Hybrid') else ""
-    #:set args_sensor = ", sensor" if SCHEME in ('SLAU', 'Roe', 'Hybrid') else ""
+    #:set args_sensor = ", sensor" if SCHEME in ('SLAU', 'Hybrid') else ""
     ! shock sensor
-    #:if SCHEME in ('SLAU', 'Roe', 'Hybrid')
+    #:if SCHEME in ('SLAU', 'Hybrid')
     call calc_Ducros<<<blocks,threads>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, sensor)
     #:endif
     ! flux
@@ -78,9 +82,9 @@ contains
     ! set fypp
     #:set scheme_name = SCHEME.lower()
     #:set args_t = ", T" if SCHEME in ('KEEP', 'Hybrid') else ""
-    #:set args_sensor = ", sensor" if SCHEME in ('SLAU', 'Roe', 'Hybrid') else ""
+    #:set args_sensor = ", sensor" if SCHEME in ('SLAU', 'Hybrid') else ""
     ! shock sensor
-    #:if SCHEME in ('SLAU', 'Roe', 'Hybrid')
+    #:if SCHEME in ('SLAU', 'Hybrid')
     call calc_Ducros<<<blocks,threads>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, sensor)
     #:endif
     ! flux
@@ -102,9 +106,9 @@ contains
     ! set fypp
     #:set scheme_name = SCHEME.lower()
     #:set args_t = ", T" if SCHEME in ('KEEP', 'Hybrid') else ""
-    #:set args_sensor = ", sensor" if SCHEME in ('SLAU', 'Roe', 'Hybrid') else ""
+    #:set args_sensor = ", sensor" if SCHEME in ('SLAU', 'Hybrid') else ""
     ! shock sensor
-    #:if SCHEME in ('SLAU', 'Roe', 'Hybrid')
+    #:if SCHEME in ('SLAU', 'Hybrid')
     call calc_Ducros<<<blocks,threads>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, sensor)
     #:endif
     call calc_${scheme_name}$_z_in_koff<<<bG,threadsG>>>(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5${args_t}$${args_sensor}$, G, k_lo, k_hi)
@@ -191,6 +195,20 @@ contains
     ! whole domain or koff
     ! ===================================================================
     #:if not COMMZ
+      #:if fused_conv_visc and SCHEME == 'KEEP'
+      ! Fused convective+viscous: one launch per direction instead of
+      ! calc_conv + calc_Ev/Fv/Gv6_in, see calc_keep_visc_kernel.f90.fypp
+      call calc_keepv_x_in<<<blocksE,threadsE>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, vy, wz, E)
+      call calc_keepv_y_in<<<blocksF,threadsF>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, ux, wz, F)
+      call calc_keepv_z_in<<<blocksG,threadsG>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, ux, vy, G)
+      #:elif fused_conv_visc and SCHEME == 'SLAU'
+      ! Fused convective+viscous: one launch per direction instead of
+      ! calc_conv + calc_Ev/Fv/Gv6_in, see calc_slau_visc_kernel.f90.fypp
+      call calc_Ducros<<<blocks,threads>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, sensor)
+      call calc_slauv_x_in<<<blocksE,threadsE>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, sensor, vy, wz, E)
+      call calc_slauv_y_in<<<blocksF,threadsF>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, sensor, ux, wz, F)
+      call calc_slauv_z_in<<<blocksG,threadsG>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, sensor, ux, vy, G)
+      #:else
       call calc_conv(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, E, F, G)
       #:if is_les
       call calc_mut<<<blocks,threads>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, mut, qc2)
@@ -203,6 +221,7 @@ contains
       call calc_${d['dir']}$v${VISC_ORDER}$${in_sfx}$<<<blocks${d['dir']}$v,threads${d['dir']}$v>>>&
            &(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, T, mu${les_args}$${grad_args}$, ${d['dir']}$)
       #:endfor
+      #:endif
     #:else
       call calc_conv_EF(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, E, F)
       call calc_conv_G_koff(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, G, k_lo_G, k_hi_G)

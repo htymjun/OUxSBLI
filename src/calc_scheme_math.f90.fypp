@@ -1,0 +1,339 @@
+#:if not defined('DIM')
+  #:stop 'calc_scheme_math.f90.fypp requires DIM (2 or 3) to be set via fypp -DDIM=2|3'
+#:endif
+#:set VELS = ['u', 'v', 'w'] if DIM == 3 else ['u', 'v']
+#:set NEQ  = DIM + 2
+#:set VARG = ', '.join(VELS)
+  pure attributes(device) function KEEP2(id_accuracy, rho, ${VARG}$,  uu, p, T, Normal) result(F)
+    integer(2), intent(in), value     :: id_accuracy
+    real(8), intent(in), dimension(2) :: rho, ${VARG}$, uu, p, T
+    real(8), intent(in), dimension(5) :: Normal
+    real(8) F(${NEQ}$)
+    F(1) = 0.25d0 * (rho(1) + rho(2)) * (uu(1) + uu(2))
+    #:for i, v in enumerate(VELS)
+    F(${i+2}$) = 0.5d0 * (F(1) * (${v}$(1) + ${v}$(2)) + (p(1) + p(2)) * Normal(${i+2}$))
+    #:endfor
+    F(${NEQ}$) = F(1) * 0.5d0 * (T(1) + T(2)) * R_over_gamma_1 ! internal energy
+    F(${NEQ}$) = F(${NEQ}$) + 0.5d0 * (uu(1) * p(2) + uu(2) * p(1)) ! pressure diffusion
+    F(${NEQ}$) = F(${NEQ}$) + 0.5d0 * F(1) * (${' + '.join(v + '(1) * ' + v + '(2)' for v in VELS)}$ ) ! kinetic energy
+  end function KEEP2
+
+
+  attributes(device) function KEEP4(id_accuracy, rho, ${VARG}$, uu, p, T, Normal) result(F)
+    integer(4), intent(in), value     :: id_accuracy
+    real(8), intent(in), dimension(4) :: rho, ${VARG}$, uu, p, T
+    real(8), intent(in), dimension(5) :: Normal
+    real(8) F(${NEQ}$), RV1, RV2, RV3, RV1_RV2, RV1_RV3
+    real(8) ${', '.join(v + '1, ' + v + '2, ' + v + '3, ' + v + '4' for v in VELS)}$
+    RV1 = (rho(2) + rho(3)) * (uu(2) + uu(3))
+    RV2 = (rho(2) + rho(4)) * (uu(2) + uu(4))
+    RV3 = (rho(1) + rho(3)) * (uu(1) + uu(3))
+    !F(1) = one_third * RV1 - (RV2 + RV3) * one_24
+    F(1) = fma(-one_24, RV2 + RV3, one_third * RV1)
+    RV1 = one_sixth * RV1
+    RV2 = one_48 * RV2
+    RV3 = one_48 * RV3
+    RV1_RV2 = RV1 - RV2
+    RV1_RV3 = RV1 - RV3
+    #:for v in VELS
+    ${v}$1 = ${v}$(1); ${v}$2 = ${v}$(2); ${v}$3 = ${v}$(3); ${v}$4 = ${v}$(4)
+    #:endfor
+
+    block
+      real(8) pres
+      !pres = -one_twelfth * p(1) + seven_twelfth * (p(2) + p(3)) - one_twelfth * p(4)
+      pres = fma(seven_twelfth, p(2) + p(3), -one_twelfth * (p(1) + p(4)))
+      #:for i, v in enumerate(VELS)
+      !F(${i+2}$) = -RV3 * ${v}$1 + RV1_RV2 * ${v}$2 + RV1_RV3 * ${v}$3 - RV2 * ${v}$4 + pres * Normal(${i+2}$)
+      F(${i+2}$) = fma(-RV3, ${v}$1, fma(RV1_RV2, ${v}$2, fma(RV1_RV3, ${v}$3, fma(-RV2, ${v}$4, pres * Normal(${i+2}$)))))
+      #:endfor
+    end block
+    block
+      real(8) ene
+      ! internal energy
+      !ene  = (-RV3 * T(1) + RV1_RV2 * T(2) + RV1_RV3 * T(3) - RV2 * T(4)) * R_over_gamma_1
+      ene  = fma(-RV3, T(1), fma(RV1_RV2, T(2), fma(RV1_RV3, T(3), -RV2 * T(4)))) * R_over_gamma_1
+      ! kinetic energy
+      !ene  = ene + RV1 * (u2*u3 + v2*v3) &
+      !           - RV2 * (u2*u4 + v2*v4) &
+      !           - RV3 * (u1*u3 + v1*v3)
+      ene  = fma( RV1, ${' + '.join(v + '2*' + v + '3' for v in VELS)}$, &
+             fma(-RV2, ${' + '.join(v + '2*' + v + '4' for v in VELS)}$, &
+             fma(-RV3, ${' + '.join(v + '1*' + v + '3' for v in VELS)}$, ene)))
+      ! pressure diffusion
+      !F(${NEQ}$) = ene + (two_third * (uu(2)*p(3)+uu(3)*p(2)) &
+      !          - one_twelfth * (uu(2)*p(4)+uu(4)*p(2) &
+      !                          +uu(1)*p(3)+uu(3)*p(1)))
+      F(${NEQ}$) = fma(two_third, uu(2)*p(3) + uu(3)*p(2), &
+                 fma(-one_twelfth, uu(2)*p(4) + uu(4)*p(2) + uu(1)*p(3) + uu(3)*p(1), ene))
+    end block
+  end function KEEP4
+
+
+  !$dir inline
+  attributes(device) function mom(u, pres, RV4, RV6, &
+                                       RV2_RV5, RV3_RV5, &
+                                       RV1_RV2_RV4, RV1_RV3_RV6) result(ruu)
+    real(8), intent(in)        :: u(6)
+    real(8), intent(in), value :: pres, RV4, RV6, RV2_RV5, RV3_RV5
+    real(8), intent(in), value :: RV1_RV2_RV4, RV1_RV3_RV6
+    real(8) ruu
+    ruu = fma(RV4, u(6), pres)
+    ruu = fma(RV2_RV5, u(5), ruu)
+    ruu = fma(RV1_RV3_RV6, u(4), ruu)
+    ruu = fma(RV1_RV2_RV4, u(3), ruu)
+    ruu = fma(RV3_RV5, u(2), ruu)
+    ruu = fma(RV6, u(1), ruu)
+  end function mom
+
+
+  attributes(device) function KEEP6(id_accuracy, rho, ${VARG}$, uu, p, T, Normal) result(F)
+    integer(8), intent(in), value     :: id_accuracy
+    real(8), intent(in), dimension(6) :: rho, ${VARG}$, uu, p, T
+    real(8), intent(in), dimension(5) :: Normal
+    real(8) F(${NEQ}$), RV1, RV2, RV3, RV4, RV5, RV6, RV3_RV5, RV2_RV5, RV1_RV2_RV4, RV1_RV3_RV6
+    RV1 = (rho(3) + rho(4)) * (uu(3) + uu(4))
+    RV2 = (rho(3) + rho(5)) * (uu(3) + uu(5))
+    RV3 = (rho(2) + rho(4)) * (uu(2) + uu(4))
+    RV4 = (rho(3) + rho(6)) * (uu(3) + uu(6))
+    RV5 = (rho(2) + rho(5)) * (uu(2) + uu(5))
+    RV6 = (rho(1) + rho(4)) * (uu(1) + uu(4))
+    !F(1) = 0.375d0 * RV1 - 0.075d0 * (RV2 + RV3) + (RV4 + RV5 + RV6) * one_120
+    F(1) = fma(0.375d0, RV1, fma(-0.075d0, RV2 + RV3, (RV4 + RV5 + RV6) * one_120))
+    RV1 = 0.1875d0 * RV1
+    RV2 = 0.0375d0 * RV2
+    RV3 = 0.0375d0 * RV3
+    RV4 = RV4 * one_240
+    RV5 = RV5 * one_240
+    RV6 = RV6 * one_240
+    RV3_RV5 = -RV3 + RV5
+    RV1_RV2_RV4 = RV1 - RV2 + RV4
+    RV1_RV3_RV6 = RV1 - RV3 + RV6
+    RV2_RV5 = -RV2 + RV5
+    block
+      real(8) pres, ${', '.join('ru' + v for v in VELS)}$
+      block
+        real(8) ps1, ps2, ps3
+        !pres = (p(1) - 8.d0 * p(2) + 37.d0 * (p(3) + p(4)) - 8.d0 * p(5) + p(6)) * one_60
+        ps1 = p(1) + p(6)
+        ps2 = p(2) + p(5)
+        ps3 = p(3) + p(4)
+        pres = fma(37.d0, ps3, fma(-8.d0, ps2, ps1)) * one_60
+      end block
+      #:for i, v in enumerate(VELS)
+      !ru${v}$ = RV6*${v}$(1) + RV3_RV5*${v}$(2) + RV1_RV2_RV4*${v}$(3) + RV1_RV3_RV6*${v}$(4) + RV2_RV5*${v}$(5) + RV4*${v}$(6) + pres * Normal(${i+2}$)
+      ru${v}$ = mom(${v}$, pres * Normal(${i+2}$), RV4, RV6, &
+                RV2_RV5, RV3_RV5, RV1_RV2_RV4, RV1_RV3_RV6)
+      #:endfor
+      #:for i, v in enumerate(VELS)
+      F(${i+2}$) = ru${v}$
+      #:endfor
+    end block
+    block
+      real(8) ene
+      ! internal energy
+      !ene = (RV6 * T(1) + RV3_RV5 * T(2) + RV1_RV2_RV4 * T(3) + RV1_RV3_RV6 * T(4) + RV2_RV5 * T(5) + RV4 * T(6)) * R_over_gamma_1
+      ene = RV4 * T(6)
+      ene = fma(RV2_RV5, T(5), ene)
+      ene = fma(RV1_RV3_RV6, T(4), ene)
+      ene = fma(RV1_RV2_RV4, T(3), ene)
+      ene = fma(RV3_RV5, T(2), ene)
+      ene = fma(RV6, T(1), ene)
+      ene = ene * R_over_gamma_1
+      ! kinetic energy
+      ene = fma( RV6, ${' + '.join(v + '(1)*' + v + '(4)' for v in VELS)}$, ene)
+      ene = fma( RV5, ${' + '.join(v + '(2)*' + v + '(5)' for v in VELS)}$, ene)
+      ene = fma( RV4, ${' + '.join(v + '(3)*' + v + '(6)' for v in VELS)}$, ene)
+      ene = fma(-RV3, ${' + '.join(v + '(2)*' + v + '(4)' for v in VELS)}$, ene)
+      ene = fma(-RV2, ${' + '.join(v + '(3)*' + v + '(5)' for v in VELS)}$, ene)
+      ene = fma( RV1, ${' + '.join(v + '(3)*' + v + '(4)' for v in VELS)}$, ene)
+      ! pressure diffusion
+      !F(${NEQ}$) = ene + (0.75d0 * (uu(3)*p(4) + uu(4)*p(3)) &
+      !            - 0.15d0 * (uu(3)*p(5) + uu(5)*p(3) + &
+      !                        uu(2)*p(4) + uu(4)*p(2)) + &
+      !                       (uu(3)*p(6) + uu(6)*p(3) + &
+      !                        uu(2)*p(5) + uu(5)*p(2) + &
+      !                        uu(1)*p(4) + uu(4)*p(1)) * one_60)
+      F(${NEQ}$) = fma( 0.75d0, uu(3)*p(4) + uu(4)*p(3), &
+             fma(-0.15d0, uu(3)*p(5) + uu(5)*p(3) + uu(2)*p(4) + uu(4)*p(2), &
+             fma( one_60, uu(3)*p(6) + uu(6)*p(3) + uu(2)*p(5) + uu(5)*p(2) &
+                 + uu(1)*p(4) + uu(4)*p(1), ene)))
+   end block
+  end function KEEP6
+
+
+  attributes(device) subroutine SLAU_common(rho1, rho2, over_rho1, over_rho2, u1, u2, v1, v2, &
+  #:if DIM == 3
+                                                 w1, w2, &
+  #:endif
+                                                 un1, un2, p1, p2, c, over_c, Mp, Mm, bp, bm, dp, Vtp, Vtm)
+    real(8), intent(in)  :: rho1, rho2, over_rho1, over_rho2, u1, u2, v1, v2, &
+  #:if DIM == 3
+                             w1, w2, &
+  #:endif
+                             un1, un2, p1, p2
+    real(8), intent(out) :: c, over_c, Mp, Mm, bp, bm, dp, Vtp, Vtm
+    block
+      real(8) cl, cr
+      cl = sqrt(gamma * p1 * over_rho1)
+      cr = sqrt(gamma * p2 * over_rho2)
+      c  = 0.5d0 * (cl + cr)
+    end block
+    over_c = 1.d0 / c
+    Mp  = un1 * over_c
+    Mm  = un2 * over_c
+    block
+      real(8) g, one_g_Vt
+      g   = -max(min(Mp, 0.d0), -1.d0) * min(max(Mm, 0.d0), 1.d0)
+      one_g_Vt = (1.d0 - g) * (rho1 * abs(un1) + rho2 * abs(un2)) / (rho1 + rho2)
+      Vtp = one_g_Vt + g * abs(un1)
+      Vtm = one_g_Vt + g * abs(un2)
+    end block
+    bp = merge(0.25d0 * (2.d0 - Mp) * (Mp + 1.d0)**2, &
+               0.5d0 * (1.d0 + sign(1.d0, Mp)), &
+               abs(Mp) < 1.d0)
+    bm = merge(0.25d0 * (2.d0 + Mm) * (Mm - 1.d0)**2, &
+               0.5d0 * (1.d0 + sign(1.d0, -Mm)), &
+               abs(Mm) < 1.d0)
+    dp = -p1 + p2
+  end subroutine SLAU_common
+
+
+  pure attributes(device) function phi(rho, k, p, over_rho) result(ans)
+    use mod_globals, only : gamma
+    use mod_constant, only : over_gamma_1
+    real(8), intent(in) :: rho, k, p, over_rho
+    real(8) :: gamma_over_gamma_1 = gamma * over_gamma_1
+    real(8) ans
+    ans = (p * gamma_over_gamma_1 + rho * k) * over_rho
+  end function phi
+
+
+  attributes(device) subroutine SLAU1(id_slau, rho1, rho2, u1, u2, v1, v2, &
+  #:if DIM == 3
+                                           w1, w2, &
+  #:endif
+                                           un1, un2, p1, p2, Norm, HR, F1, F2, F3, F4${', F5' if DIM == 3 else ''}$)
+    use mod_globals, only : sp
+    integer(2), intent(in), value :: id_slau
+    real(8), intent(in)           :: rho1, rho2, u1, u2, v1, v2, &
+  #:if DIM == 3
+                                      w1, w2, &
+  #:endif
+                                      un1, un2, p1, p2, Norm(5)
+    real(sp), intent(in), value   :: HR
+    real(8), intent(out)          :: F1, F2, F3, F4${', F5' if DIM == 3 else ''}$
+    real(8) c, over_c, Mp, Mm, M, x
+    real(8) Vtp, Vtm, dp, bp, bm, mass, mass1, mass2, over_rho1, over_rho2, k1, k2
+    over_rho1 = 1.d0 / rho1
+    over_rho2 = 1.d0 / rho2
+    call SLAU_common(rho1, rho2, over_rho1, over_rho2, u1, u2, v1, v2, &
+  #:if DIM == 3
+                     w1, w2, &
+  #:endif
+                     un1, un2, p1, p2, c, over_c, Mp, Mm, bp, bm, dp, Vtp, Vtm)
+    k1 = 0.5d0 * (u1*u1 + v1*v1${' + w1*w1' if DIM == 3 else ''}$)
+    k2 = 0.5d0 * (u2*u2 + v2*v2${' + w2*w2' if DIM == 3 else ''}$)
+    M  = fmin(1.d0, sqrt(k1 + k2) * over_c)
+    x  = (1.d0 - M) ** 2
+    !mass = 0.25d0 * (rho1 * (un1 + Vtp) + rho2 * (un2 - Vtm) - x * dp * over_c)
+    mass  = 0.25d0 * fma(rho1, un1 + Vtp, fma(rho2, un2 - Vtm, -x * dp * over_c))
+    mass1 = mass + abs(mass)
+    mass2 = mass - abs(mass)
+    block
+      ! pressure term
+      real(8) pres
+      !pres = 0.5d0 * ((p1 + p2) + (bp - bm) * (-dp) + (1.d0 - x) * (bp + bm - 1.d0) * (p1 + p2))
+      !pres = 0.5d0 * ((p1 + p2) * ((1.d0 - x) * (bp + bm - 1.d0) + 1.d0) + (bm - bp) * dp)
+      block
+        real(8) p_sum, b_sum_m1, b_diff, term, term_p
+        ! independent
+        p_sum    = p1 + p2
+        b_sum_m1 = bp + bm - 1.d0
+        b_diff   = bm - bp
+        ! FMA
+        term     = fma(1.d0 - x, b_sum_m1, 1.d0)   ! (1.d0 - x) * b_sum_m1 + 1.d0
+        term_p   = term * p_sum
+        pres     = 0.5d0 * fma(dp, b_diff, term_p) ! dp * b_diff + term_p
+      end block
+      F1 = mass1       + mass2
+      !F2 = mass1 * u1 + mass2 * u2 + pres * Norm(2)
+      !F3 = mass1 * v1 + mass2 * v2 + pres * Norm(3)
+      F2 = fma(mass1, u1, fma(mass2, u2, pres * Norm(2)))
+      F3 = fma(mass1, v1, fma(mass2, v2, pres * Norm(3)))
+  #:if DIM == 3
+      !F4 = mass1 * w1 + mass2 * w2 + pres * Norm(4)
+      F4 = fma(mass1, w1, fma(mass2, w2, pres * Norm(4)))
+      F5 = mass1 * phi(rho1, k1, p1, over_rho1) + mass2 * phi(rho2, k2, p2, over_rho2)
+  #:else
+      F4 = mass1 * phi(rho1, k1, p1, over_rho1) + mass2 * phi(rho2, k2, p2, over_rho2)
+  #:endif
+    end block
+  end subroutine SLAU1
+
+
+  attributes(device) subroutine HRSLAU2(id_slau, rho1, rho2, u1, u2, v1, v2, &
+  #:if DIM == 3
+                                             w1, w2, &
+  #:endif
+                                             un1, un2, p1, p2, Norm, HR, F1, F2, F3, F4${', F5' if DIM == 3 else ''}$)
+    use mod_globals, only : sp
+    integer(4), intent(in), value :: id_slau
+    real(8), intent(in)           :: rho1, rho2, u1, u2, v1, v2, &
+  #:if DIM == 3
+                                      w1, w2, &
+  #:endif
+                                      un1, un2, p1, p2, Norm(5)
+    real(sp), intent(in), value   :: HR
+    real(8), intent(out)          :: F1, F2, F3, F4${', F5' if DIM == 3 else ''}$
+    real(8) c, over_c, Mp, Mm
+    real(8) Vtp, Vtm, dp, bp, bm, mass, mass1, mass2, Vec2, over_rho1, over_rho2, k1, k2
+    over_rho1 = 1.d0 / rho1
+    over_rho2 = 1.d0 / rho2
+    call SLAU_common(rho1, rho2, over_rho1, over_rho2, u1, u2, v1, v2, &
+  #:if DIM == 3
+                     w1, w2, &
+  #:endif
+                     un1, un2, p1, p2, c, over_c, Mp, Mm, bp, bm, dp, Vtp, Vtm)
+    k1   = 0.5d0 * (u1*u1 + v1*v1${' + w1*w1' if DIM == 3 else ''}$)
+    k2   = 0.5d0 * (u2*u2 + v2*v2${' + w2*w2' if DIM == 3 else ''}$)
+    Vec2 = sqrt(k1 + k2)
+    block
+      real(8) M, x
+      M  = fmin(1.d0, Vec2 * over_c)
+      x  = (1.d0 - M) ** 2
+      !mass = 0.25d0 * (rho1 * (un1 + Vtp) + rho2 * (un2 - Vtm) - x * dp * over_c)
+      mass  = 0.25d0 * fma(rho1, (un1 + Vtp), fma(rho2, (un2 - Vtm), -x * dp * over_c))
+      mass1 = mass + abs(mass)
+      mass2 = mass - abs(mass)
+    end block
+    block
+      real(8) pres
+      !pres = 0.5d0 * (p1 + p2 + (bp - bm) * (-dp) + HR * Vec2 * (bp + bm - 1.d0) * 0.5d0 * (rho1 + rho2) * c)
+      !pres = 0.5d0 * (p1 + p2 + (bm - bp) * dp + HR * Vec2 * 0.5d0 * c * (bp + bm - 1.d0) * (rho1 + rho2))
+      block
+        real(8) p_sum, b_sum_m1, b_diff, rho_sum, coeff, term
+        ! independent
+        p_sum    = p1 + p2
+        b_sum_m1 = bp + bm - 1.d0
+        b_diff   = bm - bp
+        rho_sum  = rho1 + rho2
+        coeff    = HR * Vec2 * 0.5d0 * c * b_sum_m1
+        ! FMA
+        term     = fma(dp, b_diff, p_sum)            ! dp * b_diff + p_sum
+        pres     = 0.5d0 * fma(coeff, rho_sum, term) ! 0.5d0 * (coeff * rho_sum + term)
+      end block
+      F1 = mass1       + mass2
+      !F2 = mass1 * u1 + mass2 * u2 + pres * Norm(2)
+      !F3 = mass1 * v1 + mass2 * v2 + pres * Norm(3)
+      F2 = fma(mass1, u1, fma(mass2, u2, pres * Norm(2)))
+      F3 = fma(mass1, v1, fma(mass2, v2, pres * Norm(3)))
+  #:if DIM == 3
+      !F4 = mass1 * w1 + mass2 * w2 + pres * Norm(4)
+      F4 = fma(mass1, w1, fma(mass2, w2, pres * Norm(4)))
+      F5 = mass1 * phi(rho1, k1, p1, over_rho1) + mass2 * phi(rho2, k2, p2, over_rho2)
+  #:else
+      F4 = mass1 * phi(rho1, k1, p1, over_rho1) + mass2 * phi(rho2, k2, p2, over_rho2)
+  #:endif
+    end block
+  end subroutine HRSLAU2

@@ -14,6 +14,10 @@
 !>                convective and FP32 viscous kernels are free to co-reside on
 !>                the same SM, which is the only mechanism that can beat
 !>                sequential dispatch here (see the conv_share comment below).
+!>   'zslab'   -- stream_dir(1:2), two ordinary non-blocking streams for the
+!>                F-conv/Fv-visc one-slab-offset pipeline (calc_conv_visc_zslab
+!>                in calc_flux_base_mixed.f90.fypp); E/G run on the default
+!>                stream, unchanged from calc_conv_visc_seq.
 !>
 !> Adapted from 3D_solver_fltflt/src/mod_streams_ff.f90; the Green-Context
 !> mechanism carries over unchanged (convection stays plain real(8), so the
@@ -30,6 +34,21 @@ module mod_streams_mixed
 #:if OVERLAP_MODE == 'streams'
   !> One stream per flux direction: (1)=E/Ev, (2)=F/Fv, (3)=G/Gv.
   integer(cuda_stream_kind) :: stream_dir(3)
+#:elif OVERLAP_MODE == 'zslab'
+  !> Two streams for the F-conv/Fv-visc z-slab pipeline: (1)=F-conv-koff-acc,
+  !> (2)=Fv-visc-koff. E/G stay on the default stream. event_Fconv orders
+  !> visc(slab i) after conv(slab i) completes -- required because both
+  !> accumulate into the SAME F(...,k-1,...) addresses for a given slab, and
+  !> the one-slab-offset issue order alone (conv(i+1) issued before visc(i))
+  !> only controls program order, not GPU execution order across two
+  !> independent non-blocking streams. Without this event, visc(i) on stream 2
+  !> can start before, or run concurrently with, conv(i) on stream 1 -- a
+  !> non-atomic read-modify-write race on the same address (confirmed by a
+  !> local correctness run: entropy.d differed from the 'none' baseline at
+  !> the ~1e-5 level, a classic lost-update signature, before this event was
+  !> added).
+  integer(cuda_stream_kind) :: stream_dir(2)
+  type(cudaEvent) :: event_Fconv
 #:else
   integer(cuda_stream_kind) :: stream_conv, stream_visc
   type(cudaEvent) :: event_E, event_Fv, event_Gv
@@ -97,6 +116,14 @@ contains
       call check_cuda(istat, "cudaStreamCreateWithFlags")
     end do
     print '(1x, a)', "Dispatch: 3 plain non-blocking streams (one per flux direction), no SM partition"
+#:elif OVERLAP_MODE == 'zslab'
+    do i = 1, 2
+      istat = cudaStreamCreateWithFlags(stream_dir(i), cudaStreamNonBlocking)
+      call check_cuda(istat, "cudaStreamCreateWithFlags")
+    end do
+    istat = cudaEventCreateWithFlags(event_Fconv, cudaEventDisableTiming)
+    call check_cuda(istat, "cudaEventCreateWithFlags(event_Fconv)")
+    print '(1x, a, i0, a)', "Dispatch: z-slab pipeline for F/Fv (2 streams, NZSLAB=", ${NZSLAB}$, "), E/G full-grid on default stream"
 #:elif OVERLAP_MODE == 'gc'
     ! Partition SMs into disjoint conv/visc green contexts. minCount is
     ! rounded to a multiple of 8 (valid on both the cc9.0+ rule -- min 8,

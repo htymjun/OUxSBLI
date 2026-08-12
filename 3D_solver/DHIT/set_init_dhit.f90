@@ -1,7 +1,7 @@
 module set_init_dhit
   use cufft
-  use mod_globals, only : gamma, RHO0, p0, Urms, pi, pope_L, &
-                          pope_eta, pope_C, pope_cL, pope_p0, pope_beta, pope_ceta
+  use mod_globals, only : gamma, RHO0, p0, up0, pi, A0, k0, mu0, c0, &
+                          Re_lambda_target, Mat_target
   use mod_constant, only : id_accuracy
   implicit none
 contains
@@ -27,18 +27,14 @@ contains
     integer :: plan
     integer :: istat
 
-    real(8) :: TKE, eps
-
     real(8) :: dk, kmag2, kmag, kx, ky, kz, k12
-
-    real(8) :: kL
-    real(8) :: keta
-
-    real(8) :: fL
-    real(8) :: feta
 
     real(8) :: Ek
     real(8) :: amp
+
+    real(8) :: du1dx1_sq, dx, u1p, u1m
+    real(8) :: lambda_meas, Re_lambda_meas, Mat_meas
+    integer :: ip, im
 
     real(8) :: phi1
     real(8) :: phi2
@@ -61,11 +57,6 @@ contains
     complex(8), device, allocatable :: uk_d(:,:,:)
     real(8), device, allocatable :: vk_d(:,:,:)
 
-    !===========================================================
-    ! physical parameters
-    !===========================================================
-    TKE = 3.d0 / 2.d0 * Urms**2
-    eps = TKE**1.5d0 / pope_L
     !===========================================================
     ! setup
     !===========================================================
@@ -113,13 +104,10 @@ contains
           kz = dble(ikz)/kmag
           
           k12 = sqrt(dble(ikx*ikx + iky*iky))
-          
-          kL   = kmag * pope_L
-          keta = kmag * pope_eta
-          fL   = (kL / sqrt(kL**2 + pope_cL)) ** (5.d0/3.d0 + pope_p0)
-          feta = exp(-pope_beta * ((keta**4 + pope_ceta**4)**0.25d0 - pope_ceta))
-          Ek   = pope_C * eps**(2.d0/3.d0) * kmag**(-5.d0/3.d0) * fL * feta
-          
+
+          ! ref.tex "Compressible homogeneous turbulence": E(k) = A0*k^4*exp(-2*k^2/k0^2)
+          Ek  = A0 * kmag**4 * exp(-2.d0*kmag**2/k0**2)
+
           amp = sqrt(Ek / (2.d0 * pi * kmag**2))
           amp = amp * dble(Nf)**3
           
@@ -189,15 +177,40 @@ contains
             urms_sq = urms_sq + (vel_r(i,j,k,icomp)*norm)**2
     enddo;enddo;enddo;enddo
     urms_sq = urms_sq / dble(3*Nf**3)
-    uscale = urms / sqrt(urms_sq)
+    uscale = up0 / sqrt(urms_sq)
+    !===========================================================
+    ! self-consistency check: measured Re_lambda, Ma_t from the
+    ! actual synthesized field (independent of the Python
+    ! post-processing check run on the first VTK snapshot)
+    !===========================================================
+    dx = 2.d0*pi / dble(Nf)   ! solver's actual periodic grid spacing (Lx/Nf, Nf = nx - 6)
+    du1dx1_sq = 0.d0
+    do k = 1, Nf
+      do j = 1, Nf
+        do i = 1, Nf
+          ip = mod(i, Nf) + 1
+          im = mod(i-2+Nf, Nf) + 1
+          u1p = vel_r(ip,j,k,1) * norm * uscale
+          u1m = vel_r(im,j,k,1) * norm * uscale
+          du1dx1_sq = du1dx1_sq + ((u1p - u1m) / (2.d0*dx))**2
+    enddo;enddo;enddo
+    du1dx1_sq = du1dx1_sq / dble(Nf**3)
+
+    lambda_meas    = up0 / sqrt(du1dx1_sq)
+    Re_lambda_meas = RHO0 * up0 * lambda_meas / mu0
+    Mat_meas       = sqrt(3.d0) * up0 / c0
     !===========================================================
     ! diagnostics
     !===========================================================
     print *, '[DHIT init]'
-    print *, 'Nf           = ', Nf
-    print *, 'u_rms(raw)   = ', sqrt(urms_sq)
-    print *, 'u_rms(target)= ', urms
-    print *, 'u_scale      = ', uscale
+    print *, 'Nf                 = ', Nf
+    print *, 'u_rms(raw)         = ', sqrt(urms_sq)
+    print *, 'u_rms(target)      = ', up0
+    print *, 'u_scale            = ', uscale
+    print *, 'Re_lambda(measured)= ', Re_lambda_meas
+    print *, 'Re_lambda(target)  = ', Re_lambda_target
+    print *, 'Ma_t(measured)     = ', Mat_meas
+    print *, 'Ma_t(target)       = ', Mat_target
     !===========================================================
     ! pack conservative variables
     !===========================================================

@@ -20,7 +20,28 @@
 !   'streams' -- calc_conv_visc_streamed: three ordinary non-blocking streams, one
 !                per flux direction, each running conv-then-visc for its own array.
 !                No SM partition, so blocks from the FP64 convective and FP32
-!                viscous kernels can co-reside on the same SM.
-#:set OVERLAP_MODE = 'streams'
+!                viscous kernels can co-reside on the same SM. Measured on GH200
+!                513^3: concurrency factor 1.00x -- every flux kernel's launch
+!                grid (e.g. blocksE=16x511x511, blocksF/G~16x128x511) vastly
+!                exceeds GH200's ~4224 resident-block capacity, so each runs
+!                hundreds of waves deep and the scheduler never admits a second
+!                kernel's blocks until the first is essentially done.
+!   'zslab'   -- calc_conv_visc_zslab: F/Fv ONLY (E/Ev, G/Gv stay full-grid,
+!                unchanged -- their non-z grid dims, x*y=8176, already exceed
+!                the ~4224-slot capacity regardless of z-slab thickness; only
+!                F/Fv's x*y=2048 is small enough to fit under it). Splits F's
+!                z-extent into NZSLAB slabs and pipelines calc_conv_F_koff_acc
+!                (slab i) against calc_visc_Fv_koff (slab i-1) on two dedicated
+!                streams -- NEVER the same slab index concurrently, since both
+!                accumulate into the same F(...,k-1,...) addresses for a given
+!                slab and `F = F + flux` is not atomic across kernels.
+#:set OVERLAP_MODE = 'zslab'
+! Number of z-slabs for OVERLAP_MODE='zslab'. F's block count per slab is
+! 16*128*ceil(n_F/1) (threadsF%z=1), so a 1-plane slab (NZSLAB = nz-2 = 511 at
+! the 513^3 production grid) is the only thickness that gets under the
+! ~2112-block (half-capacity) co-residency target; start coarser (e.g. 8) to
+! validate correctness and check for any measurable overlap at all before
+! paying the ~511-launch-per-stage overhead of the finest slabbing.
+#:set NZSLAB = 8
 ! Derived: every existing `#:if OVERLAP_GC` site means "not the sequential path".
 #:set OVERLAP_GC = (OVERLAP_MODE != 'none')

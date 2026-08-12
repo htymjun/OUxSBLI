@@ -4,52 +4,52 @@ module calc_physical_quantities
   use mod_constant, only : gamma_1, mu0_T0_S_over_T0_2_3
   implicit none
 contains
-  subroutine calc_quantities_2D(nx, ny, Jacobian, QJ, Q, T)
-    integer, intent(in), value               :: nx, ny
-    real(8), intent(in), device, contiguous  :: Jacobian(nx,ny)
-    real(8), intent(in), device, contiguous  :: QJ(nx,4,ny) ! Q / Jacobian
-    real(8), intent(out), device, contiguous :: Q(nx,4,ny)
-    real(8), intent(out), device, contiguous :: T(nx,ny)
+  subroutine calc_quantities_2D(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T)
+    integer, intent(in), value                 :: nx, ny
+    real(8), intent(in), device, contiguous    :: Jacobian(nx,ny)
+    real(8), intent(in), device, contiguous    :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny) ! Q / Jacobian
+    real(8), intent(inout), device, contiguous :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
+    real(8), intent(inout), device, contiguous :: T(nx,ny)
     integer i, j
     real(8) :: over_Q1, rho, u, v, p
     !$cuf kernel do(2) <<<*,(32,4)>>>
     do j = 1, ny
       do i = 1, nx
-        over_Q1  = 1.d0 / QJ(i,1,j)
-        rho      = Jacobian(i,j) * QJ(i,1,j)
-        u        = QJ(i,2,j) * over_Q1
-        v        = QJ(i,3,j) * over_Q1
-        p        = gamma_1 * (Jacobian(i,j) * QJ(i,4,j) - 0.5d0 * rho * (u*u + v*v))
-        Q(i,1,j) = rho
-        Q(i,2,j) = u
-        Q(i,3,j) = v
-        Q(i,4,j) = p
+        over_Q1  = 1.d0 / QJ_1(i,j)
+        rho      = Jacobian(i,j) * QJ_1(i,j)
+        u        = QJ_2(i,j) * over_Q1
+        v        = QJ_3(i,j) * over_Q1
+        p        = gamma_1 * (Jacobian(i,j) * QJ_4(i,j) - 0.5d0 * rho * (u*u + v*v))
+        Q_1(i,j) = rho
+        Q_2(i,j) = u
+        Q_3(i,j) = v
+        Q_4(i,j) = p
         T(i,j)   = p / (R * rho)
     enddo;enddo
   end subroutine calc_quantities_2D
-  
 
-  subroutine calc_quantities_T_2D(nx, ny, Jacobian, QJ, Q, T, mu)
-    integer, intent(in), value               :: nx, ny
-    real(8), intent(in), device, contiguous  :: Jacobian(nx,ny)
-    real(8), intent(in), device, contiguous  :: QJ(nx,4,ny) ! Q / Jacobian
-    real(8), intent(out), device, contiguous :: Q(nx,4,ny)
-    real(8), intent(out), device, contiguous :: T(nx,ny)
-    real(8), intent(out), device, contiguous :: mu(nx,ny)
+
+  subroutine calc_quantities_T_2D(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T, mu)
+    integer, intent(in), value                 :: nx, ny
+    real(8), intent(in), device, contiguous    :: Jacobian(nx,ny)
+    real(8), intent(in), device, contiguous    :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny) ! Q / Jacobian
+    real(8), intent(inout), device, contiguous :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
+    real(8), intent(inout), device, contiguous :: T(nx,ny)
+    real(8), intent(inout), device, contiguous :: mu(nx,ny)
     integer i, j
     real(8) :: over_Q1, rho, u, v, p, temp
     !$cuf kernel do(2) <<<*,(32,4)>>>
     do j = 1, ny
       do i = 1, nx
-        over_Q1  = 1.d0 / QJ(i,1,j)
-        rho      = Jacobian(i,j) * QJ(i,1,j)
-        u        = QJ(i,2,j) * over_Q1
-        v        = QJ(i,3,j) * over_Q1
-        p        = gamma_1 * (Jacobian(i,j) * QJ(i,4,j) - 0.5d0 * rho * (u*u + v*v))
-        Q(i,1,j) = rho
-        Q(i,2,j) = u
-        Q(i,3,j) = v
-        Q(i,4,j) = p
+        over_Q1  = 1.d0 / QJ_1(i,j)
+        rho      = Jacobian(i,j) * QJ_1(i,j)
+        u        = QJ_2(i,j) * over_Q1
+        v        = QJ_3(i,j) * over_Q1
+        p        = gamma_1 * (Jacobian(i,j) * QJ_4(i,j) - 0.5d0 * rho * (u*u + v*v))
+        Q_1(i,j) = rho
+        Q_2(i,j) = u
+        Q_3(i,j) = v
+        Q_4(i,j) = p
         temp     = p / (R * rho)
         T(i,j)   = temp
         mu(i,j)  = mu0_T0_S_over_T0_2_3 / (temp + 111.d0) * (temp * sqrt(temp))

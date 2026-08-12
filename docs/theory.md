@@ -40,7 +40,7 @@ All four schemes are dispatched from `calc_flux_base.f90.fypp` at compile time. 
 The KEEP scheme is a split-form finite-difference method that discretely preserves kinetic energy and entropy on uniform grids. It produces no numerical dissipation, making it ideal for smooth vortical flows (Taylor-Green vortex) where artificial dissipation would contaminate the physics.
 
 - **Files:** `calc_keep_kernel.f90.fypp`, `calc_keep_kernel_internal.f90.fypp`
-- **Best for:** ETGV,
+- **Best for:** ETGV
 - **Not suitable for:** flows with shocks (no upwinding)
 
 ### SLAU — Simple Low-dissipation AUSM
@@ -52,15 +52,6 @@ SLAU is a pressure-based all-speed Riemann solver from the AUSM family. HRSLAU2 
 - **Files:** `calc_slau_kernel.f90.fypp`, `calc_slau_kernel_internal.f90.fypp`
 - **Variants:** `SLAU_VARIANT = 'SLAU'` or `'HRSLAU2'` (default)
 - **Best for:** SBLI, TBL, BL, OS — any case with shocks
-
-### Roe — Approximate Riemann Solver
-
-`SCHEME = 'Roe'`
-
-The Roe scheme linearises the Riemann problem at each interface and adds matrix dissipation proportional to the spectral radius of the flux Jacobian. It is well-suited to strong discontinuities but is not actively optimised in OUxSBLI; SLAU or Hybrid is preferred for most cases.
-
-- **Files:** `calc_roe_kernel.f90.fypp`, `calc_roe_kernel_internal.f90.fypp`
-- **Best for:** strong shocks at hypersonic conditions
 
 ### Hybrid — KEEP ↔ SLAU via Ducros Sensor
 
@@ -85,9 +76,12 @@ When Φ_D ≈ 0 (vorticity dominated, smooth flow) the scheme reduces to KEEP. W
 
 Central-difference discretisation of viscous fluxes following Gaitonde and Visbal's curvilinear-consistent formulation. Used in both the Cartesian (`calc_visc2.f90.fypp`) and curvilinear (`calc_visc2_curv.f90`) solvers.
 
-### ME4-Base 4th-order (`ORDER = 4` or `VISC_ORDER = 4`)
+### ME4-Base 4th/6th-order (`ORDER = 4` or `6`, or `VISC_ORDER = 4` or `6`)
 
-4th-order compact viscous stencil from the ME4-Base scheme (`calc_visc4.f90.fypp`, `calc_visc4_internal.f90.fypp`). Provides higher accuracy for well-resolved DNS/LES at the cost of a wider stencil and additional MPI halo width.
+Higher-order compact viscous stencil from the ME4-Base scheme. Provides higher accuracy for well-resolved DNS/LES at the cost of a wider stencil and additional MPI halo width.
+
+- **3D Cartesian solver (`3D_solver/`):** `calc_visc_high.f90.fypp` / `calc_visc_high_internal.f90.fypp` — one shared, boundary-aware kernel pair for both 4th and 6th order, dispatched on `VISC_ORDER`.
+- **2D solver (`2D_solver/`):** `calc_visc4.f90.fypp` / `calc_visc4_internal.f90.fypp` — 4th-order only; the 2D solver has not been refactored to the shared `_high` kernels.
 
 The viscous stencil order can be set independently of the convective order using `VISC_ORDER` in `config.fypp`.
 
@@ -122,4 +116,4 @@ Enabled for the STZ validation case. Non-blocking MPI halo exchange is posted, i
 - Grid metric coefficients (ξ_x, ξ_y, η_x, η_y) and the Jacobian are stored on device.
 - Conservative variables are stored as Q × J_2D × Δz; they are converted to primitive form before kernel dispatch.
 - E and F fluxes are area-scaled (include the face-area factor S_ξ or S_η); G flux is not.
-- Only KEEP, SLAU, and Hybrid are supported; Roe and LES are not implemented in `calc_flux_base_curv.f90`.
+- Only KEEP, SLAU, and Hybrid are supported; LES is not implemented in `calc_flux_base_curv.f90`.

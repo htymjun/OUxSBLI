@@ -17,7 +17,7 @@ contains
     use mod_globals, only : M0, rho0, p0, T0, u0, Rc, beta
     integer, intent(in)  :: myrank, nx, ny
     real(8), intent(in)  :: x(nx), y(ny)
-    real(8), intent(out) :: Q(nx,4,ny)
+    real(8), intent(out) :: Q(nx,ny,4)
     integer i, j
     real(8) xr, yr, xc, yc, ex, T, rho, u, v, du, dv, p
     real(8) :: Cp = R * gamma / (gamma - 1.d0)
@@ -33,20 +33,20 @@ contains
         u   = u0 * cos(theta) + du * cos(theta) - dv * sin(theta)
         v   = u0 * sin(theta) + du * sin(theta) + dv * cos(theta)
         p   = rho * R * T
-        Q(i,1,j) = rho
-        Q(i,2,j) = rho * u
-        Q(i,3,j) = rho * v
+        Q(i,j,1) = rho
+        Q(i,j,2) = rho * u
+        Q(i,j,3) = rho * v
         ! p / (gamma - 1) + 0.5 * (rhou ** 2 + rhov ** 2 ) / rho
-        Q(i,4,j) = p / (gamma - 1.d0) + 0.5d0 * rho * (u**2 + v**2)
+        Q(i,j,4) = p / (gamma - 1.d0) + 0.5d0 * rho * (u**2 + v**2)
     enddo;enddo
   end subroutine set_init
 
 
-  subroutine set_bc(myrank, nx, ny, Jacobian, Q)
+  subroutine set_bc(myrank, nx, ny, Jacobian, Q_1, Q_2, Q_3, Q_4)
     integer, intent(in), value     :: myrank, nx, ny
     real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: Q(nx,4,ny)
-    call set_bc_cyclic(id_accuracy, nx, ny, Q)
+    real(8), intent(inout), device :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
+    call set_bc_cyclic(id_accuracy, nx, ny, Q_1, Q_2, Q_3, Q_4)
   end subroutine set_bc
 end module set
 

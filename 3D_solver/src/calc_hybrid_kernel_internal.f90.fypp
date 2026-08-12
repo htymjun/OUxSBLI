@@ -36,8 +36,7 @@ module calc_hybrid_kernel_internal
     module procedure delta_r2, delta_r4, delta_r6
   end interface delta_r
 contains
-  include 'calc_keep_3d.f90'
-  include 'calc_slau_3d.f90'
+  include 'calc_scheme_math.f90'
 
   !$dir inline
   attributes(device) subroutine delta_r2(id_acc, sensor, a, al, ar)
