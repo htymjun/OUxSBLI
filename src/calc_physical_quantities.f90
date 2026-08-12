@@ -52,7 +52,7 @@ contains
         Q_4(i,j) = p
         temp     = p / (R * rho)
         T(i,j)   = temp
-        mu(i,j)  = mu0_T0_S_over_T0_2_3 / (temp + 111.d0) * (temp * sqrt(temp))
+        mu(i,j)  = mu0_T0_S_over_T0_2_3 / (temp + 110.4d0) * (temp * sqrt(temp)) !mu(i,j)  = mu0_T0_S_over_T0_2_3 / (temp + 111.d0) * (temp * sqrt(temp))
     enddo;enddo
   end subroutine calc_quantities_T_2D
 
@@ -117,7 +117,7 @@ contains
           Q_5(i,j,k) = p
           temp       = p / (R * rho)
           T(i,j,k)   = temp
-          mu(i,j,k)  = mu0_T0_S_over_T0_2_3 / (temp + 111.d0) * (temp * sqrt(temp))
+          mu(i,j,k)  = mu0_T0_S_over_T0_2_3 / (temp + 110.4d0) * (temp * sqrt(temp)) !mu0_T0_S_over_T0_2_3 / (temp + 111.d0) * (temp * sqrt(temp))
     enddo;enddo;enddo
   end subroutine calc_quantities_T_3D
 end module calc_physical_quantities
