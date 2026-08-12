@@ -59,7 +59,7 @@ main.f90
 | OS   | Quasi-2D oblique shock + wall reflection (extrudes 2D_solver/OS through a thin periodic z; validated vs. Rankine-Hugoniot) |
 | SBLI | Shock-boundary layer interaction (RESCALE=True) |
 | STZ  | z-direction halo exchange validation (COMMZ=True, BC_Z=True) |
-| TBL  | Turbulent boundary layer (LES, Hybrid scheme) |
+| TBL  | Supersonic turbulent boundary layer, M=2.5 adiabatic wall (NS, KEEP, ORDER=6, RESCALE=True); validated against Guarini et al. (2000) — see the TBL note below |
 
 BL, EVC, and OS are "quasi-2D" ports of their `2D_solver/` namesakes: the same
 real physics extruded uniformly through a thin, periodic spanwise `z`
@@ -94,6 +94,31 @@ to leaving it frozen, and avoids whatever this untested combination trips in
 the boundary-aware kernel. OS was unaffected from the start: 2D_solver/OS's
 own `set_bc` already actively rewrites `i=1` every step (a Dirichlet inflow),
 so its 3D port inherited a working pattern without needing this fix.
+
+### TBL: sizing the case against a reference Reynolds number
+
+`blt` in `TBL/mod_globals.f90` is the **rescaling setpoint for inlet δ99**, and
+every domain length is a multiple of it, so it is the single knob that sets the
+Reynolds number. For the case's freestream (M=2.5, 100 kPa / 295 K total,
+Re_unit = 9.87×10⁶ /m) the useful conversions are
+
+```
+Re_theta   = 751 * delta99[mm]          # from the profile shape, theta/delta99 = 0.0762
+dRe_theta  = 13.9 per mm of x           # = Cf/2 * Re_unit at Cf = 0.00282
+delta_nu   = 7.53 um                    # wall unit
+```
+
+so `blt = 1.9 mm` gives Re_θ ≈ 1430 at the inlet, growing to ≈ 1665 at the
+outlet and crossing Guarini's 1577 near x = 0.63·Lx. Derive these from
+`ouxsbli.analysis.tbl_stats.reference_station()` rather than by hand — it builds
+the paper's own composite profile on the actual solver grid.
+
+Do **not** size the domain from the composite δ used in the reference's
+tables: δ99 is about 20% smaller (277 wall units versus 335 at Re_θ = 1577), so
+using the composite value silently makes the box too small in δ99 units.
+
+Changing `blt` invalidates a restart, because `Lx`, `Ly` and `Lz` all scale with
+it and the grid changes. Calibrate before the long run, not after.
 
 ## Convective Schemes (dispatched from `calc_flux_base.f90.fypp`)
 
@@ -150,6 +175,19 @@ path; no current case combines `COMMZ=True` with `VISC in ('NS','LES')` at
 * `calc_flux_base.f90` calls `calc_*_kernel.f90`, `calc_*_kernel_internal.f90`, `calc_visc*.f90`, and `calc_div.f90` (runs once per RK stage, right after `calc_quantities_T_3D`, for `VISC_ORDER>2`). They are the main bottleneck.
 * Roe scheme is not used. KEEP, SLAU, Hybrid schemes should be optimized.
 * STZ case exists specifically to validate the z-direction halo exchange (COMMZ=True, BC_Z=True); more validation and 6-point stencil support are still required.
+* `RESTART=True` + `RESCALE=True` used to abort on startup: `pre_rescale`
+  (`preprocess.f90.fypp`) requires `recal/Qm.dat`, but `write_Qm` — the only
+  routine that wrote it — was never called from anywhere. `rescale_recv_send`
+  now checkpoints the profile through `write_Qm_restart` every 1000 timesteps
+  once rescaling has engaged, which is what makes a staged TBL run resumable.
+  Note the resulting semantics: on restart `id_recal` is true, so `calc_mean` is
+  skipped and `Qm` stays **frozen** at the restored profile for the whole run.
+* Two known quirks in `calc_rescale.f90`, both benign, both left alone: the
+  `jup` loop that sets `u99` has no `exit`, so `u99` is effectively
+  `0.99*Um(ny)` (the freestream value you want anyway); and the `step` index
+  passed from `calc_time_dev.f90.fypp` is `np*(t2-1)+t1` rather than
+  `nt*(t2-1)+t1`, which makes the time column of `data/rescaling.d` a sawtooth
+  but does not affect the running mean (`calc_mean` keeps its own counter).
 * `calc_hybrid.f90`'s `calc_Ducros` shock sensor (used by SLAU/Roe/Hybrid schemes) recomputes its own full velocity-gradient tensor via always-2nd-order central differences, independent of `calc_div`'s higher-order `ux,vy,wz` — reusing `calc_div`'s output there would change the sensor's numerical values (mixed-order dilatation vs. vorticity) and needs a fallback for the edge band `calc_div` doesn't cover, so it hasn't been done; flagged here as a known optimization candidate for SLAU/Hybrid NS/LES cases (currently: SBLI).
 * Nsight Compute profiling captures live in `3D_solver/nsys_ncu/*.ncu-rep` (open with `ncu --import <file> --print-summary per-kernel`, or the `.csv` triage exports); use these before speculating about kernel performance.
 * `preprocess.f90.fypp`'s `pre_calc` (the initial t=0 snapshot send) used to hardcode `real(4)`/`MPI_REAL4` for its flux-flat buffers regardless of `OUTPUT_PRECISION`, unlike the rest of the print pipeline (`print.f90.fypp`'s `send_recv_for_print_even/odd3`), which already dispatched on the `io` kind parameter correctly. This was never exercised because no case had set `OUTPUT_PRECISION=8` before EVC/BL/OS's tests needed it (float32 can't resolve a 6th-order convergence trend or tight Cf tolerances); fixed to use `real(io)` and branch on `io` like the rest of the pipeline. No existing case's behavior changes (`io` still resolves to 4 for all of them).

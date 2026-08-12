@@ -1,7 +1,7 @@
 
 #:set VISC = 'NS'
 #:set SCHEME = 'KEEP'
-#:set ORDER = 2
+#:set ORDER = 6
 #:set BC_X = True
 #:set BC_Y = True
 #:set BC_Z = False

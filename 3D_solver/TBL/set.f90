@@ -1,7 +1,7 @@
 module set
   use cudafor
   use mpi
-  use mod_globals, only : ny1, nre2, gamma, R, Cp, Pr, u0, p0, T0, M0, blt, rf, Taw
+  use mod_globals, only : nre2, gamma, R, Pr, u0, p0, T0, M0, blt, rf, Taw
   use mod_constant, only : Cp, gamma_1, over_gamma, over_gamma_1, id_rescale
   use set_bc_common
   use set_init_common
@@ -13,7 +13,7 @@ contains
     real(8), intent(out) :: x(nx), y(ny), z(nz), dx(nx-1), dy(ny-1), dz(nz-1)
     integer i, j, k
     real(8) dx1, dy1, dz1, tanh_s, yi
-    real(8), parameter :: s = 2.4d0
+    real(8), parameter :: s = 2.06d0 ! puts the first cell at y+ = 0.70 for ny = 193
     dx1 = Lx / dble(nx-1)
     dz1 = Lz / dble(nz-1)
 
