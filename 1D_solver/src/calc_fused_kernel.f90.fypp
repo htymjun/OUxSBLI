@@ -1,41 +1,90 @@
 #:include 'config.fypp'
-!> Fused convective (KEEP) + viscous (Navier-Stokes) flux kernel: one shared-
-!> memory load pass and one launch compute both, instead of the split
-!> calc_keep_x + calc_Ev2 pair. Selected via config.fypp's KERNEL_MODE.
 module calc_fused_kernel
+  use cudafor  ! Required to support CUDA Fortran intrinsics and __stcs
   use mod_globals, only : threadsE, dx
   use mod_constant, only : R_over_gamma_1, Cp_over_Pr, two_third
   implicit none
   private
   public calc_fused_x
 contains
-  include 'calc_keep_1d.f90'
-  include 'calc_visc_1d.f90'
 
-  attributes(global) subroutine calc_fused_x(nx, Q, T, mu, E)
+  attributes(global) subroutine calc_fused_x(nx, ruvwp, T, mu, E)
     integer, intent(in), value               :: nx
-    real(8), intent(in), device, contiguous  :: Q(nx,3), T(nx), mu(nx)
+    real(8), intent(in), device, contiguous  :: ruvwp(nx,3), T(nx), mu(nx)
     real(8), intent(out), device, contiguous :: E(3,nx-1)
+    
     integer i, it, ii, i_base, idx
-    integer, parameter :: sx = threadsE%x + 1
-    real(8), dimension(1:sx), shared :: rho, u, p, tmp
-    real(8) Fk(3), Fv(2)
+    integer, parameter :: block_threads = 128
+    ! 1. Shared Memory Padding (+2 elements for 64-bit memory bank boundary alignment)
+    integer, parameter :: sx = block_threads + 2 
+    
+    ! Shared Memory Declarations
+    real(8), dimension(1:sx), shared :: rho_d, u_d, p_d, tmp_d
+    real(4), dimension(1:sx), shared :: mu_s
+    
+    ! Declare independent local registers to break instruction dependency chains (reduces NOPs)
+    real(8) :: fk1, fk2, fk3
+    real(8) :: e_internal, p_diff, e_kin
+    real(4) :: fv1_temp, fv2_temp, fv2_final
+    real(4) :: mudx_s, mux_s
+    
     it = threadIdx%x
-    i_base = (blockIdx%x-1)*blockDim%x
-    do ii = it, threadsE%x+1, blockDim%x
+    i_base = (blockIdx%x-1) * block_threads
+    
+    ! ==========================================
+    ! 2. Load data into Shared Memory
+    ! (intent(in) arrays automatically generate LDG read-only cache instructions under NVFORTRAN -fast)
+    ! ==========================================
+    do ii = it, sx, block_threads
       i = i_base + ii
       if (i >= 1 .and. i <= nx) then
-        rho(ii) = Q(i,1); u(ii) = Q(i,2); p(ii) = Q(i,3); tmp(ii) = T(i)
+        rho_d(ii) = ruvwp(i,1)
+        u_d(ii)   = ruvwp(i,2)
+        p_d(ii)   = ruvwp(i,3)
+        tmp_d(ii) = T(i)
+        mu_s(ii)  = real(mu(i), 4)
       endif
     enddo
+    
     call syncthreads()
+
     i = i_base + it
     if (nx-1 < i) return
     idx = it
-    Fk = KEEP2(rho(idx:idx+1), u(idx:idx+1), p(idx:idx+1), tmp(idx:idx+1))
-    Fv = VISC2(u(idx:idx+1), tmp(idx:idx+1), [mu(i), mu(i+1)])
-    E(1,i) = Fk(1)
-    E(2,i) = Fk(2) - Fv(1)
-    E(3,i) = Fk(3) - Fv(2)
+
+    ! ==========================================
+    ! 3. Instruction-Level Interleaved Calculations
+    ! ==========================================
+    
+    ! Interleave 1: Mass Convection (FP64) + Viscous Coefficient (FP32)
+    fk1    = 0.25d0 * (rho_d(idx) + rho_d(idx+1)) * (u_d(idx) + u_d(idx+1))
+    mudx_s = 0.5_4 * (mu_s(idx) + mu_s(idx+1)) / real(dx, 4)
+
+    ! Interleave 2: Momentum Convection (FP64) + Thermal Conduction Viscosity (FP32)
+    fk2      = 0.5d0 * (fk1 * (u_d(idx) + u_d(idx+1)) + (p_d(idx) + p_d(idx+1)))
+    fv2_temp = real(Cp_over_Pr, 4) * mudx_s * (-real(tmp_d(idx), 4) + real(tmp_d(idx+1), 4))
+
+    ! Interleave 3: Internal Energy Convection (FP64) + Velocity Gradient (FP32)
+    e_internal = fk1 * 0.5d0 * (tmp_d(idx) + tmp_d(idx+1)) * R_over_gamma_1
+    mux_s      = mudx_s * (-real(u_d(idx), 4) + real(u_d(idx+1), 4))
+
+    ! Interleave 4: Pressure Diffusion (FP64) + Viscous Stress (FP32)
+    p_diff   = 0.5d0 * (u_d(idx) * p_d(idx+1) + u_d(idx+1) * p_d(idx))
+    fv1_temp = real(two_third, 4) * 2.0_4 * mux_s
+
+    ! Interleave 5: Kinetic Energy Convection (FP64) + Total Viscous Work (FP32)
+    e_kin     = 0.5d0 * fk1 * (u_d(idx) * u_d(idx+1))
+    fv2_final = fv2_temp + 0.5d0 * real(u_d(idx) + u_d(idx+1), 4) * fv1_temp
+
+    ! Combine energy flux components
+    fk3 = e_internal + p_diff + e_kin
+
+    ! ==========================================
+    ! 4. Write back results using Streaming Store (__stcs)
+    ! ==========================================
+    call __stcs(E(1,i), fk1)
+    call __stcs(E(2,i), fk2 - real(fv1_temp, 8))
+    call __stcs(E(3,i), fk3 - real(fv2_final, 8))
+
   end subroutine calc_fused_x
 end module calc_fused_kernel

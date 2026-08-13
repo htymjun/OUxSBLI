@@ -14,7 +14,7 @@ set output "result.png"
 set multiplot layout 2,2
 
 # --- density ---
-set ylabel "{/:Italic ρ / ρ_L}}"
+set ylabel "{/:Italic ρ / ρ_L}"
 set yrange [0.1:1.1]
 plot "Q.dat" using 1:2 w l lw 2 lc rgb "blue"
 

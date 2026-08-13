@@ -8,7 +8,7 @@ if(NOT DEFINED CASE_GPU_CC)
   set(CASE_GPU_CC "native")
 endif()
 
-set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -cuda -acc -fast -Mpreprocess -Mchkptr -Minfo=accel -gpu=ptxinfo,rdc,lto,cc${CASE_GPU_CC},lineinfo")
+set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -cuda -acc -fast -Mfma -Mpreprocess -Mchkptr -Minfo=accel -gpu=ptxinfo,rdc,lto,ccnative,lineinfo,maxregcount:64")
 
 find_package(MPI REQUIRED Fortran)
 find_program(FYPP_EXE fypp REQUIRED)

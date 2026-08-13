@@ -12,23 +12,42 @@ contains
 
   attributes(global) subroutine calc_keep_x(nx, Q, T, E)
     integer, intent(in), value               :: nx
+    ! 1. 介面改為接收 real(8) 的全域陣列，完美對接外層的 calc_conv
     real(8), intent(in), device, contiguous  :: Q(nx,3), T(nx)
     real(8), intent(out), device, contiguous :: E(3,nx-1)
+    
     integer i, it, ii, i_base, idx
     integer, parameter :: sx = threadsE%x + 1
-    real(8), dimension(1:sx), shared :: rho, u, p, tmp
+    
+    ! 2. 共享記憶體維持 real(4)！這不僅節省了一半的極速記憶體空間，更準備好做 FP32 運算
+    real(4), dimension(1:sx), shared :: rho, u, p, tmp
+    ! 新增一個單精度的暫存陣列，用來接 KEEP2 的計算結果
+    real(4) :: e_local(3) 
+    
     it = threadIdx%x
     i_base = (blockIdx%x-1)*blockDim%x
+    
+    ! 3. 從全域記憶體讀取 real(8)，並明確降階 (real(..., 4)) 存入共享記憶體
     do ii = it, threadsE%x+1, blockDim%x
       i = i_base + ii
       if (i >= 1 .and. i <= nx) then
-        rho(ii) = Q(i,1); u(ii) = Q(i,2); p(ii) = Q(i,3); tmp(ii) = T(i)
+        rho(ii) = real(Q(i,1), 4)
+        u(ii)   = real(Q(i,2), 4)
+        p(ii)   = real(Q(i,3), 4)
+        tmp(ii) = real(T(i), 4)
       endif
     enddo
+    
     call syncthreads()
+    
     i = i_base + it
     if (nx-1 < i) return
     idx = it
-    E(:,i) = KEEP2(rho(idx:idx+1), u(idx:idx+1), p(idx:idx+1), tmp(idx:idx+1))
+    
+    ! 4. 在純單精度 (FP32) 的環境下進行 KEEP2 核心運算
+    e_local = KEEP2(rho(idx:idx+1), u(idx:idx+1), p(idx:idx+1), tmp(idx:idx+1))
+    
+    ! 5. 算完後，將單精度結果升階回雙精度 (real(..., 8))，寫回全域記憶體
+    E(:,i) = real(e_local, 8)
   end subroutine calc_keep_x
 end module calc_keep_kernel

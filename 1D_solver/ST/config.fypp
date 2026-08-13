@@ -6,4 +6,4 @@
 #:set RESCALE      = False
 #:set RESTART      = False
 #:set RK           = 3
-#:set KERNEL_MODE  = 'split'  # 'split' (separate conv/visc launches) or 'fused' (one kernel)
+#:set KERNEL_MODE  = 'fused'
