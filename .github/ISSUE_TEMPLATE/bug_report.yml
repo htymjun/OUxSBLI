@@ -1,0 +1,85 @@
+name: 🐞 Bug Report
+description: Report incorrect behavior, crashes, build failures, or unexpected numerical results.
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug in OUxSBLI.
+        Please search existing Issues before opening a new one.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - 2D solver
+        - 3D solver
+        - Curvilinear solver
+        - Python API
+        - Build system
+        - MPI
+        - GPU / CUDA
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the problem briefly.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the minimum case or steps to reproduce the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include GPU, CUDA, NVIDIA HPC SDK, MPI, OS, etc.
+      placeholder: |
+        GPU:
+        CUDA:
+        NVIDIA HPC SDK:
+        MPI:
+        OS:
+        CMake:
+        Python:
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Error message / log
+      render: text
+
+  - type: textarea
+    id: numerical
+    attributes:
+      label: Numerical evidence
+      description: If applicable, provide reference and computed results.
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Possible cause or workaround

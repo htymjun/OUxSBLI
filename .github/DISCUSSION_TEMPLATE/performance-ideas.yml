@@ -1,0 +1,88 @@
+title: "Performance Idea"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # Performance / Optimization Idea
+
+        Rough or speculative ideas are welcome. A complete implementation
+        proposal or benchmark is not required.
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: Idea
+      description: Describe your idea for making OUxSBLI faster.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: target
+    attributes:
+      label: Target
+      options:
+        - label: Compute kernel
+        - label: Memory access
+        - label: GPU utilization
+        - label: CPU utilization
+        - label: MPI communication
+        - label: GPU communication
+        - label: I/O
+        - label: Numerical algorithm
+        - label: Data structure
+        - label: Parallelization
+        - label: Other
+
+  - type: textarea
+    id: bottleneck
+    attributes:
+      label: Current bottleneck
+      description: Describe the current bottleneck if known.
+      placeholder: |
+        Example:
+        - A specific kernel dominates runtime.
+        - Memory bandwidth appears to be limiting performance.
+        - GPU occupancy is low.
+        - MPI communication dominates the runtime.
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed optimization
+      description: Describe the optimization idea.
+      placeholder: |
+        Possible topics include kernel fusion, memory layout,
+        asynchronous execution, MPI overlap, CUDA features,
+        numerical approximations, or algorithmic changes.
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected benefit
+      description: Estimate the speedup or other expected benefit if possible.
+
+  - type: checkboxes
+    id: tradeoffs
+    attributes:
+      label: Possible trade-offs
+      options:
+        - label: Reduced numerical accuracy
+        - label: Reduced numerical stability
+        - label: Increased code complexity
+        - label: Increased memory usage
+        - label: Reduced portability
+        - label: Hardware dependence
+        - label: None known
+        - label: Other
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Benchmark / profiling evidence
+      description: Provide Nsight results, benchmarks, papers, or other evidence if available.
+
+  - type: textarea
+    id: discussion
+    attributes:
+      label: Discussion
+      description: Suggest alternatives, concerns, or related ideas.
