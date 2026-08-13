@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💡 Performance Ideas
+    url: https://github.com/htymjun/OUxSBLI/discussions
+    about: Share ideas for accelerating OUxSBLI, including rough or speculative ideas.
+  - name: ❓ GitHub Discussions
+    url: https://github.com/htymjun/OUxSBLI/discussions
+    about: Ask questions or discuss numerical methods, validation, and general topics.
