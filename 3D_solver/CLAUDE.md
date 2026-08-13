@@ -120,6 +120,42 @@ using the composite value silently makes the box too small in δ99 units.
 Changing `blt` invalidates a restart, because `Lx`, `Ly` and `Lz` all scale with
 it and the grid changes. Calibrate before the long run, not after.
 
+### TBL: running it
+
+Two stages, switched by `stage.sh`, which patches `endT`/`np`/`step_offset` in
+`mod_globals.f90` and `RESTART` in `config.fypp` and rebuilds:
+
+```bash
+cd 3D_solver/TBL
+./calc.sh A            # spin-up,  60k steps = 12.1 flow-throughs -> recal/
+./calc.sh B            # sampling, 120k steps = 24.2 flow-throughs, 101 snapshots
+qsub -v STAGE=A job_miyabi.sh      # or job_tsubame.sh on TSUBAME
+```
+
+**Two MPI ranks, one GPU** — `main.f90` pairs them, so the even rank computes
+and the odd rank runs the rescaling on the host and writes VTK. Unlike SWTBLI
+this cannot be raised to 4; rescaling supports only the single `rerank` pair.
+
+Stage A must run first: it carries the laminar-plus-noise initial condition
+through transition, and only its `recal/Q00001.dat` + `recal/Qm.dat` let stage B
+start from a stationary layer. Average **stage B only**.
+
+`export FC=nvfortran` before any fresh `cmake -B build`. CMake's Fortran search
+does not know `nvfortran`, so it silently picks gfortran and then fails at
+`find_package(MPI)`; the case `CMakeLists.txt` cannot fix this because its
+`project()` has already run by the time the shared file is included.
+
+Statistics are computed offline from the snapshots by
+`ouxsbli/analysis/tbl_stats.py`, which reads `.vtr` through
+`ouxsbli/analysis/vtr_raw.py` — numpy only, no `vtk` package — so the ~13 GB of
+stage B output can be reduced to a ~12 MB moment file on the compute node
+before anything is copied back:
+
+```bash
+python -m ouxsbli.analysis.tbl_stats accumulate data --out tbl_acc.npz --halves
+python -m ouxsbli.analysis.tbl_stats report tbl_acc.npz
+```
+
 ## Convective Schemes (dispatched from `calc_flux_base.f90.fypp`)
 
 | Scheme | Files | Best for |

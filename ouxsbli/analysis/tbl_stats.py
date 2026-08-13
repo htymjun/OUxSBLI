@@ -19,6 +19,7 @@ table without re-reading the (large) VTK files.
 
 import glob
 import os
+import re
 import sys
 
 import numpy as np
@@ -118,18 +119,27 @@ def _vorticity(u, v, w, x, y, z):
     return dw_dy - dv_dz, du_dz - dw_dx, dv_dx - du_dy
 
 
-def accumulate(data_dir, skip=0, stride=1, out=None, verbose=True):
+def accumulate(data_dir, skip=0, stop=None, stride=1, out=None, verbose=True):
     """Single pass over the snapshots; returns (and optionally saves) moments.
 
-    ``skip`` drops the first N snapshots (spin-up); ``stride`` subsamples.
+    ``skip``/``stop``/``stride`` slice the snapshot list: ``skip`` drops the
+    spin-up, and ``stop`` is what lets the split-half convergence check reuse
+    this same routine.
+
+    Reads through :mod:`ouxsbli.analysis.vtr_raw`, which needs only numpy, so
+    this can run on a compute node without the ``vtk`` package -- reducing the
+    snapshots in place beats copying tens of GB back.
     """
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tests"))
-    from utils.vtk_reader import extract_number, getGrid, getQ  # noqa: E402
+    from .vtr_raw import getGrid, getQ
+
+    def extract_number(p):
+        m = re.search(r"Q(\d+)\.vtr$", str(p))
+        return int(m.group(1)) if m else float("inf")
 
     files = sorted(glob.glob(os.path.join(str(data_dir), "Q*.vtr")), key=extract_number)
-    files = files[skip::stride]
+    files = files[skip:stop:stride]
     if not files:
-        raise FileNotFoundError(f"no Q*.vtr under {data_dir} after skip={skip}")
+        raise FileNotFoundError(f"no Q*.vtr under {data_dir} for [{skip}:{stop}:{stride}]")
 
     ni, nj, nk, x, y, z = getGrid(files[0])
     ks = slice(NGHOST_Z, nk - NGHOST_Z)
@@ -378,6 +388,21 @@ def reference_station(y, **kw):
     return station(acc, 4)
 
 
+def freestream_prms(st, y_lo=1.4, y_hi=1.8):
+    """p'_rms in the freestream, sampled over y/delta in [y_lo, y_hi].
+
+    Not the top grid point: ``set_bc`` pins the boundary pressure to p0, so
+    p'_rms there is identically zero by construction rather than physically.
+    Guarini's radiated-noise value of 0.47 is a freestream quantity, so it has
+    to be read below the boundary.
+    """
+    e = st["y"] / st["d99"]
+    m = (e >= y_lo) & (e <= y_hi)
+    if not m.any():
+        m = e >= 0.5 * e.max()
+    return float(np.median(st["prms"][m]))
+
+
 def log_law_deviation(st, yp_lo=30.0, yp_hi=70.0):
     """RMS departure of U_c+ from (1/kappa)ln y+ + C over the paper's band.
 
@@ -423,11 +448,6 @@ def summary(st):
     """
     q = st["rho_w"] * st["u_tau"] ** 2
     ref = reference_station(st["y"])
-    qr = ref["rho_w"] * ref["u_tau"] ** 2
-
-    def both(fn):
-        return fn(st), fn(ref)
-
     k_dns, C_dns = log_law_fit(st)
     k_ref, C_ref = log_law_fit(ref)
 
@@ -444,7 +464,7 @@ def summary(st):
         ("C (diagnostic minimum)", C_dns, REF["C_log"], C_ref),
         ("p'_rms/(rho_w u_tau^2) wall", st["prms"][0] / q, REF["p_rms_wall"], np.nan),
         ("p'_rms/(rho_w u_tau^2) peak", st["prms"].max() / q, REF["p_rms_peak"], np.nan),
-        ("p'_rms/(rho_w u_tau^2) freestream", st["prms"][-1] / q, REF["p_rms_inf"], np.nan),
+        ("p'_rms/(rho_w u_tau^2) freestream", freestream_prms(st) / q, REF["p_rms_inf"], np.nan),
     ]
     lines = [f"{'quantity':36s} {'DNS':>11s} {'Guarini':>11s} {'diff':>8s}  "
              f"{'same est. on ref profile':>24s}"]
@@ -599,8 +619,12 @@ def convergence_check(acc_a, acc_b, ix, half_width=0):
     for k in ("Cf", "Re_theta", "u_tau", "d99", "H"):
         d = 100 * (sb[k] - sa[k]) / sa[k]
         lines.append(f"{k:22s} {sa[k]:12.5g} {sb[k]:12.5g} {d:7.2f}%")
-    for k, lab in (("urms", "peak u'/u_tau"), ("prms", "peak p'_rms")):
-        pa, pb = sa[k].max() / sa["u_tau"], sb[k].max() / sb["u_tau"]
+    for lab, fn in (
+        ("peak u'/u_tau", lambda s: s["urms"].max() / s["u_tau"]),
+        ("peak p'/(rho_w u_tau^2)", lambda s: s["prms"].max() / (s["rho_w"] * s["u_tau"] ** 2)),
+        ("peak -rho<u''v''>/tau_w", lambda s: (-s["Ruv"] / s["tau_w"]).max()),
+    ):
+        pa, pb = fn(sa), fn(sb)
         lines.append(f"{lab:22s} {pa:12.5g} {pb:12.5g} {100 * (pb - pa) / pa:7.2f}%")
     return "\n".join(lines)
 
@@ -620,14 +644,25 @@ def main(argv=None):
 
     if cmd == "accumulate":
         data_dir = argv.pop(0)
-        accumulate(data_dir,
-                   skip=int(_opt(argv, "--skip", 0)),
-                   stride=int(_opt(argv, "--stride", 1)),
-                   out=_opt(argv, "--out", "tbl_acc.npz"))
+        skip = int(_opt(argv, "--skip", 0))
+        stride = int(_opt(argv, "--stride", 1))
+        out = _opt(argv, "--out", "tbl_acc.npz")
+        accumulate(data_dir, skip=skip, stride=stride, out=out)
+        if "--halves" in argv:
+            # split-half convergence: the honest test of whether the sampling
+            # window was long enough.
+            n = len(glob.glob(os.path.join(str(data_dir), "Q*.vtr")))
+            mid = skip + ((n - skip) // 2)
+            base = out[:-4] if out.endswith(".npz") else out
+            accumulate(data_dir, skip=skip, stop=mid, stride=stride,
+                       out=f"{base}_h1.npz", verbose=False)
+            accumulate(data_dir, skip=mid, stride=stride,
+                       out=f"{base}_h2.npz", verbose=False)
         return 0
 
     if cmd == "report":
-        acc = dict(np.load(argv.pop(0)))
+        path = argv.pop(0)
+        acc = dict(np.load(path))
         target = float(_opt(argv, "--re-theta", REF["Re_theta"]))
         hw = int(_opt(argv, "--half-width", 0))
         ix, sw = find_station(acc, target)
@@ -639,8 +674,16 @@ def main(argv=None):
         print()
         text, _ = summary(st)
         print(text)
-        plot(st, sw, out=_opt(argv, "--out", "tbl_stats.png"))
-        plot_thermal(st)
+        out = _opt(argv, "--out", "tbl_stats.png")
+        plot(st, sw, out=out)
+        plot_thermal(st, out=out.replace(".png", "_thermal.png"))
+
+        base = path[:-4] if path.endswith(".npz") else path
+        h1, h2 = f"{base}_h1.npz", f"{base}_h2.npz"
+        if os.path.exists(h1) and os.path.exists(h2):
+            print()
+            print("split-half convergence (was the sampling window long enough?)")
+            print(convergence_check(dict(np.load(h1)), dict(np.load(h2)), ix, hw))
         return 0
 
     print(f"unknown command {cmd!r}")
