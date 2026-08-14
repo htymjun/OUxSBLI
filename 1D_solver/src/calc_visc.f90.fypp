@@ -1,0 +1,111 @@
+#:include 'config.fypp'
+#:if not defined('VISC_ORDER')
+  #:set VISC_ORDER = ORDER
+#:endif
+#:if not defined('VISC_PREC')
+  #:set VISC_PREC = 'fp32'
+#:endif
+#:set NG  = max(ORDER, VISC_ORDER) // 2
+#:set IOV = VISC_ORDER // 2 - 1
+#:set IK  = {2: 2, 4: 4, 6: 8}[VISC_ORDER]
+!> Viscous flux kernel, split path: a separate launch that subtracts the viscous
+!> flux from the convective flux calc_keep_x already wrote into E.
+!>
+!> Always real(8) -- VISC_PREC applies to the fused kernel only, and this kernel
+!> is the accuracy reference the fused one is checked against.
+!>
+!> No boundary branch: set_bc fills ng = max(ORDER,VISC_ORDER)/2 ghost cells, so
+!> the one interior stencil is valid at every face the RK update consumes
+!> (ng..nx-ng). See 1D_solver/CLAUDE.md.
+module calc_visc
+  use mod_globals, only : dx, threadsEv
+  use mod_constant, only : Cp_over_Pr, two_third
+  implicit none
+  private
+  public calc_Ev
+  ! nvfortran expands `/ dx` into a full IEEE division sequence (MUFU.RCP plus
+  ! Newton-Raphson refinement and an out-of-range slow path). dx is a parameter,
+  ! so fold the reciprocal at compile time instead.
+  real(8), parameter :: inv_dx = 1.d0 / dx
+  integer, parameter :: ng  = ${NG}$    !< ghost-cell depth
+  integer, parameter :: iov = ${IOV}$   !< viscous halo per side, VISC_ORDER/2 - 1
+  integer(${IK}$), parameter :: id_vacc = 0_${IK}$
+  real(8), parameter :: visc_Cp_Pr_8 = real(Cp_over_Pr, 8)
+  real(8), parameter :: visc_2_3_8   = real(two_third, 8)
+#:if VISC_PREC == 'fp32'
+  real(4), parameter :: visc_Cp_Pr_4 = real(Cp_over_Pr, 4)
+  real(4), parameter :: visc_2_3_4   = real(two_third, 4)
+#:endif
+#:if VISC_ORDER == 4
+  real(8), parameter :: visc_ci1_8 = real( 9.d0 /  16.d0, 8)
+  real(8), parameter :: visc_ci2_8 = real(-1.d0 /  16.d0, 8)
+  real(8), parameter :: visc_cd1_8 = real(27.d0 /  24.d0, 8)
+  real(8), parameter :: visc_cd2_8 = real(-1.d0 /  24.d0, 8)
+#:if VISC_PREC == 'fp32'
+  real(4), parameter :: visc_ci1_4 = real( 9.d0 /  16.d0, 4)
+  real(4), parameter :: visc_ci2_4 = real(-1.d0 /  16.d0, 4)
+  real(4), parameter :: visc_cd1_4 = real(27.d0 /  24.d0, 4)
+  real(4), parameter :: visc_cd2_4 = real(-1.d0 /  24.d0, 4)
+#:endif
+#:elif VISC_ORDER == 6
+  real(8), parameter :: visc_ci1_8 = real( 150.d0 /  256.d0, 8)
+  real(8), parameter :: visc_ci2_8 = real( -25.d0 /  256.d0, 8)
+  real(8), parameter :: visc_ci3_8 = real(   3.d0 /  256.d0, 8)
+  real(8), parameter :: visc_cd1_8 = real(2250.d0 / 1920.d0, 8)
+  real(8), parameter :: visc_cd2_8 = real(-125.d0 / 1920.d0, 8)
+  real(8), parameter :: visc_cd3_8 = real(   9.d0 / 1920.d0, 8)
+#:if VISC_PREC == 'fp32'
+  real(4), parameter :: visc_ci1_4 = real( 150.d0 /  256.d0, 4)
+  real(4), parameter :: visc_ci2_4 = real( -25.d0 /  256.d0, 4)
+  real(4), parameter :: visc_ci3_4 = real(   3.d0 /  256.d0, 4)
+  real(4), parameter :: visc_cd1_4 = real(2250.d0 / 1920.d0, 4)
+  real(4), parameter :: visc_cd2_4 = real(-125.d0 / 1920.d0, 4)
+  real(4), parameter :: visc_cd3_4 = real(   9.d0 / 1920.d0, 4)
+#:endif
+#:endif
+
+  interface VISC
+    module procedure VISC${VISC_ORDER}$_d
+  end interface VISC
+contains
+  include 'calc_visc_1d.f90'
+
+  attributes(global) subroutine calc_Ev(nx, ruvwp, T, mu, E)
+    integer, intent(in), value                 :: nx
+    real(8), intent(in), device, contiguous    :: ruvwp(nx,3)
+    real(8), intent(in), device, contiguous    :: T(nx)
+    real(8), intent(in), device, contiguous    :: mu(nx)
+    real(8), intent(inout), device, contiguous :: E(nx-1,3)
+    integer, parameter :: block_threads = threadsEv%x
+    integer, parameter :: sx = block_threads + 2*iov + 1
+    ! Lower bound -(iov-1) so thread 1 can read idx-iov without underflowing.
+    real(8), dimension(-(iov-1):sx-iov), shared :: u_s, t_s, mu_s
+    integer i, it, ii, i_base, idx
+    real(8) Fv(2)
+
+    it = threadIdx%x
+    ! The first face this kernel owns is ng, so shift the tile origin by ng-1
+    ! and leave the rest of the indexing identical to the un-shifted form.
+    i_base = (blockIdx%x-1)*block_threads + (ng-1)
+
+    do ii = it-iov, block_threads+iov+1, block_threads
+      i = i_base + ii
+      if (i >= 1 .and. i <= nx) then
+        u_s(ii)  = ruvwp(i,2)
+        t_s(ii)  = T(i)
+        mu_s(ii) = mu(i)
+      endif
+    enddo
+
+    call syncthreads()
+
+    i = i_base + it
+    if (nx-ng < i) return
+    idx = it
+
+    Fv = VISC(id_vacc, u_s(idx-iov:idx+iov+1), t_s(idx-iov:idx+iov+1), &
+              mu_s(idx-iov:idx+iov+1), inv_dx)
+    E(i,2) = E(i,2) - Fv(1)
+    E(i,3) = E(i,3) - Fv(2)
+  end subroutine calc_Ev
+end module calc_visc

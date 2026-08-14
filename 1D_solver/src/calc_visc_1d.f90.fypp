@@ -1,0 +1,102 @@
+#:include 'config.fypp'
+#:if not defined('VISC_ORDER')
+  #:set VISC_ORDER = ORDER
+#:endif
+#:if not defined('VISC_PREC')
+  #:set VISC_PREC = 'fp32'
+#:endif
+#:if VISC_ORDER not in (2, 4, 6)
+  $:error("VISC_ORDER must be 2, 4 or 6 (got '" + str(VISC_ORDER) + "')")
+#:endif
+#:if VISC_PREC not in ('fp64', 'fp32')
+  $:error("VISC_PREC must be 'fp64' or 'fp32' (got '" + str(VISC_PREC) + "')")
+#:endif
+#! Integer KIND that tags this stencil width for the generic VISC interface,
+#! matching calc_keep_1d.f90.fypp's id_acc convention.
+#:set IK = {2: 2, 4: 4, 6: 8}[VISC_ORDER]
+#! The split kernel is always FP64 (it is the accuracy reference); the fused
+#! kernel follows VISC_PREC. Emit one specific per precision actually needed and
+#! let each including module name the one it wants in its own VISC interface.
+#:set VPRECS = [(8, 'd0', 'd')]
+#:if VISC_PREC == 'fp32'
+  #:set VPRECS = VPRECS + [(4, '_4', 's')]
+#:endif
+!> Viscous flux for the 1D compressible Navier-Stokes equations: Stokes-hypothesis
+!> momentum diffusion plus Fourier heat conduction, evaluated at the cell face.
+!> Direct 1D specialisation of 3D_solver/src/calc_visc_cent.f90.fypp -- in 1D
+!> there are no transverse velocities and so no cross-derivative terms, leaving
+!> only a face interpolation and a face derivative.
+!>
+!>   mu_f  = interp_p(mu)
+!>   Fv(1) = (4/3) * mu_f * d(u)/dx |_face                 ! tau_xx
+!>   Fv(2) = (Cp/Pr) * mu_f * d(T)/dx |_face               ! heat flux
+!>         + interp_p(u) * Fv(1)                           ! viscous work
+!>
+!> Sutherland's law is NOT evaluated here: mu arrives precomputed per grid point
+!> from calc_quantities_T_1D.
+!>
+!> **VISC_ORDER is a stencil WIDTH, not an order of accuracy.** The face flux is
+!> p-th order accurate at the face, but the divergence taken from it by calc_R
+!> is a one-cell difference, which contributes an irreducible (h^2/24)(mu u')'''
+!> -- so d/dx of this flux is 2nd order for every p. Measured, not assumed: see
+!> report/check_visc_order.py. This matches 3D_solver exactly and is what the
+!> testbed is meant to mirror; the point of widening p here is that it grows the
+!> FP32 instruction count, which is what feeds the other hardware pipe.
+!>
+!> Generated at VISC_ORDER = ${VISC_ORDER}$, VISC_PREC = '${VISC_PREC}$'.
+!>
+!> Coefficients (face between indices p/2 and p/2+1), standard staggered:
+!>   p=2  interp [1,1]/2            diff [-1,1]
+!>   p=4  interp [-1,9,9,-1]/16     diff [1,-27,27,-1]/24
+!>   p=6  interp [3,-25,150,150,-25,3]/256
+!>        diff   [-9,125,-2250,2250,-125,9]/1920
+!> Written as pair sums/differences rather than 3D's serial fma() accumulator:
+!> the shallower dependency tree leaves independent instructions for the
+!> scheduler to interleave into the FP64 stream, which is the whole point of the
+!> fused kernel. Plain expressions (not fma()) because libm's fma is real(8)-only
+!> and these must also compile at real(4); -Mfma contracts them anyway.
+!>
+!> The unused leading `id_vacc` argument carries the stencil width in its integer
+!> KIND, so the generic `VISC` interface resolves at compile time.
+
+#:for VK, VL, SFX in VPRECS
+  pure attributes(device) function VISC${VISC_ORDER}$_${SFX}$(id_vacc, u, T, mu, inv_dx) result(Fv)
+    integer(${IK}$), intent(in), value                  :: id_vacc
+    real(${VK}$), intent(in), dimension(${VISC_ORDER}$) :: u, T, mu
+    real(${VK}$), intent(in), value                     :: inv_dx
+    real(${VK}$) Fv(2) ! Fv(1) = txx (viscous stress), Fv(2) = viscous work + heat flux
+    real(${VK}$) mudx
+#:if VISC_ORDER == 4
+    real(${VK}$), parameter :: c_i1 = visc_ci1_${VK}$
+    real(${VK}$), parameter :: c_i2 = visc_ci2_${VK}$
+    real(${VK}$), parameter :: c_d1 = visc_cd1_${VK}$
+    real(${VK}$), parameter :: c_d2 = visc_cd2_${VK}$
+#:elif VISC_ORDER == 6
+    real(${VK}$), parameter :: c_i1 = visc_ci1_${VK}$
+    real(${VK}$), parameter :: c_i2 = visc_ci2_${VK}$
+    real(${VK}$), parameter :: c_i3 = visc_ci3_${VK}$
+    real(${VK}$), parameter :: c_d1 = visc_cd1_${VK}$
+    real(${VK}$), parameter :: c_d2 = visc_cd2_${VK}$
+    real(${VK}$), parameter :: c_d3 = visc_cd3_${VK}$
+#:endif
+
+#:if VISC_ORDER == 2
+    ! mu_f/dx, the one factor both fluxes share
+    mudx  = 0.5${VL}$ * (mu(1) + mu(2)) * inv_dx
+    Fv(2) = visc_Cp_Pr_${VK}$ * mudx * (-T(1) + T(2))
+    Fv(1) = visc_2_3_${VK}$ * 2.0${VL}$ * (mudx * (-u(1) + u(2)))
+    Fv(2) = Fv(2) + 0.5${VL}$ * (u(1) + u(2)) * Fv(1)
+#:elif VISC_ORDER == 4
+    mudx  = (c_i1 * (mu(2) + mu(3)) + c_i2 * (mu(1) + mu(4))) * inv_dx
+    Fv(2) = visc_Cp_Pr_${VK}$ * mudx * (c_d1 * (T(3) - T(2)) + c_d2 * (T(4) - T(1)))
+    Fv(1) = visc_2_3_${VK}$ * 2.0${VL}$ * (mudx * (c_d1 * (u(3) - u(2)) + c_d2 * (u(4) - u(1))))
+    Fv(2) = Fv(2) + (c_i1 * (u(2) + u(3)) + c_i2 * (u(1) + u(4))) * Fv(1)
+#:else
+    mudx  = (c_i1 * (mu(3) + mu(4)) + c_i2 * (mu(2) + mu(5)) + c_i3 * (mu(1) + mu(6))) * inv_dx
+    Fv(2) = visc_Cp_Pr_${VK}$ * mudx * (c_d1 * (T(4) - T(3)) + c_d2 * (T(5) - T(2)) + c_d3 * (T(6) - T(1)))
+    Fv(1) = visc_2_3_${VK}$ * 2.0${VL}$ * (mudx * (c_d1 * (u(4) - u(3)) + c_d2 * (u(5) - u(2)) + c_d3 * (u(6) - u(1))))
+    Fv(2) = Fv(2) + (c_i1 * (u(3) + u(4)) + c_i2 * (u(2) + u(5)) + c_i3 * (u(1) + u(6))) * Fv(1)
+#:endif
+  end function VISC${VISC_ORDER}$_${SFX}$
+
+#:endfor

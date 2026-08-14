@@ -1,0 +1,149 @@
+#:include 'config.fypp'
+#:if ORDER not in (2, 4, 6)
+  $:error("ORDER must be 2, 4 or 6 (got '" + str(ORDER) + "')")
+#:endif
+#! This fragment is generated for every build, but it only emits bodies when
+#! KEEP_PREC='df'. Non-DF builds include it as an empty file.
+#:if KEEP_PREC == 'df'
+!> KEEP fluxes evaluated with double-float (fltflt) emulation.
+!>
+!> The surrounding kernel still stores the final flux in real(8), but all KEEP
+!> arithmetic inside these bodies is carried out in fltflt so the recovered EFT
+!> backend is exercised in the solver hot path, not only in the report test.
+!>
+!> The generic `KEEP` interface still dispatches by the KIND of `id_acc`; this
+!> file only provides the DF-specific bodies for that same compile-time path.
+
+#:if ORDER == 2
+attributes(device) function KEEP2(id_acc, rho, u, p, T) result(F)
+  integer(2), intent(in), value          :: id_acc
+  real(8), intent(in), dimension(2) :: rho, u, p, T
+  real(8) F(3)
+  type(fltflt) :: f1, f2, f3
+
+  f1 = keep_1_4_w * (fltflt_init(rho(1)) + fltflt_init(rho(2))) &
+              * (fltflt_init(u(1)) + fltflt_init(u(2)))
+  f2 = keep_1_2_w * (f1 * (fltflt_init(u(1)) + fltflt_init(u(2))) &
+              + (fltflt_init(p(1)) + fltflt_init(p(2))))
+  f3 = f1 * keep_1_2_w * (fltflt_init(T(1)) + fltflt_init(T(2))) * keep_R_g1_w
+  f3 = f3 + keep_1_2_w * (fltflt_init(u(1)) * fltflt_init(p(2)) &
+                        + fltflt_init(u(2)) * fltflt_init(p(1)))
+  f3 = f3 + keep_1_2_w * f1 * (fltflt_init(u(1)) * fltflt_init(u(2)))
+
+  F(1) = real(f1%hi, 8) + real(f1%lo, 8)
+  F(2) = real(f2%hi, 8) + real(f2%lo, 8)
+  F(3) = real(f3%hi, 8) + real(f3%lo, 8)
+end function KEEP2
+#:endif
+
+#:if ORDER == 4
+attributes(device) function KEEP4(id_acc, rho, u, p, T) result(F)
+  integer(4), intent(in), value          :: id_acc
+  real(8), intent(in), dimension(4) :: rho, u, p, T
+  real(8) F(3)
+  type(fltflt) :: rv1, rv2, rv3, lead, corr, total
+
+  rv1 = (fltflt_init(rho(2)) + fltflt_init(rho(3))) &
+      * (fltflt_init(u(2)) + fltflt_init(u(3)))
+  rv2 = (fltflt_init(rho(2)) + fltflt_init(rho(4))) &
+      * (fltflt_init(u(2)) + fltflt_init(u(4)))
+  rv3 = (fltflt_init(rho(1)) + fltflt_init(rho(3))) &
+      * (fltflt_init(u(1)) + fltflt_init(u(3)))
+
+  lead = keep_1_3_w * rv1 - (keep_1_24_c * (rv2 + rv3))
+  F(1) = real(lead%hi, 8) + real(lead%lo, 8)
+
+  rv1 = keep_1_6_w * rv1
+  rv2 = keep_1_48_c * rv2
+  rv3 = keep_1_48_c * rv3
+
+  lead = rv1 * (fltflt_init(u(2)) + fltflt_init(u(3))) &
+       + keep_7_12_w * (fltflt_init(p(2)) + fltflt_init(p(3)))
+  corr = -rv3 * fltflt_init(u(1)) - rv2 * fltflt_init(u(2)) &
+       - rv3 * fltflt_init(u(3)) - rv2 * fltflt_init(u(4)) &
+       - keep_1_12_c * (fltflt_init(p(1)) + fltflt_init(p(4)))
+  total = lead + corr
+  F(2) = real(total%hi, 8) + real(total%lo, 8)
+
+  lead = rv1 * (fltflt_init(T(2)) + fltflt_init(T(3))) * keep_R_g1_w &
+       + rv1 * (fltflt_init(u(2)) * fltflt_init(u(3))) &
+       + keep_2_3_w * (fltflt_init(u(2)) * fltflt_init(p(3)) &
+                    + fltflt_init(u(3)) * fltflt_init(p(2)))
+  corr = (-rv3 * fltflt_init(T(1)) - rv2 * fltflt_init(T(2)) &
+       - rv3 * fltflt_init(T(3)) - rv2 * fltflt_init(T(4))) * keep_R_g1_c &
+       - rv2 * (fltflt_init(u(2)) * fltflt_init(u(4))) &
+       - rv3 * (fltflt_init(u(1)) * fltflt_init(u(3))) &
+       - keep_1_12_c * (fltflt_init(u(2)) * fltflt_init(p(4)) &
+                    + fltflt_init(u(4)) * fltflt_init(p(2)) &
+                    + fltflt_init(u(1)) * fltflt_init(p(3)) &
+                    + fltflt_init(u(3)) * fltflt_init(p(1)))
+  total = lead + corr
+  F(3) = real(total%hi, 8) + real(total%lo, 8)
+end function KEEP4
+#:endif
+
+#:if ORDER == 6
+attributes(device) function KEEP6(id_acc, rho, u, p, T) result(F)
+  integer(8), intent(in), value          :: id_acc
+  real(8), intent(in), dimension(6) :: rho, u, p, T
+  real(8) F(3)
+  type(fltflt) :: rv1, rv2, rv3, rv4, rv5, rv6, lead, corr, total
+
+  rv1 = (fltflt_init(rho(3)) + fltflt_init(rho(4))) &
+      * (fltflt_init(u(3)) + fltflt_init(u(4)))
+  rv2 = (fltflt_init(rho(3)) + fltflt_init(rho(5))) &
+      * (fltflt_init(u(3)) + fltflt_init(u(5)))
+  rv3 = (fltflt_init(rho(2)) + fltflt_init(rho(4))) &
+      * (fltflt_init(u(2)) + fltflt_init(u(4)))
+  rv4 = (fltflt_init(rho(3)) + fltflt_init(rho(6))) &
+      * (fltflt_init(u(3)) + fltflt_init(u(6)))
+  rv5 = (fltflt_init(rho(2)) + fltflt_init(rho(5))) &
+      * (fltflt_init(u(2)) + fltflt_init(u(5)))
+  rv6 = (fltflt_init(rho(1)) + fltflt_init(rho(4))) &
+      * (fltflt_init(u(1)) + fltflt_init(u(4)))
+
+  lead = keep_3_8_w * rv1 &
+       + (keep_m3_40_c * (rv2 + rv3) + keep_1_120_c * (rv4 + rv5 + rv6))
+  F(1) = real(lead%hi, 8) + real(lead%lo, 8)
+
+  rv1 = keep_3_16_w * rv1
+  rv2 = keep_3_80_c * rv2
+  rv3 = keep_3_80_c * rv3
+  rv4 = keep_1_240_c * rv4
+  rv5 = keep_1_240_c * rv5
+  rv6 = keep_1_240_c * rv6
+
+  lead = rv1 * (fltflt_init(u(3)) + fltflt_init(u(4))) &
+       + keep_37_60_w * (fltflt_init(p(3)) + fltflt_init(p(4)))
+  corr = rv6 * fltflt_init(u(1)) + (-rv3 + rv5) * fltflt_init(u(2)) &
+       + (-rv2 + rv4) * fltflt_init(u(3)) + (-rv3 + rv6) * fltflt_init(u(4)) &
+       + (-rv2 + rv5) * fltflt_init(u(5)) + rv4 * fltflt_init(u(6)) &
+       + (fltflt_init(p(1)) + fltflt_init(p(6)) &
+       - 8.0d0 * (fltflt_init(p(2)) + fltflt_init(p(5)))) * keep_1_60_c
+  total = lead + corr
+  F(2) = real(total%hi, 8) + real(total%lo, 8)
+
+  lead = rv1 * (fltflt_init(T(3)) + fltflt_init(T(4))) * keep_R_g1_w &
+       + rv1 * (fltflt_init(u(3)) * fltflt_init(u(4))) &
+       + keep_3_4_w * (fltflt_init(u(3)) * fltflt_init(p(4)) &
+                    + fltflt_init(u(4)) * fltflt_init(p(3)))
+  corr = (rv6 * fltflt_init(T(1)) + (-rv3 + rv5) * fltflt_init(T(2)) &
+       + (-rv2 + rv4) * fltflt_init(T(3)) + (-rv3 + rv6) * fltflt_init(T(4)) &
+       + (-rv2 + rv5) * fltflt_init(T(5)) + rv4 * fltflt_init(T(6))) * keep_R_g1_c &
+       + rv6 * (fltflt_init(u(1)) * fltflt_init(u(4))) &
+       + rv5 * (fltflt_init(u(2)) * fltflt_init(u(5))) &
+       + rv4 * (fltflt_init(u(3)) * fltflt_init(u(6))) &
+       - rv3 * (fltflt_init(u(2)) * fltflt_init(u(4))) &
+       - rv2 * (fltflt_init(u(3)) * fltflt_init(u(5))) &
+       + keep_m3_20_c * (fltflt_init(u(3)) * fltflt_init(p(5)) &
+                    + fltflt_init(u(5)) * fltflt_init(p(3)) &
+                    + fltflt_init(u(2)) * fltflt_init(p(4)) &
+                    + fltflt_init(u(4)) * fltflt_init(p(2))) &
+       + (fltflt_init(u(3)) * fltflt_init(p(6)) + fltflt_init(u(6)) * fltflt_init(p(3)) &
+       + fltflt_init(u(2)) * fltflt_init(p(5)) + fltflt_init(u(5)) * fltflt_init(p(2)) &
+       + fltflt_init(u(1)) * fltflt_init(p(4)) + fltflt_init(u(4)) * fltflt_init(p(1))) * keep_1_60_c
+  total = lead + corr
+  F(3) = real(total%hi, 8) + real(total%lo, 8)
+end function KEEP6
+#:endif
+#:endif

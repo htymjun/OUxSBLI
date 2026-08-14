@@ -1,90 +1,575 @@
 #:include 'config.fypp'
+#:if not defined('KEEP_PREC')
+  #:set KEEP_PREC = 'fp64'
+#:endif
+#:if not defined('VISC_PREC')
+  #:set VISC_PREC = 'fp32'
+#:endif
+#:if not defined('VISC_ORDER')
+  #:set VISC_ORDER = ORDER
+#:endif
+#:if KEEP_PREC not in ('fp64', 'fp32', 'term', 'df')
+  $:error("KEEP_PREC must be 'fp64', 'fp32', 'term' or 'df' (got '" + str(KEEP_PREC) + "')")
+#:endif
+#:if KEEP_PREC == 'term' and ORDER < 4
+  $:error("KEEP_PREC='term' needs ORDER >= 4: KEEP2 has no correction terms to demote")
+#:endif
+#:if VISC_PREC not in ('fp64', 'fp32')
+  $:error("VISC_PREC must be 'fp64' or 'fp32' (got '" + str(VISC_PREC) + "')")
+#:endif
+#:if not defined('PRESS_PREC')
+  #:set PRESS_PREC = 'fp64'
+#:endif
+#:if PRESS_PREC not in ('fp64', 'fp32')
+  $:error("PRESS_PREC must be 'fp64' or 'fp32' (got '" + str(PRESS_PREC) + "')")
+#:endif
+#:if PRESS_PREC == 'fp32' and (KEEP_PREC not in ('fp64', 'term') or VISC_PREC != 'fp32')
+  $:error("PRESS_PREC='fp32' requires KEEP_PREC='fp64' or 'term' (demotion, never promotion) and VISC_PREC='fp32' (KEEPP reads the uv_s FP32 tile)")
+#:endif
+#:if ORDER not in (2, 4, 6)
+  $:error("ORDER must be 2, 4 or 6 (got '" + str(ORDER) + "'); the #:else arms below silently mean 6")
+#:endif
+#:set TERM = KEEP_PREC == 'term'
+#:set WK = 4 if KEEP_PREC == 'fp32' else 8
+#:set KL = '_4' if KEEP_PREC == 'fp32' else 'd0'
+#:set CK = 4 if TERM else WK
+#:set CL = '_4' if TERM else KL
+#:set VK = 8 if VISC_PREC == 'fp64' else 4
+#:set VL = 'd0' if VISC_PREC == 'fp64' else '_4'
+#! SHADOW: load the FP32 tiles from the pre-converted global arrays written by
+#! fill_shadow32 (calc_flux_base) instead of converting here -- F2F issues on
+#! the FP64 pipe, which is the bound resource. Identical bits either way.
+#:set SHADOW = VISC_PREC == 'fp32'
+#:set RC = 'rho_s' if TERM else 'rho_d'
+#:set UC = 'us_s'  if TERM else 'u_d'
+#:set PC = 'p_s'   if TERM else 'p_d'
+#:set TC = 'ts_s'  if TERM else 'tmp_d'
+#! Ghost-cell depth, and the shared-memory halo each half needs. IO covers the
+#! wider of the two stencils; IOV is the viscous one, which may be narrower.
+#! At equal precision the viscous tiles uv_s/tv_s would be bit-identical copies
+#! of u_d/tmp_d, so alias them instead of duplicating the tile and its stores.
+#:set UVS = 'u_d'   if VK == WK else 'uv_s'
+#:set TVS = 'tmp_d' if VK == WK else 'tv_s'
+#:set PRESS32 = PRESS_PREC == 'fp32'
+#:set PK      = 4 if PRESS32 else WK
+#:set NEED_U32   = SHADOW or TERM
+#:set NEED_T32   = SHADOW or TERM
+#:set NEED_MU32  = SHADOW
+#:set NEED_RHO32 = TERM
+#:set NEED_P32   = PRESS32 or TERM
+#:def SHARGS()
+#{if NEED_U32}#, u32#{endif}##{if NEED_T32}#, t32#{endif}##{if NEED_MU32}#, mu32#{endif}##{if NEED_RHO32}#, rho32#{endif}##{if NEED_P32}#, p32#{endif}#
+#:enddef
+#:set NG  = max(ORDER, VISC_ORDER) // 2
+#:set IO  = NG - 1
+#:set IOC = ORDER // 2 - 1
+#! Under 'term' the wide-stencil correction terms run in real(4) and read from
+#! FP32 mirrors of the shared tile, filled once per point by the load loop.
+#:def ARGS(lo, hi)
+rho_d(${lo}$:${hi}$), u_d(${lo}$:${hi}$), p_d(${lo}$:${hi}$), tmp_d(${lo}$:${hi}$)#{if TERM}#, rho_s(${lo}$:${hi}$), us_s(${lo}$:${hi}$), p_s(${lo}$:${hi}$), ts_s(${lo}$:${hi}$)#{endif}#
+#:enddef
+#! KEEP2 never takes correction arrays (no l>=2 terms exist at that width).
+#:def ARGS2(lo, hi)
+rho_d(${lo}$:${hi}$), u_d(${lo}$:${hi}$), p_d(${lo}$:${hi}$), tmp_d(${lo}$:${hi}$)
+#:enddef
+!> Fused convective (KEEP) + viscous (Navier-Stokes) flux kernel: one shared
+!> load pass and one store, instead of two launches with a read-modify-write of
+!> E between them.
+!>
+!> This is the instruction-level-parallelism testbed. The convective half runs
+!> at KEEP_PREC ('${KEEP_PREC}$') and the viscous half at VISC_PREC
+!> ('${VISC_PREC}$'); when they differ, the two halves issue to different
+!> hardware pipes. They are computed from independent operands and only meet at
+!> the final combine, so ptxas is free to interleave them.
+!>
+!> **The body is deliberately branch-free.** set_bc fills ng ghost cells, so one
+!> uniform interior stencil is valid at every face this kernel computes and no
+!> order-degrading ladder is needed. That matters for more than tidiness: the
+!> ladder used to split the two halves across basic blocks, and ptxas cannot
+!> co-schedule across a branch. With the ladder in place the emitted SASS was
+!> `S x 12` then `D x 151` at ORDER >= 4 (report/SASS_ilp.md 2b); interleaving
+!> only survived at ORDER=2, which is exactly the case where the ladder
+!> collapsed to a single unconditional statement.
+!>
+!> (Earlier revisions hand-interleaved the two halves statement by statement;
+!> that does not scale past ORDER=2 and the scheduler produces the same
+!> interleaving on its own once both halves are in one block.)
 module calc_fused_kernel
-  use cudafor  ! Required to support CUDA Fortran intrinsics and __stcs
+  use cudafor  ! for __stcs
+  #:if KEEP_PREC == 'df'
+  use cudadevice
+  use fltflt
+  #:endif
   use mod_globals, only : threadsE, dx
   use mod_constant, only : R_over_gamma_1, Cp_over_Pr, two_third
   implicit none
   private
   public calc_fused_x
-contains
+  #:if KEEP_PREC == 'df'
+  include 'fltflt_operator_interfaces.f90'
+  include 'fltflt_subroutines_interfaces.f90'
+  #:endif
+  ! nvfortran emits a full IEEE division sequence (MUFU.RCP plus Newton-Raphson
+  ! refinement and an out-of-range slow path) for `/ real(dx,VK)`. dx is a
+  ! parameter, so fold the reciprocal at compile time instead.
+  real(${VK}$), parameter :: inv_dx_v = real(1.d0 / dx, ${VK}$)
+  real(${WK}$), parameter :: keep_R_g1_w = real(R_over_gamma_1, ${WK}$)
+  real(${CK}$), parameter :: keep_R_g1_c = real(R_over_gamma_1, ${CK}$)
+#:if ORDER == 2
+  real(${WK}$), parameter :: keep_1_4_w = real(1.d0 /  4.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_1_2_w = real(1.d0 /  2.d0, kind=${WK}$)
+#:endif
+#:if ORDER >= 4
+  real(${WK}$), parameter :: keep_1_3_w  = real(1.d0 /  3.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_1_6_w  = real(1.d0 /  6.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_2_3_w  = real(2.d0 /  3.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_7_12_w = real(7.d0 / 12.d0, kind=${WK}$)
+  real(${CK}$), parameter :: keep_1_12_c = real(1.d0 / 12.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_1_24_c = real(1.d0 / 24.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_1_48_c = real(1.d0 / 48.d0, kind=${CK}$)
+#:endif
+#:if ORDER == 6
+  real(${WK}$), parameter :: keep_3_8_w   = real(3.d0  /  8.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_3_16_w  = real(3.d0  / 16.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_3_4_w   = real(3.d0  /  4.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_37_60_w = real(37.d0 / 60.d0, kind=${WK}$)
+  real(${CK}$), parameter :: keep_m3_40_c = real(-3.d0 / 40.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_3_80_c  = real(3.d0  / 80.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_m3_20_c = real(-3.d0 / 20.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_1_60_c  = real(1.d0  / 60.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_1_120_c = real(1.d0  / 120.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_1_240_c = real(1.d0  / 240.d0, kind=${CK}$)
+#:endif
+  real(${VK}$), parameter :: visc_Cp_Pr = real(Cp_over_Pr, ${VK}$)
+  real(${VK}$), parameter :: visc_2_3   = real(two_third, ${VK}$)
+#:if VISC_ORDER == 4
+  real(${VK}$), parameter :: visc_ci1 = real( 9.d0 /  16.d0, ${VK}$)
+  real(${VK}$), parameter :: visc_ci2 = real(-1.d0 /  16.d0, ${VK}$)
+  real(${VK}$), parameter :: visc_cd1 = real(27.d0 /  24.d0, ${VK}$)
+  real(${VK}$), parameter :: visc_cd2 = real(-1.d0 /  24.d0, ${VK}$)
+#:elif VISC_ORDER == 6
+  real(${VK}$), parameter :: visc_ci1 = real( 150.d0 /  256.d0, ${VK}$)
+  real(${VK}$), parameter :: visc_ci2 = real( -25.d0 /  256.d0, ${VK}$)
+  real(${VK}$), parameter :: visc_ci3 = real(   3.d0 /  256.d0, ${VK}$)
+  real(${VK}$), parameter :: visc_cd1 = real(2250.d0 / 1920.d0, ${VK}$)
+  real(${VK}$), parameter :: visc_cd2 = real(-125.d0 / 1920.d0, ${VK}$)
+  real(${VK}$), parameter :: visc_cd3 = real(   9.d0 / 1920.d0, ${VK}$)
+#:endif
+  integer, parameter :: ng  = ${NG}$    !< ghost-cell depth, max(ORDER,VISC_ORDER)/2
+  integer, parameter :: io  = ${IO}$    !< shared-memory halo per side (the wider half)
+  integer, parameter :: ioc = ${IOC}$   !< convective shared-memory halo per side
+  #:if KEEP_PREC == 'df'
+  ! Order tag: only the KIND carries information (see mod_constant.f90.fypp).
+  integer(${{2: 2, 4: 4, 6: 8}[ORDER]}$), parameter :: id_acc = 0_${{2: 2, 4: 4, 6: 8}[ORDER]}$
+  interface KEEP
+    module procedure KEEP${ORDER}$
+  end interface KEEP
+  #:endif
+  #:if PRESS32
+#! FP32 twins of exactly the constants KEEPP consumes.
+#:if ORDER == 2
+  real(4), parameter :: keep_1_2_p   = real(1.d0 /  2.d0, 4)
+#:elif ORDER == 4
+  real(4), parameter :: keep_7_12_p  = real(7.d0 / 12.d0, 4)
+  real(4), parameter :: keep_2_3_p   = real(2.d0 /  3.d0, 4)
+  real(4), parameter :: keep_1_12_p  = real(1.d0 / 12.d0, 4)
+#:else
+  real(4), parameter :: keep_37_60_p = real(37.d0 / 60.d0, 4)
+  real(4), parameter :: keep_3_4_p   = real(3.d0  /  4.d0, 4)
+  real(4), parameter :: keep_m3_20_p = real(-3.d0 / 20.d0, 4)
+  real(4), parameter :: keep_1_60_p  = real(1.d0  / 60.d0, 4)
+#:endif
+  !> id_acc must exist here too (not just under df): KEEPNP/KEEPP dispatch on
+  !> its KIND, same as KEEP does under df. PRESS32 already implies
+  !> KEEP_PREC != 'df' (validated above), so no double declaration.
+  integer(${{2: 2, 4: 4, 6: 8}[ORDER]}$), parameter :: id_acc = 0_${{2: 2, 4: 4, 6: 8}[ORDER]}$
+  interface KEEPNP
+    module procedure KEEPNP${ORDER}$
+  end interface KEEPNP
 
-  attributes(global) subroutine calc_fused_x(nx, ruvwp, T, mu, E)
+  interface KEEPP
+    module procedure KEEPP${ORDER}$
+  end interface KEEPP
+  #:endif
+contains
+  #:if KEEP_PREC == 'df'
+  include 'fltflt_operator.f90'
+  include 'fltflt_subroutines.f90'
+  include 'calc_keep_1d_df.f90'
+  #:elif PRESS32
+  ! Brings in KEEPNP{2,4,6}/KEEPP{2,4,6} (declared above); KEEP{2,4,6} comes
+  ! along too but is unused here, same as it is in calc_warp_kernel.f90.fypp.
+  include 'calc_keep_1d.f90'
+  #:endif
+  attributes(global) subroutine calc_fused_x(nx, ruvwp, T, mu${SHARGS()}$, E)
     integer, intent(in), value               :: nx
     real(8), intent(in), device, contiguous  :: ruvwp(nx,3), T(nx), mu(nx)
-    real(8), intent(out), device, contiguous :: E(3,nx-1)
-    
+    #:if NEED_U32
+    real(4), intent(in), device, contiguous  :: u32(nx)
+    #:endif
+    #:if NEED_T32
+    real(4), intent(in), device, contiguous  :: t32(nx)
+    #:endif
+    #:if NEED_MU32
+    real(4), intent(in), device, contiguous  :: mu32(nx)
+    #:endif
+    #:if NEED_RHO32
+    real(4), intent(in), device, contiguous  :: rho32(nx)
+    #:endif
+    #:if NEED_P32
+    real(4), intent(in), device, contiguous  :: p32(nx)
+    #:endif
+    real(8), intent(out), device, contiguous :: E(nx-1,3)
+
     integer i, it, ii, i_base, idx
-    integer, parameter :: block_threads = 128
-    ! 1. Shared Memory Padding (+2 elements for 64-bit memory bank boundary alignment)
-    integer, parameter :: sx = block_threads + 2 
-    
-    ! Shared Memory Declarations
-    real(8), dimension(1:sx), shared :: rho_d, u_d, p_d, tmp_d
-    real(4), dimension(1:sx), shared :: mu_s
-    
-    ! Declare independent local registers to break instruction dependency chains (reduces NOPs)
-    real(8) :: fk1, fk2, fk3
-    real(8) :: e_internal, p_diff, e_kin
-    real(4) :: fv1_temp, fv2_temp, fv2_final
-    real(4) :: mudx_s, mux_s
-    
+    integer, parameter :: block_threads = threadsE%x
+    integer, parameter :: sx = block_threads + 2*io + 1
+    ! Lower bound -(io-1) so thread 1 can read idx-io without underflowing.
+    real(${WK}$), dimension(-(io-1):sx-io), shared :: rho_d, u_d, p_d, tmp_d
+#:if VK == WK
+    real(${VK}$), dimension(-(io-1):sx-io), shared :: mu_s
+#:else
+    real(${VK}$), dimension(-(io-1):sx-io), shared :: mu_s, uv_s, tv_s
+#:endif
+#:if PRESS32
+    real(4), dimension(-(io-1):sx-io), shared :: pv_s
+#:endif
+#:if TERM
+    real(4), dimension(-(io-1):sx-io), shared :: rho_s, us_s, p_s, ts_s
+#:endif
+
+    real(${WK}$) :: e1, e2, e3
+    real(${VK}$) :: fv1, fv2, mudx
+#:if KEEP_PREC == 'df'
+    real(8) :: keep_flux(3)
+#:endif
+#:if PRESS32
+    real(${WK}$) :: e_local(3)
+    real(${PK}$) :: p_local(3)
+#:endif
+#:if ORDER >= 4
+    real(${WK}$) :: kr1, klead
+    real(${CK}$) :: kr2, kr3, kcorr
+#:endif
+#:if ORDER == 6
+    real(${CK}$) :: kr4, kr5, kr6
+#:endif
+
     it = threadIdx%x
-    i_base = (blockIdx%x-1) * block_threads
-    
-    ! ==========================================
-    ! 2. Load data into Shared Memory
-    ! (intent(in) arrays automatically generate LDG read-only cache instructions under NVFORTRAN -fast)
-    ! ==========================================
-    do ii = it, sx, block_threads
+    ! The first face this kernel owns is ng, so shift the tile origin by ng-1
+    ! and leave the rest of the indexing identical to the un-shifted form.
+    i_base = (blockIdx%x-1) * block_threads + (ng-1)
+
+    ! One strided loop covers the interior tile and both halos. uv_s/tv_s are
+    ! the viscous half's own copies of u and T: at VISC_PREC /= KEEP_PREC they
+    ! are converted once per point here rather than per stencil access.
+    do ii = it-io, block_threads+io+1, block_threads
       i = i_base + ii
       if (i >= 1 .and. i <= nx) then
-        rho_d(ii) = ruvwp(i,1)
-        u_d(ii)   = ruvwp(i,2)
-        p_d(ii)   = ruvwp(i,3)
-        tmp_d(ii) = T(i)
-        mu_s(ii)  = real(mu(i), 4)
+        rho_d(ii) = real(ruvwp(i,1), ${WK}$)
+        u_d(ii)   = #{if WK == 4 and SHADOW}#u32(i)#{else}#real(ruvwp(i,2), ${WK}$)#{endif}#
+        p_d(ii)   = real(ruvwp(i,3), ${WK}$)
+        tmp_d(ii) = #{if WK == 4 and SHADOW}#t32(i)#{else}#real(T(i), ${WK}$)#{endif}#
+        mu_s(ii)  = #{if SHADOW}#mu32(i)#{else}#real(mu(i), ${VK}$)#{endif}#
+#:if VK != WK
+        uv_s(ii)  = #{if SHADOW}#u32(i)#{else}#real(ruvwp(i,2), ${VK}$)#{endif}#
+        tv_s(ii)  = #{if SHADOW}#t32(i)#{else}#real(T(i), ${VK}$)#{endif}#
+#:endif
+#:if PRESS32
+        pv_s(ii)  = p32(i)
+#:endif
+#:if TERM
+        rho_s(ii) = rho32(i)
+        us_s(ii)  = u32(i)
+        p_s(ii)   = p32(i)
+        ts_s(ii)  = t32(i)
+#:endif
       endif
     enddo
-    
+
     call syncthreads()
 
     i = i_base + it
-    if (nx-1 < i) return
+    if (nx-ng < i) return
     idx = it
 
-    ! ==========================================
-    ! 3. Instruction-Level Interleaved Calculations
-    ! ==========================================
-    
-    ! Interleave 1: Mass Convection (FP64) + Viscous Coefficient (FP32)
-    fk1    = 0.25d0 * (rho_d(idx) + rho_d(idx+1)) * (u_d(idx) + u_d(idx+1))
-    mudx_s = 0.5_4 * (mu_s(idx) + mu_s(idx+1)) / real(dx, 4)
+#:if KEEP_PREC == 'df'
+    ! DF mode: compute KEEP through the recovered fltflt helper, then keep the
+    ! existing viscous half unchanged.
+#:if ORDER == 2
+    keep_flux = KEEP(id_acc, ${ARGS2('idx', 'idx+1')}$)
+#:else
+    keep_flux = KEEP(id_acc, ${ARGS('idx-ioc', 'idx+ioc+1')}$)
+#:endif
+    e1 = keep_flux(1)
+    e2 = keep_flux(2)
+    e3 = keep_flux(3)
+#:if VISC_ORDER == 2
+    mudx = 0.5${VL}$ * (mu_s(idx) + mu_s(idx+1)) * inv_dx_v
+#:elif VISC_ORDER == 4
+    mudx = (visc_ci1 * (mu_s(idx) + mu_s(idx+1)) &
+          + visc_ci2 * (mu_s(idx-1) + mu_s(idx+2))) * inv_dx_v
+#:else
+    mudx = (visc_ci1 * (mu_s(idx) + mu_s(idx+1)) &
+          + visc_ci2 * (mu_s(idx-1) + mu_s(idx+2)) &
+          + visc_ci3 * (mu_s(idx-2) + mu_s(idx+3))) * inv_dx_v
+#:endif
 
-    ! Interleave 2: Momentum Convection (FP64) + Thermal Conduction Viscosity (FP32)
-    fk2      = 0.5d0 * (fk1 * (u_d(idx) + u_d(idx+1)) + (p_d(idx) + p_d(idx+1)))
-    fv2_temp = real(Cp_over_Pr, 4) * mudx_s * (-real(tmp_d(idx), 4) + real(tmp_d(idx+1), 4))
+#:if VISC_ORDER == 2
+    fv2 = visc_Cp_Pr * mudx * (-${TVS}$(idx) + ${TVS}$(idx+1))
+#:elif VISC_ORDER == 4
+    fv2 = visc_Cp_Pr * mudx &
+        * (visc_cd1 * (${TVS}$(idx+1) - ${TVS}$(idx)) &
+        +  visc_cd2 * (${TVS}$(idx+2) - ${TVS}$(idx-1)))
+#:else
+    fv2 = visc_Cp_Pr * mudx &
+        * (visc_cd1 * (${TVS}$(idx+1) - ${TVS}$(idx)) &
+        +  visc_cd2 * (${TVS}$(idx+2) - ${TVS}$(idx-1)) &
+        +  visc_cd3 * (${TVS}$(idx+3) - ${TVS}$(idx-2)))
+#:endif
 
-    ! Interleave 3: Internal Energy Convection (FP64) + Velocity Gradient (FP32)
-    e_internal = fk1 * 0.5d0 * (tmp_d(idx) + tmp_d(idx+1)) * R_over_gamma_1
-    mux_s      = mudx_s * (-real(u_d(idx), 4) + real(u_d(idx+1), 4))
+#:if VISC_ORDER == 2
+    fv1 = visc_2_3 * 2.0${VL}$ * (mudx * (-${UVS}$(idx) + ${UVS}$(idx+1)))
+#:elif VISC_ORDER == 4
+    fv1 = visc_2_3 * 2.0${VL}$ * mudx &
+        * (visc_cd1 * (${UVS}$(idx+1) - ${UVS}$(idx)) &
+        +  visc_cd2 * (${UVS}$(idx+2) - ${UVS}$(idx-1)))
+#:else
+    fv1 = visc_2_3 * 2.0${VL}$ * mudx &
+        * (visc_cd1 * (${UVS}$(idx+1) - ${UVS}$(idx)) &
+        +  visc_cd2 * (${UVS}$(idx+2) - ${UVS}$(idx-1)) &
+        +  visc_cd3 * (${UVS}$(idx+3) - ${UVS}$(idx-2)))
+#:endif
 
-    ! Interleave 4: Pressure Diffusion (FP64) + Viscous Stress (FP32)
-    p_diff   = 0.5d0 * (u_d(idx) * p_d(idx+1) + u_d(idx+1) * p_d(idx))
-    fv1_temp = real(two_third, 4) * 2.0_4 * mux_s
+#:if VISC_ORDER == 2
+    fv2 = fv2 + 0.5${VL}$ * (${UVS}$(idx) + ${UVS}$(idx+1)) * fv1
+#:elif VISC_ORDER == 4
+    fv2 = fv2 + (visc_ci1 * (${UVS}$(idx) + ${UVS}$(idx+1)) &
+              +  visc_ci2 * (${UVS}$(idx-1) + ${UVS}$(idx+2))) * fv1
+#:else
+    fv2 = fv2 + (visc_ci1 * (${UVS}$(idx) + ${UVS}$(idx+1)) &
+              +  visc_ci2 * (${UVS}$(idx-1) + ${UVS}$(idx+2)) &
+              +  visc_ci3 * (${UVS}$(idx-2) + ${UVS}$(idx+3))) * fv1
+#:endif
 
-    ! Interleave 5: Kinetic Energy Convection (FP64) + Total Viscous Work (FP32)
-    e_kin     = 0.5d0 * fk1 * (u_d(idx) * u_d(idx+1))
-    fv2_final = fv2_temp + 0.5d0 * real(u_d(idx) + u_d(idx+1), 4) * fv1_temp
+    ! E is write-once here and not re-read until the next launch: __stcs
+    call __stcs(E(i,1), real(e1, 8))
+    call __stcs(E(i,2), real(e2, 8) - real(fv1, 8))
+    call __stcs(E(i,3), real(e3, 8) - real(fv2, 8))
 
-    ! Combine energy flux components
-    fk3 = e_internal + p_diff + e_kin
+#:elif PRESS32
+    ! PRESS_PREC='fp32' control case (matches `seq`): KEEPNP+KEEPP, not hand-
+    ! inlined. Both KEEPP and the viscous half are FP32 under this combination
+    ! (PRESS32 requires VISC_PREC='fp32'), so there is no complementary
+    ! FP64/FP32 pair left here to interleave -- only KEEPNP (FP64) plus this
+    ! FP32 pair, exactly the same shape as `seq`. Hand-transcribing a bespoke
+    ! interleaved version would only duplicate calc_keep_1d.f90.fypp's
+    ! KEEPNP/KEEPP bodies with no scheduling benefit.
+#:if ORDER == 2
+    e_local = KEEPNP(id_acc, ${ARGS2('idx', 'idx+1')}$)
+    p_local = KEEPP(id_acc, uv_s(idx:idx+1), pv_s(idx:idx+1))
+#:else
+    e_local = KEEPNP(id_acc, ${ARGS('idx-ioc', 'idx+ioc+1')}$)
+    p_local = KEEPP(id_acc, uv_s(idx-ioc:idx+ioc+1), pv_s(idx-ioc:idx+ioc+1))
+#:endif
+    e1 = e_local(1)
+    e2 = e_local(2) + real(p_local(2), ${WK}$)
+    e3 = e_local(3) + real(p_local(3), ${WK}$)
 
-    ! ==========================================
-    ! 4. Write back results using Streaming Store (__stcs)
-    ! ==========================================
-    call __stcs(E(1,i), fk1)
-    call __stcs(E(2,i), fk2 - real(fv1_temp, 8))
-    call __stcs(E(3,i), fk3 - real(fv2_final, 8))
+#:if VISC_ORDER == 2
+    mudx = 0.5${VL}$ * (mu_s(idx) + mu_s(idx+1)) * inv_dx_v
+#:elif VISC_ORDER == 4
+    mudx = (visc_ci1 * (mu_s(idx) + mu_s(idx+1)) &
+          + visc_ci2 * (mu_s(idx-1) + mu_s(idx+2))) * inv_dx_v
+#:else
+    mudx = (visc_ci1 * (mu_s(idx) + mu_s(idx+1)) &
+          + visc_ci2 * (mu_s(idx-1) + mu_s(idx+2)) &
+          + visc_ci3 * (mu_s(idx-2) + mu_s(idx+3))) * inv_dx_v
+#:endif
 
+#:if VISC_ORDER == 2
+    fv2 = visc_Cp_Pr * mudx * (-${TVS}$(idx) + ${TVS}$(idx+1))
+#:elif VISC_ORDER == 4
+    fv2 = visc_Cp_Pr * mudx &
+        * (visc_cd1 * (${TVS}$(idx+1) - ${TVS}$(idx)) &
+        +  visc_cd2 * (${TVS}$(idx+2) - ${TVS}$(idx-1)))
+#:else
+    fv2 = visc_Cp_Pr * mudx &
+        * (visc_cd1 * (${TVS}$(idx+1) - ${TVS}$(idx)) &
+        +  visc_cd2 * (${TVS}$(idx+2) - ${TVS}$(idx-1)) &
+        +  visc_cd3 * (${TVS}$(idx+3) - ${TVS}$(idx-2)))
+#:endif
+
+#:if VISC_ORDER == 2
+    fv1 = visc_2_3 * 2.0${VL}$ * (mudx * (-${UVS}$(idx) + ${UVS}$(idx+1)))
+#:elif VISC_ORDER == 4
+    fv1 = visc_2_3 * 2.0${VL}$ * mudx &
+        * (visc_cd1 * (${UVS}$(idx+1) - ${UVS}$(idx)) &
+        +  visc_cd2 * (${UVS}$(idx+2) - ${UVS}$(idx-1)))
+#:else
+    fv1 = visc_2_3 * 2.0${VL}$ * mudx &
+        * (visc_cd1 * (${UVS}$(idx+1) - ${UVS}$(idx)) &
+        +  visc_cd2 * (${UVS}$(idx+2) - ${UVS}$(idx-1)) &
+        +  visc_cd3 * (${UVS}$(idx+3) - ${UVS}$(idx-2)))
+#:endif
+
+#:if VISC_ORDER == 2
+    fv2 = fv2 + 0.5${VL}$ * (${UVS}$(idx) + ${UVS}$(idx+1)) * fv1
+#:elif VISC_ORDER == 4
+    fv2 = fv2 + (visc_ci1 * (${UVS}$(idx) + ${UVS}$(idx+1)) &
+              +  visc_ci2 * (${UVS}$(idx-1) + ${UVS}$(idx+2))) * fv1
+#:else
+    fv2 = fv2 + (visc_ci1 * (${UVS}$(idx) + ${UVS}$(idx+1)) &
+              +  visc_ci2 * (${UVS}$(idx-1) + ${UVS}$(idx+2)) &
+              +  visc_ci3 * (${UVS}$(idx-2) + ${UVS}$(idx+3))) * fv1
+#:endif
+
+    ! E is write-once here and not re-read until the next launch: __stcs
+    call __stcs(E(i,1), real(e1, 8))
+    call __stcs(E(i,2), real(e2, 8) - real(fv1, 8))
+    call __stcs(E(i,3), real(e3, 8) - real(fv2, 8))
+
+#:else
+    ! Hand-inlined KEEP + viscous arithmetic, with the two precision domains
+    ! alternated in source order. That ordering is a hint, nothing more: the
+    ! operands stay independent and ptxas is free to reschedule.
+    !
+    ! An earlier revision tried to *enforce* the alternation with `volatile`
+    ! scalars plus artificial `+ real(x - x, kind)` zero-dependencies. Do not
+    ! reintroduce it. Measured on Ada, it cost 22 no-op terms -- and since DADD
+    ! and both F2F directions issue on the FP64 unit, that was +75% FP64-pipe
+    ! work -- while chaining mudx -> e1 -> fv2 -> e2 -> fv1 -> e3 into one
+    ! serial dependence chain. Co-issue needs independence, so forcing the
+    ! interleaving is self-defeating: the SASS `runs` count went up (17 -> 24)
+    ! while the FP64 issue stall more than doubled (1.88 -> 4.20 cycles) and the
+    ! kernel got 9-28% slower than the plain `seq` variant.
+#:if VISC_ORDER == 2
+    mudx = 0.5${VL}$ * (mu_s(idx) + mu_s(idx+1)) * inv_dx_v
+#:elif VISC_ORDER == 4
+    mudx = (visc_ci1 * (mu_s(idx) + mu_s(idx+1)) &
+          + visc_ci2 * (mu_s(idx-1) + mu_s(idx+2))) * inv_dx_v
+#:else
+    mudx = (visc_ci1 * (mu_s(idx) + mu_s(idx+1)) &
+          + visc_ci2 * (mu_s(idx-1) + mu_s(idx+2)) &
+          + visc_ci3 * (mu_s(idx-2) + mu_s(idx+3))) * inv_dx_v
+#:endif
+
+#:if ORDER == 2
+    e1 = keep_1_4_w * (rho_d(idx) + rho_d(idx+1)) * (u_d(idx) + u_d(idx+1))
+#:elif ORDER == 4
+    kr1 = (rho_d(idx) + rho_d(idx+1)) * (u_d(idx) + u_d(idx+1))
+    kr2 = (${RC}$(idx) + ${RC}$(idx+2)) * (${UC}$(idx) + ${UC}$(idx+2))
+    kr3 = (${RC}$(idx-1) + ${RC}$(idx+1)) * (${UC}$(idx-1) + ${UC}$(idx+1))
+    e1 = keep_1_3_w * kr1 - real((kr2 + kr3) * keep_1_24_c, ${WK}$)
+    kr1 = keep_1_6_w * kr1
+    kr2 = keep_1_48_c * kr2
+    kr3 = keep_1_48_c * kr3
+#:else
+    kr1 = (rho_d(idx) + rho_d(idx+1)) * (u_d(idx) + u_d(idx+1))
+    kr2 = (${RC}$(idx) + ${RC}$(idx+2)) * (${UC}$(idx) + ${UC}$(idx+2))
+    kr3 = (${RC}$(idx-1) + ${RC}$(idx+1)) * (${UC}$(idx-1) + ${UC}$(idx+1))
+    kr4 = (${RC}$(idx) + ${RC}$(idx+3)) * (${UC}$(idx) + ${UC}$(idx+3))
+    kr5 = (${RC}$(idx-1) + ${RC}$(idx+2)) * (${UC}$(idx-1) + ${UC}$(idx+2))
+    kr6 = (${RC}$(idx-2) + ${RC}$(idx+1)) * (${UC}$(idx-2) + ${UC}$(idx+1))
+    e1 = keep_3_8_w * kr1 &
+       + real(keep_m3_40_c * (kr2 + kr3) + (kr4 + kr5 + kr6) * keep_1_120_c, ${WK}$)
+    kr1 = keep_3_16_w * kr1
+    kr2 = keep_3_80_c * kr2
+    kr3 = keep_3_80_c * kr3
+    kr4 = keep_1_240_c * kr4
+    kr5 = keep_1_240_c * kr5
+    kr6 = keep_1_240_c * kr6
+#:endif
+
+#:if VISC_ORDER == 2
+    fv2 = visc_Cp_Pr * mudx * (-${TVS}$(idx) + ${TVS}$(idx+1))
+#:elif VISC_ORDER == 4
+    fv2 = visc_Cp_Pr * mudx &
+        * (visc_cd1 * (${TVS}$(idx+1) - ${TVS}$(idx)) &
+        +  visc_cd2 * (${TVS}$(idx+2) - ${TVS}$(idx-1)))
+#:else
+    fv2 = visc_Cp_Pr * mudx &
+        * (visc_cd1 * (${TVS}$(idx+1) - ${TVS}$(idx)) &
+        +  visc_cd2 * (${TVS}$(idx+2) - ${TVS}$(idx-1)) &
+        +  visc_cd3 * (${TVS}$(idx+3) - ${TVS}$(idx-2)))
+#:endif
+
+#:if ORDER == 2
+    e2 = keep_1_2_w * (e1 * (u_d(idx) + u_d(idx+1)) + (p_d(idx) + p_d(idx+1)))
+#:elif ORDER == 4
+    klead = kr1 * (u_d(idx) + u_d(idx+1)) + keep_7_12_w * (p_d(idx) + p_d(idx+1))
+    kcorr = -kr3 * ${UC}$(idx-1) - kr2 * ${UC}$(idx) - kr3 * ${UC}$(idx+1) - kr2 * ${UC}$(idx+2) &
+            - keep_1_12_c * (${PC}$(idx-1) + ${PC}$(idx+2))
+    e2 = klead + real(kcorr, ${WK}$)
+#:else
+    klead = kr1 * (u_d(idx) + u_d(idx+1)) + keep_37_60_w * (p_d(idx) + p_d(idx+1))
+    kcorr = kr6 * ${UC}$(idx-2) + (-kr3 + kr5) * ${UC}$(idx-1) + (-kr2 + kr4) * ${UC}$(idx) &
+          + (-kr3 + kr6) * ${UC}$(idx+1) + (-kr2 + kr5) * ${UC}$(idx+2) + kr4 * ${UC}$(idx+3) &
+          + (${PC}$(idx-2) + ${PC}$(idx+3) - 8.0${CL}$ * (${PC}$(idx-1) + ${PC}$(idx+2))) &
+          * keep_1_60_c
+    e2 = klead + real(kcorr, ${WK}$)
+#:endif
+
+#:if VISC_ORDER == 2
+    fv1 = visc_2_3 * 2.0${VL}$ * (mudx * (-${UVS}$(idx) + ${UVS}$(idx+1)))
+#:elif VISC_ORDER == 4
+    fv1 = visc_2_3 * 2.0${VL}$ * mudx &
+        * (visc_cd1 * (${UVS}$(idx+1) - ${UVS}$(idx)) &
+        +  visc_cd2 * (${UVS}$(idx+2) - ${UVS}$(idx-1)))
+#:else
+    fv1 = visc_2_3 * 2.0${VL}$ * mudx &
+        * (visc_cd1 * (${UVS}$(idx+1) - ${UVS}$(idx)) &
+        +  visc_cd2 * (${UVS}$(idx+2) - ${UVS}$(idx-1)) &
+        +  visc_cd3 * (${UVS}$(idx+3) - ${UVS}$(idx-2)))
+#:endif
+
+#:if ORDER == 2
+    e3 = e1 * keep_1_2_w * (tmp_d(idx) + tmp_d(idx+1)) * keep_R_g1_w
+    e3 = e3 + keep_1_2_w * (u_d(idx) * p_d(idx+1) + u_d(idx+1) * p_d(idx))
+    e3 = e3 + keep_1_2_w * e1 * (u_d(idx) * u_d(idx+1))
+#:elif ORDER == 4
+    klead = kr1 * (tmp_d(idx) + tmp_d(idx+1)) * keep_R_g1_w &
+          + kr1 * (u_d(idx) * u_d(idx+1)) &
+          + keep_2_3_w * (u_d(idx) * p_d(idx+1) + u_d(idx+1) * p_d(idx))
+    kcorr = (-kr3 * ${TC}$(idx-1) - kr2 * ${TC}$(idx) - kr3 * ${TC}$(idx+1) - kr2 * ${TC}$(idx+2)) &
+          * keep_R_g1_c &
+          - kr2 * (${UC}$(idx) * ${UC}$(idx+2)) - kr3 * (${UC}$(idx-1) * ${UC}$(idx+1)) &
+          - keep_1_12_c * (${UC}$(idx) * ${PC}$(idx+2) + ${UC}$(idx+2) * ${PC}$(idx) &
+                                      + ${UC}$(idx-1) * ${PC}$(idx+1) + ${UC}$(idx+1) * ${PC}$(idx-1))
+    e3 = klead + real(kcorr, ${WK}$)
+#:else
+    klead = kr1 * (tmp_d(idx) + tmp_d(idx+1)) * keep_R_g1_w &
+          + kr1 * (u_d(idx) * u_d(idx+1)) &
+          + keep_3_4_w * (u_d(idx) * p_d(idx+1) + u_d(idx+1) * p_d(idx))
+    kcorr = (kr6 * ${TC}$(idx-2) + (-kr3 + kr5) * ${TC}$(idx-1) + (-kr2 + kr4) * ${TC}$(idx) &
+           + (-kr3 + kr6) * ${TC}$(idx+1) + (-kr2 + kr5) * ${TC}$(idx+2) + kr4 * ${TC}$(idx+3)) &
+          * keep_R_g1_c &
+          + kr6 * (${UC}$(idx-2) * ${UC}$(idx+1)) + kr5 * (${UC}$(idx-1) * ${UC}$(idx+2)) &
+          + kr4 * (${UC}$(idx) * ${UC}$(idx+3)) - kr3 * (${UC}$(idx-1) * ${UC}$(idx+1)) &
+          - kr2 * (${UC}$(idx) * ${UC}$(idx+2)) &
+          + keep_m3_20_c * (${UC}$(idx) * ${PC}$(idx+2) + ${UC}$(idx+2) * ${PC}$(idx) &
+                        + ${UC}$(idx-1) * ${PC}$(idx+1) + ${UC}$(idx+1) * ${PC}$(idx-1)) &
+          + (${UC}$(idx) * ${PC}$(idx+3) + ${UC}$(idx+3) * ${PC}$(idx) &
+           + ${UC}$(idx-1) * ${PC}$(idx+2) + ${UC}$(idx+2) * ${PC}$(idx-1) &
+           + ${UC}$(idx-2) * ${PC}$(idx+1) + ${UC}$(idx+1) * ${PC}$(idx-2)) * keep_1_60_c
+    e3 = klead + real(kcorr, ${WK}$)
+#:endif
+
+#:if VISC_ORDER == 2
+    fv2 = fv2 + 0.5${VL}$ * (${UVS}$(idx) + ${UVS}$(idx+1)) * fv1
+#:elif VISC_ORDER == 4
+    fv2 = fv2 + (visc_ci1 * (${UVS}$(idx) + ${UVS}$(idx+1)) &
+              +  visc_ci2 * (${UVS}$(idx-1) + ${UVS}$(idx+2))) * fv1
+#:else
+    fv2 = fv2 + (visc_ci1 * (${UVS}$(idx) + ${UVS}$(idx+1)) &
+              +  visc_ci2 * (${UVS}$(idx-1) + ${UVS}$(idx+2)) &
+              +  visc_ci3 * (${UVS}$(idx-2) + ${UVS}$(idx+3))) * fv1
+#:endif
+
+    ! E is write-once here and not re-read until the next launch: __stcs
+    call __stcs(E(i,1), real(e1, 8))
+    call __stcs(E(i,2), real(e2, 8) - real(fv1, 8))
+    call __stcs(E(i,3), real(e3, 8) - real(fv2, 8))
+#:endif
   end subroutine calc_fused_x
 end module calc_fused_kernel

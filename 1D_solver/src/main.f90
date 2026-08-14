@@ -18,9 +18,8 @@ program main
   call MPI_COMM_RANK(MPI_COMM_WORLD, myrank, ierr)
   mygpu = 0
 
-  blocksE  = dim3((nx-1+threadsE%x -1)/threadsE%x,  1, 1)
-  blocksEv = dim3((nx-1+threadsEv%x-1)/threadsEv%x, 1, 1)
-  blocks   = dim3((nx-2+threads%x  -1)/threads%x,   1, 1)
+  ! blocksE/blocksEv/blocks are set by RungeKutta: they depend on the ghost-cell
+  ! depth ng, which is a fypp quantity and so is only available there.
 
   allocate(Q(nx,3), x(nx))
   call set_grid(myrank, nx, x)
@@ -39,7 +38,14 @@ program main
     print *, "calculation time:", m, " [min] ", s, " [sec]"
   endif
 
-  call write_Q_dat(nx, x, Q)
+  ! Q.dat is ASCII, ~70 bytes/cell. At the grid sizes used for throughput
+  ! benchmarking (nx of a few million) writing it costs more than the run and
+  ! nothing reads it -- the correctness checkers all work at nx=4096.
+  if (nx <= 1048576) then
+    call write_Q_dat(nx, x, Q)
+  else
+    print *, "nx =", nx, "> 2^20: skipping Q.dat (benchmark mode)"
+  endif
 
   deallocate(Q, x)
   call MPI_FINALIZE(ierr)

@@ -1,47 +1,190 @@
 #:include 'config.fypp'
+#:if not defined('KERNEL_MODE')
+  #:set KERNEL_MODE = 'fused'
+#:endif
+#:if KERNEL_MODE not in ('split', 'seq', 'fused', 'warp', 'warp_fused')
+  $:error("KERNEL_MODE must be 'split', 'seq', 'fused', 'warp' or 'warp_fused' (got '" + str(KERNEL_MODE) + "'). A typo used to fall through to the split path silently.")
+#:endif
+#:if ORDER not in (2, 4, 6)
+  $:error("ORDER must be 2, 4 or 6 (got '" + str(ORDER) + "')")
+#:endif
+#:if not defined('KEEP_PREC')
+  #:set KEEP_PREC = 'fp64'
+#:endif
+#:if not defined('VISC_PREC')
+  #:set VISC_PREC = 'fp32'
+#:endif
+#:if not defined('PRESS_PREC')
+  #:set PRESS_PREC = 'fp64'
+#:endif
+#! SHADOW: the fused-style kernels read pre-converted FP32 copies of u/T/mu
+#! (and p under PRESS32, and rho under TERM) from global memory instead of
+#! converting at tile load. Both F2F directions issue on the FP64 pipe, so the
+#! conversions are hoisted into calc_quantities_shadow32, a single fused
+#! primitives+shadow pass run once per RK stage.
+#:set TERM         = KEEP_PREC == 'term'
+#:set TERM_HOISTED = KERNEL_MODE in ('seq', 'fused', 'warp', 'warp_fused') and TERM
+#:set SHADOW       = KERNEL_MODE in ('seq', 'fused', 'warp', 'warp_fused') and VISC_PREC == 'fp32'
+#:set PRESS32      = PRESS_PREC == 'fp32'
+#! Per-array shadow requirements. NEED_ANY gates whether the fused kernel below
+#! replaces calc_quantities_T_1D, or calc_quantities_T_1D is called directly,
+#! unmodified -- the latter is what keeps every zero-shadow config bit-for-bit
+#! identical to before this change, since the new kernel's arithmetic is then
+#! simply never used.
+#:set NEED_U32   = SHADOW or TERM_HOISTED
+#:set NEED_T32   = SHADOW or TERM_HOISTED
+#:set NEED_MU32  = SHADOW
+#:set NEED_RHO32 = TERM_HOISTED
+#:set NEED_P32   = PRESS32 or TERM_HOISTED
+#:set NEED_ANY   = NEED_U32 or NEED_T32 or NEED_MU32 or NEED_RHO32 or NEED_P32
+#:def SHARGS()
+#{if NEED_U32}#, u32#{endif}##{if NEED_T32}#, t32#{endif}##{if NEED_MU32}#, mu32#{endif}##{if NEED_RHO32}#, rho32#{endif}##{if NEED_P32}#, p32#{endif}#
+#:enddef
 !> Convective (KEEP) + viscous (Navier-Stokes, Sutherland's law) flux
 !> dispatcher for the 1D solver.
 module calc_flux_base
-  use mod_globals, only : blocksE, threadsE, blocksEv, threadsEv
+  use mod_globals, only : blocksE, threadsE, blocksEv, threadsEv, R
+  use mod_constant, only : gamma_1, mu0_T0_S_over_T0_2_3
   use calc_physical_quantities
   use calc_keep_kernel
-  use calc_visc2
-  #:if KERNEL_MODE == 'fused'
+  use calc_visc
+  #:if KERNEL_MODE == 'seq'
+  use calc_seq_kernel
+  #:elif KERNEL_MODE == 'fused'
   use calc_fused_kernel
+  #:elif KERNEL_MODE in ('warp', 'warp_fused')
+  use calc_warp_kernel
   #:endif
   implicit none
   private
   public calc_E
 contains
-  subroutine calc_conv(nx, Q, T, E)
-    integer, intent(in), value               :: nx
-    real(8), intent(in), device, contiguous  :: Q(nx,3)
-    real(8), intent(in), device, contiguous  :: T(nx)
-    real(8), intent(out), device, contiguous :: E(3,nx-1)
-
-    call calc_keep_x<<<blocksE,threadsE>>>(nx, Q, T, E)
-  end subroutine calc_conv
-
-  !> Compute convective + viscous flux for the compressible NS equations
-  subroutine calc_E(nx, Q, ruvwp, T, mu, E)
+  #:if NEED_ANY
+  !> Fused primitives+Sutherland+FP32-shadow kernel. Replaces the pair
+  !> (calc_quantities_T_1D, fill_shadow32) with a single launch whenever any
+  !> downstream FP32 mirror is needed (VISC_PREC='fp32', PRESS_PREC='fp32', or
+  !> KEEP_PREC='term'). calc_quantities_T_1D (repo-root src/, shared with
+  !> 2D/3D) is NOT modified or called from here -- its math is reproduced
+  !> verbatim below instead. Order of operations must stay exactly as written
+  !> for bit-identity: u*u before rho*(u*u); R*rho before the division;
+  !> Sutherland as (const/(T+111))*(T*sqrt(T)), not algebraically simplified.
+  attributes(global) subroutine calc_quantities_shadow32(nx, Q, ruvwp, T, mu${SHARGS()}$)
     integer, intent(in), value               :: nx
     real(8), intent(in), device, contiguous  :: Q(nx,3)
     real(8), intent(out), device, contiguous :: ruvwp(nx,3)
     real(8), intent(out), device, contiguous :: T(nx)
     real(8), intent(out), device, contiguous :: mu(nx)
-    real(8), intent(out), device, contiguous :: E(3,nx-1)
-    
-    call calc_quantities_T_1D(nx, Q, ruvwp, T, mu)
-    
-    #:if KERNEL_MODE == 'fused'
-    block 
-      type(dim3) :: blocks_fused
-      blocks_fused = dim3((nx - 1 + threadsE%x - 1) / threadsE%x, 1, 1)
-      call calc_fused_x<<<blocks_fused, 128>>>(nx, ruvwp, T, mu, E)
-    end block
+    #:if NEED_U32
+    real(4), intent(out), device, contiguous :: u32(nx)
+    #:endif
+    #:if NEED_T32
+    real(4), intent(out), device, contiguous :: t32(nx)
+    #:endif
+    #:if NEED_MU32
+    real(4), intent(out), device, contiguous :: mu32(nx)
+    #:endif
+    #:if NEED_RHO32
+    real(4), intent(out), device, contiguous :: rho32(nx)
+    #:endif
+    #:if NEED_P32
+    real(4), intent(out), device, contiguous :: p32(nx)
+    #:endif
+    integer i
+    real(8) :: rho, u, p, temp
+
+    i = (blockIdx%x-1) * blockDim%x + threadIdx%x
+    if (i <= nx) then
+      rho        = Q(i,1)
+      u          = Q(i,2) / rho
+      p          = gamma_1 * (Q(i,3) - 0.5d0 * rho * u*u)
+      ruvwp(i,1) = rho
+      ruvwp(i,2) = u
+      ruvwp(i,3) = p
+      temp       = p / (R * rho)
+      T(i)       = temp
+      mu(i)      = mu0_T0_S_over_T0_2_3 / (temp + 111.d0) * (temp * sqrt(temp))
+      #:if NEED_U32
+      u32(i)   = real(u, 4)
+      #:endif
+      #:if NEED_T32
+      t32(i)   = real(temp, 4)
+      #:endif
+      #:if NEED_MU32
+      mu32(i)  = real(mu(i), 4)
+      #:endif
+      #:if NEED_RHO32
+      rho32(i) = real(rho, 4)
+      #:endif
+      #:if NEED_P32
+      p32(i)   = real(p, 4)
+      #:endif
+    endif
+  end subroutine calc_quantities_shadow32
+
+  #:endif
+  !> calc_keep_x reads its second argument as primitives (rho, u, p), so this
+  !> must be handed ruvwp -- never the conservative Q.
+  subroutine calc_conv(nx, ruvwp, T, E)
+    integer, intent(in), value               :: nx
+    real(8), intent(in), device, contiguous  :: ruvwp(nx,3)
+    real(8), intent(in), device, contiguous  :: T(nx)
+    real(8), intent(out), device, contiguous :: E(nx-1,3)
+
+    call calc_keep_x<<<blocksE,threadsE>>>(nx, ruvwp, T, E)
+  end subroutine calc_conv
+
+  !> Compute convective + viscous flux for the compressible NS equations
+  subroutine calc_E(nx, Q, ruvwp, T, mu${SHARGS()}$, E)
+    integer, intent(in), value               :: nx
+    real(8), intent(in), device, contiguous  :: Q(nx,3)
+    real(8), intent(out), device, contiguous :: ruvwp(nx,3)
+    real(8), intent(out), device, contiguous :: T(nx)
+    real(8), intent(out), device, contiguous :: mu(nx)
+    #:if NEED_U32
+    real(4), intent(out), device, contiguous :: u32(nx)
+    #:endif
+    #:if NEED_T32
+    real(4), intent(out), device, contiguous :: t32(nx)
+    #:endif
+    #:if NEED_MU32
+    real(4), intent(out), device, contiguous :: mu32(nx)
+    #:endif
+    #:if NEED_RHO32
+    real(4), intent(out), device, contiguous :: rho32(nx)
+    #:endif
+    #:if NEED_P32
+    real(4), intent(out), device, contiguous :: p32(nx)
+    #:endif
+    real(8), intent(out), device, contiguous :: E(nx-1,3)
+
+    #:if NEED_ANY
+    ! Full-nx grid, not blocksE: the tile halos read ghost cells 1..nx.
+    call calc_quantities_shadow32<<<(nx + threadsE%x - 1)/threadsE%x, threadsE>>>(nx, Q, ruvwp, T, mu${SHARGS()}$)
     #:else
-    call calc_conv(nx, Q, T, E)
-    call calc_Ev2<<<blocksEv,threadsEv>>>(nx, ruvwp, T, mu, E)
+    call calc_quantities_T_1D(nx, Q, ruvwp, T, mu)
+    #:endif
+    #:if KERNEL_MODE == 'seq'
+    call calc_seq_x<<<blocksE,threadsE>>>(nx, ruvwp, T, mu${SHARGS()}$, E)
+    #:elif KERNEL_MODE == 'fused'
+    ! blocksE is already ceil((nx-1)/threadsE%x); the kernel's tile indexing
+    ! assumes the block size is exactly threadsE%x, so launch with it, not a
+    ! literal.
+    call calc_fused_x<<<blocksE,threadsE>>>(nx, ruvwp, T, mu${SHARGS()}$, E)
+    #:elif KERNEL_MODE == 'warp'
+    ! calc_warp_x splits its block in half by role, so it needs 2x the threads
+    ! to cover the same threadsE%x faces per block that seq/fused cover. Keeping
+    ! faces/block equal is what makes the three variants comparable: at
+    ! threadsE%x/2 faces per block the grid doubles and warp gains a launch-
+    ! quantization advantage unrelated to warp-level overlap.
+    call calc_warp_x<<<blocksE, dim3(2*threadsE%x,1,1)>>>(nx, ruvwp, T, mu${SHARGS()}$, E)
+    #:elif KERNEL_MODE == 'warp_fused'
+    ! Like warp mode, but the upper role computes both viscous flux and the
+    ! explicit KEEP pressure contribution, leaving the lower role with the
+    ! pressure-free KEEP remainder.
+    call calc_warp_fused_x<<<blocksE, dim3(2*threadsE%x,1,1)>>>(nx, ruvwp, T, mu${SHARGS()}$, E)
+    #:else
+    call calc_conv(nx, ruvwp, T, E)
+    call calc_Ev<<<blocksEv,threadsEv>>>(nx, ruvwp, T, mu, E)
     #:endif
   end subroutine calc_E
 end module calc_flux_base

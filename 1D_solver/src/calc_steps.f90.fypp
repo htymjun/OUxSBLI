@@ -1,20 +1,31 @@
+#:include 'config.fypp'
+#:if not defined('VISC_ORDER')
+  #:set VISC_ORDER = ORDER
+#:endif
+#:set NG = max(ORDER, VISC_ORDER) // 2
+!> RK stage kernels. Order-independent arithmetic, but the index range is not:
+!> only the physical cells ng+1..nx-ng are updated, the rest being ghosts that
+!> set_bc rewrites every stage. Thread `i` (1-based) owns cell i+ng, which is
+!> bounded by faces i+ng-1 and i+ng. At ng=1 this reduces to the pre-ghost-cell
+!> mapping (cells 2..nx-1, faces 1..nx-1).
 module calc_steps
   use cudafor
   use mod_globals, only : dt, dx
   use libm
   implicit none
+  integer, parameter :: ng = ${NG}$
 contains
   !$dir inline
   attributes(device) subroutine calc_R(nx, i, dt_coef, E, R)
     integer, intent(in), value              :: nx
-    integer, intent(in), value              :: i
+    integer, intent(in), value              :: i             !< face index (left face of the cell)
     real(8), intent(in), value              :: dt_coef       !< coef * dt / dx
-    real(8), intent(in), device, contiguous :: E(3,nx-1)      !< flux
+    real(8), intent(in), device, contiguous :: E(nx-1,3)      !< SoA flux: E(face, component)
     real(8), intent(out)                    :: R(3)
     real(8) v0, v1
-    v0 = E(1,i); v1 = E(1,i+1); R(1) = dt_coef * (v1 - v0)
-    v0 = E(2,i); v1 = E(2,i+1); R(2) = dt_coef * (v1 - v0)
-    v0 = E(3,i); v1 = E(3,i+1); R(3) = dt_coef * (v1 - v0)
+    v0 = E(i,1); v1 = E(i+1,1); R(1) = dt_coef * (v1 - v0)
+    v0 = E(i,2); v1 = E(i+1,2); R(2) = dt_coef * (v1 - v0)
+    v0 = E(i,3); v1 = E(i+1,3); R(3) = dt_coef * (v1 - v0)
   end subroutine calc_R
 
 
@@ -22,18 +33,18 @@ contains
   attributes(global) subroutine calc_step1(nx, coef, E, Q, Q2)
     integer, intent(in), value               :: nx
     real(8), intent(in), value               :: coef            !< coefficient for Runge-Kutta
-    real(8), intent(in), device, contiguous  :: E(3,nx-1)        !< flux
+    real(8), intent(in), device, contiguous  :: E(nx-1,3)        !< SoA flux
     real(8), intent(in), device, contiguous  :: Q(nx,3)          !< present Q(rho, rhou, E)
     real(8), intent(out), device, contiguous :: Q2(nx,3)         !< next    Q(rho, rhou, E)
     real(8) R(3), coef_dt_dx
     integer i, l
     i = (blockIdx%x-1)*blockDim%x + threadIdx%x
-    if (nx-2 < i) return
+    if (nx-2*ng < i) return
     coef_dt_dx = coef * dt / dx
-    call calc_R(nx, i, coef_dt_dx, E, R)
+    call calc_R(nx, i+ng-1, coef_dt_dx, E, R)
     do l = 1, 3
       ! Q2 is write-once here and only consumed by the next kernel launch: __stcs
-      call __stcs(Q2(i+1,l), Q(i+1,l) - R(l))
+      call __stcs(Q2(i+ng,l), Q(i+ng,l) - R(l))
     enddo
   end subroutine calc_step1
 
@@ -46,23 +57,23 @@ contains
     real(8), intent(in), value                 :: coef2           !< weight of Qout
     real(8), intent(in), value                 :: coef3           !< weight of flux residual
     real(8), intent(in), value                 :: coef4_inv       !< 1/(coef1+coef2) normalization
-    real(8), intent(in), device, contiguous    :: E(3,nx-1)       !< flux
+    real(8), intent(in), device, contiguous    :: E(nx-1,3)       !< SoA flux
     real(8), intent(in), device, contiguous    :: Qin(nx,3)       !< Q^n (original from previous step)
     real(8), intent(inout), device, contiguous :: Qout(nx,3)      !< Q^(*) on input, Q^(n+1) on output
     real(8) R(3), coef3_dt_dx
     integer i, l
     i = (blockIdx%x-1)*blockDim%x + threadIdx%x
-    if (nx-2 < i) return
+    if (nx-2*ng < i) return
     coef3_dt_dx = coef3 * dt / dx
-    call calc_R(nx, i, coef3_dt_dx, E, R)
+    call calc_R(nx, i+ng-1, coef3_dt_dx, E, R)
     do l = 1, 3
       ! Qout is write-once here, not re-read until the next kernel launch: __stcs
       block
         real(8) qin_val, qout_val, val
-        qin_val  = Qin(i+1,l)
-        qout_val = Qout(i+1,l)
+        qin_val  = Qin(i+ng,l)
+        qout_val = Qout(i+ng,l)
         val      = fma(coef1, qin_val, fma(coef2, qout_val, -R(l))) * coef4_inv
-        call __stcs(Qout(i+1,l), val)
+        call __stcs(Qout(i+ng,l), val)
       end block
     enddo
   end subroutine calc_step2_3

@@ -1,0 +1,450 @@
+#:include 'config.fypp'
+#:if not defined('KERNEL_MODE')
+  #:set KERNEL_MODE = 'fused'
+#:endif
+#:if not defined('KEEP_PREC')
+  #:set KEEP_PREC = 'fp64'
+#:endif
+#:if not defined('VISC_PREC')
+  #:set VISC_PREC = 'fp32'
+#:endif
+#:if not defined('VISC_ORDER')
+  #:set VISC_ORDER = ORDER
+#:endif
+#:if not defined('PRESS_PREC')
+  #:set PRESS_PREC = 'fp64'
+#:endif
+#:if KEEP_PREC not in ('fp64', 'fp32', 'term', 'df')
+  $:error("KEEP_PREC must be 'fp64', 'fp32', 'term' or 'df' (got '" + str(KEEP_PREC) + "')")
+#:endif
+#:if KEEP_PREC == 'term' and ORDER < 4
+  $:error("KEEP_PREC='term' needs ORDER >= 4: KEEP2 has no correction terms to demote")
+#:endif
+#:if KERNEL_MODE == 'warp_fused' and KEEP_PREC == 'df'
+  $:error("KERNEL_MODE='warp_fused' currently supports KEEP_PREC='fp64', 'fp32' or 'term'; DF KEEP is intentionally left on the ordinary warp/fused paths.")
+#:endif
+#:if VISC_PREC not in ('fp64', 'fp32')
+  $:error("VISC_PREC must be 'fp64' or 'fp32' (got '" + str(VISC_PREC) + "')")
+#:endif
+#:if PRESS_PREC not in ('fp64', 'fp32')
+  $:error("PRESS_PREC must be 'fp64' or 'fp32' (got '" + str(PRESS_PREC) + "')")
+#:endif
+#:if PRESS_PREC == 'fp32' and KERNEL_MODE not in ('seq', 'fused', 'warp_fused')
+  $:error("PRESS_PREC='fp32' only affects KERNEL_MODE='seq', 'fused' or 'warp_fused'; refusing to silently ignore it")
+#:endif
+#:if PRESS_PREC == 'fp32' and (KEEP_PREC not in ('fp64', 'term') or VISC_PREC != 'fp32')
+  $:error("PRESS_PREC='fp32' requires KEEP_PREC='fp64' or 'term' (demotion, never promotion) and VISC_PREC='fp32' (KEEPP reads the uv_s FP32 tile)")
+#:endif
+#:if ORDER not in (2, 4, 6)
+  $:error("ORDER must be 2, 4 or 6 (got '" + str(ORDER) + "'); the #:else arms below silently mean 6")
+#:endif
+#:set TERM = KEEP_PREC == 'term'
+#:set WK = 4 if KEEP_PREC == 'fp32' else 8
+#:set KL = '_4' if KEEP_PREC == 'fp32' else 'd0'
+#:set CK = 4 if TERM else WK
+#:set CL = '_4' if TERM else KL
+#:set VK = 8 if VISC_PREC == 'fp64' else 4
+#:set VL = 'd0' if VISC_PREC == 'fp64' else '_4'
+#:set VSFX = 'd' if VISC_PREC == 'fp64' else 's'
+#! SHADOW: load the FP32 tiles from the pre-converted global arrays written by
+#! fill_shadow32 (calc_flux_base) instead of converting here -- F2F issues on
+#! the FP64 pipe, which is the bound resource. Identical bits either way.
+#:set SHADOW  = VISC_PREC == 'fp32'
+#! PRESS32 (warp_fused only): the explicit KEEP pressure terms run at FP32 on
+#! the viscous-role warps, i.e. off the FP64 pipe entirely.
+#:set PRESS32 = PRESS_PREC == 'fp32'
+#:set PK = 4 if PRESS32 else WK
+#! At equal precision the viscous tiles uv_s/tv_s would be bit-identical copies
+#! of u_d/tmp_d, so alias them instead of duplicating the tile and its stores.
+#:set UVS = 'u_d'   if VK == WK else 'uv_s'
+#:set TVS = 'tmp_d' if VK == WK else 'tv_s'
+#:set RC = 'rho_s' if TERM else 'rho'
+#:set UC = 'u_s'   if TERM else 'u'
+#:set PC = 'p_s'   if TERM else 'p'
+#:set TC = 'T_s'   if TERM else 'T'
+#:set NEED_U32   = SHADOW or TERM
+#:set NEED_T32   = SHADOW or TERM
+#:set NEED_MU32  = SHADOW
+#:set NEED_RHO32 = TERM
+#:set NEED_P32   = PRESS32 or TERM
+#:def SHARGS()
+#{if NEED_U32}#, u32#{endif}##{if NEED_T32}#, t32#{endif}##{if NEED_MU32}#, mu32#{endif}##{if NEED_RHO32}#, rho32#{endif}##{if NEED_P32}#, p32#{endif}#
+#:enddef
+#:set NG  = max(ORDER, VISC_ORDER) // 2
+#:set IO  = NG - 1
+#:set IOC = ORDER // 2 - 1
+#:set IOV = VISC_ORDER // 2 - 1
+#:set IKV = {2: 2, 4: 4, 6: 8}[VISC_ORDER]
+#:def ARGS(lo, hi)
+rho_d(${lo}$:${hi}$), u_d(${lo}$:${hi}$), p_d(${lo}$:${hi}$), tmp_d(${lo}$:${hi}$)#{if TERM}#, rho_s(${lo}$:${hi}$), us_s(${lo}$:${hi}$), p_s(${lo}$:${hi}$), ts_s(${lo}$:${hi}$)#{endif}#
+#:enddef
+#:def ARGS2(lo, hi)
+rho_d(${lo}$:${hi}$), u_d(${lo}$:${hi}$), p_d(${lo}$:${hi}$), tmp_d(${lo}$:${hi}$)
+#:enddef
+#:def CARG(n)
+#{if TERM}#, rho_s, u_s, p_s, T_s#{endif}#
+#:enddef
+#:def CDECL(n)
+#:if TERM
+    real(4), intent(in), dimension(${n}$) :: rho_s, u_s, p_s, T_s
+#:endif
+#:enddef
+!> Warp-specialised fused flux kernel for experiments.  The lower half of each
+!> block computes KEEP and the upper half computes the viscous flux for the same
+!> face index.  KEEP_PREC and VISC_PREC may be chosen independently.
+module calc_warp_kernel
+  use cudafor
+  #:if KEEP_PREC == 'df'
+  use cudadevice
+  use fltflt
+  #:endif
+  use mod_globals, only : threadsE, dx
+  use mod_constant, only : R_over_gamma_1, Cp_over_Pr, two_third
+  implicit none
+  private
+  public calc_warp_x
+  #:if KERNEL_MODE == 'warp_fused'
+  public calc_warp_fused_x
+  #:endif
+  #:if KEEP_PREC == 'df'
+  include 'fltflt_operator_interfaces.f90'
+  include 'fltflt_subroutines_interfaces.f90'
+  #:endif
+
+  real(${VK}$), parameter :: inv_dx_v = real(1.d0 / dx, ${VK}$)
+  integer, parameter :: ng  = ${NG}$
+  integer, parameter :: io  = ${IO}$
+  integer, parameter :: ioc = ${IOC}$
+  integer, parameter :: iov = ${IOV}$
+  integer(${{2: 2, 4: 4, 6: 8}[ORDER]}$), parameter :: id_acc  = 0_${{2: 2, 4: 4, 6: 8}[ORDER]}$
+  integer(${IKV}$), parameter :: id_vacc = 0_${IKV}$
+  real(${WK}$), parameter :: keep_R_g1_w = real(R_over_gamma_1, ${WK}$)
+  real(${CK}$), parameter :: keep_R_g1_c = real(R_over_gamma_1, ${CK}$)
+#:if ORDER == 2
+  real(${WK}$), parameter :: keep_1_4_w = real(1.d0 /  4.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_1_2_w = real(1.d0 /  2.d0, kind=${WK}$)
+#:endif
+#:if ORDER >= 4
+  real(${WK}$), parameter :: keep_1_3_w  = real(1.d0 /  3.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_1_6_w  = real(1.d0 /  6.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_2_3_w  = real(2.d0 /  3.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_7_12_w = real(7.d0 / 12.d0, kind=${WK}$)
+  real(${CK}$), parameter :: keep_1_12_c = real(1.d0 / 12.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_1_24_c = real(1.d0 / 24.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_1_48_c = real(1.d0 / 48.d0, kind=${CK}$)
+#:endif
+#:if ORDER == 6
+  real(${WK}$), parameter :: keep_3_8_w   = real(3.d0  /  8.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_3_16_w  = real(3.d0  / 16.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_3_4_w   = real(3.d0  /  4.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_37_60_w = real(37.d0 / 60.d0, kind=${WK}$)
+  real(${CK}$), parameter :: keep_m3_40_c = real(-3.d0 / 40.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_3_80_c  = real(3.d0  / 80.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_m3_20_c = real(-3.d0 / 20.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_1_60_c  = real(1.d0  / 60.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_1_120_c = real(1.d0  / 120.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_1_240_c = real(1.d0  / 240.d0, kind=${CK}$)
+#:endif
+#:if PRESS32
+#! FP32 twins of exactly the constants KEEPP consumes.
+#:if ORDER == 2
+  real(4), parameter :: keep_1_2_p   = real(1.d0 /  2.d0, 4)
+#:elif ORDER == 4
+  real(4), parameter :: keep_7_12_p  = real(7.d0 / 12.d0, 4)
+  real(4), parameter :: keep_2_3_p   = real(2.d0 /  3.d0, 4)
+  real(4), parameter :: keep_1_12_p  = real(1.d0 / 12.d0, 4)
+#:else
+  real(4), parameter :: keep_37_60_p = real(37.d0 / 60.d0, 4)
+  real(4), parameter :: keep_3_4_p   = real(3.d0  /  4.d0, 4)
+  real(4), parameter :: keep_m3_20_p = real(-3.d0 / 20.d0, 4)
+  real(4), parameter :: keep_1_60_p  = real(1.d0  / 60.d0, 4)
+#:endif
+#:endif
+  real(8), parameter :: visc_Cp_Pr_8 = real(Cp_over_Pr, 8)
+  real(8), parameter :: visc_2_3_8   = real(two_third, 8)
+#:if VISC_PREC == 'fp32'
+  real(4), parameter :: visc_Cp_Pr_4 = real(Cp_over_Pr, 4)
+  real(4), parameter :: visc_2_3_4   = real(two_third, 4)
+#:endif
+#:if VISC_ORDER == 4
+  real(8), parameter :: visc_ci1_8 = real( 9.d0 /  16.d0, 8)
+  real(8), parameter :: visc_ci2_8 = real(-1.d0 /  16.d0, 8)
+  real(8), parameter :: visc_cd1_8 = real(27.d0 /  24.d0, 8)
+  real(8), parameter :: visc_cd2_8 = real(-1.d0 /  24.d0, 8)
+#:if VISC_PREC == 'fp32'
+  real(4), parameter :: visc_ci1_4 = real( 9.d0 /  16.d0, 4)
+  real(4), parameter :: visc_ci2_4 = real(-1.d0 /  16.d0, 4)
+  real(4), parameter :: visc_cd1_4 = real(27.d0 /  24.d0, 4)
+  real(4), parameter :: visc_cd2_4 = real(-1.d0 /  24.d0, 4)
+#:endif
+#:elif VISC_ORDER == 6
+  real(8), parameter :: visc_ci1_8 = real( 150.d0 /  256.d0, 8)
+  real(8), parameter :: visc_ci2_8 = real( -25.d0 /  256.d0, 8)
+  real(8), parameter :: visc_ci3_8 = real(   3.d0 /  256.d0, 8)
+  real(8), parameter :: visc_cd1_8 = real(2250.d0 / 1920.d0, 8)
+  real(8), parameter :: visc_cd2_8 = real(-125.d0 / 1920.d0, 8)
+  real(8), parameter :: visc_cd3_8 = real(   9.d0 / 1920.d0, 8)
+#:if VISC_PREC == 'fp32'
+  real(4), parameter :: visc_ci1_4 = real( 150.d0 /  256.d0, 4)
+  real(4), parameter :: visc_ci2_4 = real( -25.d0 /  256.d0, 4)
+  real(4), parameter :: visc_ci3_4 = real(   3.d0 /  256.d0, 4)
+  real(4), parameter :: visc_cd1_4 = real(2250.d0 / 1920.d0, 4)
+  real(4), parameter :: visc_cd2_4 = real(-125.d0 / 1920.d0, 4)
+  real(4), parameter :: visc_cd3_4 = real(   9.d0 / 1920.d0, 4)
+#:endif
+#:endif
+
+  interface KEEP
+    module procedure KEEP${ORDER}$
+  end interface KEEP
+
+  interface VISC
+    module procedure VISC${VISC_ORDER}$_${VSFX}$
+  end interface VISC
+
+  #:if KERNEL_MODE == 'warp_fused'
+  interface KEEPNP
+    module procedure KEEPNP${ORDER}$
+  end interface KEEPNP
+
+  interface KEEPP
+    module procedure KEEPP${ORDER}$
+  end interface KEEPP
+  #:endif
+contains
+  #:if KEEP_PREC == 'df'
+  include 'fltflt_operator.f90'
+  include 'fltflt_subroutines.f90'
+  include 'calc_keep_1d_df.f90'
+  #:else
+  include 'calc_keep_1d.f90'
+  #:endif
+  include 'calc_visc_1d.f90'
+
+  attributes(global) subroutine calc_warp_x(nx, ruvwp, T, mu${SHARGS()}$, E)
+    integer, intent(in), value               :: nx
+    real(8), intent(in), device, contiguous  :: ruvwp(nx,3), T(nx), mu(nx)
+    #:if NEED_U32
+    real(4), intent(in), device, contiguous  :: u32(nx)
+    #:endif
+    #:if NEED_T32
+    real(4), intent(in), device, contiguous  :: t32(nx)
+    #:endif
+    #:if NEED_MU32
+    real(4), intent(in), device, contiguous  :: mu32(nx)
+    #:endif
+    #:if NEED_RHO32
+    real(4), intent(in), device, contiguous  :: rho32(nx)
+    #:endif
+    #:if NEED_P32
+    real(4), intent(in), device, contiguous  :: p32(nx)
+    #:endif
+    real(8), intent(out), device, contiguous :: E(nx-1,3)
+
+    integer i, it, ii, i_base, idx
+    ! Launched with 2*threadsE%x threads so that a warp block still covers
+    ! threadsE%x faces -- the same as seq/fused. With face_threads =
+    ! block_threads/2 the grid was twice as large, which on a small case hands
+    ! `warp` a ~1.33x head start purely from block-count rounding across the
+    ! SMs and confounds any warp-overlap measurement. See report.
+    integer, parameter :: block_threads = 2 * threadsE%x
+    integer, parameter :: face_threads = threadsE%x
+    integer, parameter :: sx = face_threads + 2*io + 1
+    real(${WK}$), dimension(-(io-1):sx-io), shared :: rho_d, u_d, p_d, tmp_d
+#:if VK == WK
+    real(${VK}$), dimension(-(io-1):sx-io), shared :: mu_s
+#:else
+    real(${VK}$), dimension(-(io-1):sx-io), shared :: mu_s, uv_s, tv_s
+#:endif
+    ! Only the viscous result has to cross warps. The KEEP half keeps e_local
+    ! in registers across the barrier and does the combine itself.
+    real(8), dimension(2, face_threads), shared :: fv_sh
+#:if TERM
+    real(4), dimension(-(io-1):sx-io), shared :: rho_s, us_s, p_s, ts_s
+#:endif
+    real(${WK}$) :: e_local(3)
+    real(${VK}$) :: fv(2)
+
+    it = threadIdx%x
+    idx = mod(it - 1, face_threads) + 1
+    i_base = (blockIdx%x-1) * face_threads + (ng-1)
+
+    do ii = it-io, face_threads+io+1, block_threads
+      i = i_base + ii
+      if (i >= 1 .and. i <= nx) then
+        rho_d(ii) = real(ruvwp(i,1), ${WK}$)
+        u_d(ii)   = #{if WK == 4 and SHADOW}#u32(i)#{else}#real(ruvwp(i,2), ${WK}$)#{endif}#
+        p_d(ii)   = real(ruvwp(i,3), ${WK}$)
+        tmp_d(ii) = #{if WK == 4 and SHADOW}#t32(i)#{else}#real(T(i), ${WK}$)#{endif}#
+        mu_s(ii)  = #{if SHADOW}#mu32(i)#{else}#real(mu(i), ${VK}$)#{endif}#
+#:if VK != WK
+        uv_s(ii)  = #{if SHADOW}#u32(i)#{else}#real(ruvwp(i,2), ${VK}$)#{endif}#
+        tv_s(ii)  = #{if SHADOW}#t32(i)#{else}#real(T(i), ${VK}$)#{endif}#
+#:endif
+#:if TERM
+        rho_s(ii) = rho32(i)
+        us_s(ii)  = u32(i)
+        p_s(ii)   = p32(i)
+        ts_s(ii)  = t32(i)
+#:endif
+      endif
+    enddo
+
+    call syncthreads()
+
+    i = i_base + idx
+    if (i <= nx-ng) then
+      if (it <= face_threads) then
+#:if ORDER == 2
+        e_local = KEEP(id_acc, ${ARGS2('idx', 'idx+1')}$)
+#:else
+        e_local = KEEP(id_acc, ${ARGS('idx-ioc', 'idx+ioc+1')}$)
+#:endif
+      else
+        fv = VISC(id_vacc, ${UVS}$(idx-iov:idx+iov+1), ${TVS}$(idx-iov:idx+iov+1), &
+                  mu_s(idx-iov:idx+iov+1), inv_dx_v)
+        fv_sh(1,idx) = real(fv(1), 8)
+        fv_sh(2,idx) = real(fv(2), 8)
+      endif
+    endif
+
+    call syncthreads()
+
+    if (it <= face_threads .and. i <= nx-ng) then
+      call __stcs(E(i,1), real(e_local(1), 8))
+      call __stcs(E(i,2), real(e_local(2), 8) - fv_sh(1,idx))
+      call __stcs(E(i,3), real(e_local(3), 8) - fv_sh(2,idx))
+    endif
+  end subroutine calc_warp_x
+
+  #:if KERNEL_MODE == 'warp_fused'
+  attributes(global) subroutine calc_warp_fused_x(nx, ruvwp, T, mu${SHARGS()}$, E)
+    integer, intent(in), value               :: nx
+    real(8), intent(in), device, contiguous  :: ruvwp(nx,3), T(nx), mu(nx)
+    #:if NEED_U32
+    real(4), intent(in), device, contiguous  :: u32(nx)
+    #:endif
+    #:if NEED_T32
+    real(4), intent(in), device, contiguous  :: t32(nx)
+    #:endif
+    #:if NEED_MU32
+    real(4), intent(in), device, contiguous  :: mu32(nx)
+    #:endif
+    #:if NEED_RHO32
+    real(4), intent(in), device, contiguous  :: rho32(nx)
+    #:endif
+    #:if NEED_P32
+    real(4), intent(in), device, contiguous  :: p32(nx)
+    #:endif
+    real(8), intent(out), device, contiguous :: E(nx-1,3)
+
+    integer i, it, ii, i_base, idx
+    integer, parameter :: block_threads = 2 * threadsE%x
+    integer, parameter :: face_threads = threadsE%x
+    integer, parameter :: sx = face_threads + 2*io + 1
+    real(${WK}$), dimension(-(io-1):sx-io), shared :: rho_d, u_d, p_d, tmp_d
+#:if VK == WK
+    real(${VK}$), dimension(-(io-1):sx-io), shared :: mu_s
+#:else
+    real(${VK}$), dimension(-(io-1):sx-io), shared :: mu_s, uv_s, tv_s
+#:endif
+#:if PRESS32
+    real(4), dimension(-(io-1):sx-io), shared :: pv_s
+#:endif
+#:if TERM
+    real(4), dimension(-(io-1):sx-io), shared :: rho_s, us_s, p_s, ts_s
+#:endif
+    ! Upper role returns explicit KEEP pressure terms plus viscous flux.
+    ! (face_threads, 4), not (4, face_threads): consecutive idx must be
+    ! consecutive 8-byte words or every 64-bit shared access is 8-way
+    ! bank-conflicted.
+    real(8), dimension(face_threads, 4), shared :: aux_sh
+    real(${WK}$) :: e_local(3)
+    real(${PK}$) :: p_local(3)
+    real(${VK}$) :: fv(2)
+
+    it = threadIdx%x
+    idx = mod(it - 1, face_threads) + 1
+    i_base = (blockIdx%x-1) * face_threads + (ng-1)
+
+    ! Role-split load: the lower half fills everything read from the FP64
+    ! arrays, the upper half everything read from the FP32 shadows. The old
+    ! single block_threads-strided loop left the upper half idle (the range is
+    ! only ~face_threads+2*io+1 long) and put every conversion on the KEEP-role
+    ! threads. Each element is still written exactly once, by the same
+    ! expression, so the tile contents are bit-identical.
+    if (it <= face_threads) then
+      do ii = it-io, face_threads+io+1, face_threads
+        i = i_base + ii
+        if (i >= 1 .and. i <= nx) then
+          rho_d(ii) = real(ruvwp(i,1), ${WK}$)
+          u_d(ii)   = #{if WK == 4 and SHADOW}#u32(i)#{else}#real(ruvwp(i,2), ${WK}$)#{endif}#
+          p_d(ii)   = real(ruvwp(i,3), ${WK}$)
+          tmp_d(ii) = #{if WK == 4 and SHADOW}#t32(i)#{else}#real(T(i), ${WK}$)#{endif}#
+#:if TERM
+          rho_s(ii) = rho32(i)
+          us_s(ii)  = u32(i)
+          p_s(ii)   = p32(i)
+          ts_s(ii)  = t32(i)
+#:endif
+        endif
+      enddo
+    else
+      do ii = (it-face_threads)-io, face_threads+io+1, face_threads
+        i = i_base + ii
+        if (i >= 1 .and. i <= nx) then
+          mu_s(ii)  = #{if SHADOW}#mu32(i)#{else}#real(mu(i), ${VK}$)#{endif}#
+#:if VK != WK
+          uv_s(ii)  = #{if SHADOW}#u32(i)#{else}#real(ruvwp(i,2), ${VK}$)#{endif}#
+          tv_s(ii)  = #{if SHADOW}#t32(i)#{else}#real(T(i), ${VK}$)#{endif}#
+#:endif
+#:if PRESS32
+          pv_s(ii)  = p32(i)
+#:endif
+        endif
+      enddo
+    endif
+
+    call syncthreads()
+
+    i = i_base + idx
+    if (i <= nx-ng) then
+      if (it <= face_threads) then
+#:if ORDER == 2
+        e_local = KEEPNP(id_acc, ${ARGS2('idx', 'idx+1')}$)
+#:else
+        e_local = KEEPNP(id_acc, ${ARGS('idx-ioc', 'idx+ioc+1')}$)
+#:endif
+      else
+#:if PRESS32
+#:if ORDER == 2
+        p_local = KEEPP(id_acc, uv_s(idx:idx+1), pv_s(idx:idx+1))
+#:else
+        p_local = KEEPP(id_acc, uv_s(idx-ioc:idx+ioc+1), pv_s(idx-ioc:idx+ioc+1))
+#:endif
+#:else
+#:if ORDER == 2
+        p_local = KEEPP(id_acc, ${ARGS2('idx', 'idx+1')}$)
+#:else
+        p_local = KEEPP(id_acc, ${ARGS('idx-ioc', 'idx+ioc+1')}$)
+#:endif
+#:endif
+        fv = VISC(id_vacc, ${UVS}$(idx-iov:idx+iov+1), ${TVS}$(idx-iov:idx+iov+1), &
+                  mu_s(idx-iov:idx+iov+1), inv_dx_v)
+        aux_sh(idx,1) = real(p_local(2), 8)
+        aux_sh(idx,2) = real(p_local(3), 8)
+        aux_sh(idx,3) = real(fv(1), 8)
+        aux_sh(idx,4) = real(fv(2), 8)
+      endif
+    endif
+
+    call syncthreads()
+
+    if (it <= face_threads .and. i <= nx-ng) then
+      call __stcs(E(i,1), real(e_local(1), 8))
+      call __stcs(E(i,2), real(e_local(2), 8) + aux_sh(idx,1) - aux_sh(idx,3))
+      call __stcs(E(i,3), real(e_local(3), 8) + aux_sh(idx,2) - aux_sh(idx,4))
+    endif
+  end subroutine calc_warp_fused_x
+  #:endif
+end module calc_warp_kernel

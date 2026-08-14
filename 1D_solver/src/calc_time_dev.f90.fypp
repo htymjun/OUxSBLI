@@ -4,6 +4,36 @@
 #:if RK != 3
 $:error('1D_solver only implements 3rd-order TVD Runge-Kutta; config.fypp must set RK = 3')
 #:endif
+#:if not defined('VISC_ORDER')
+  #:set VISC_ORDER = ORDER
+#:endif
+#:if not defined('KERNEL_MODE')
+  #:set KERNEL_MODE = 'fused'
+#:endif
+#:if not defined('KEEP_PREC')
+  #:set KEEP_PREC = 'fp64'
+#:endif
+#:if not defined('VISC_PREC')
+  #:set VISC_PREC = 'fp32'
+#:endif
+#:if not defined('PRESS_PREC')
+  #:set PRESS_PREC = 'fp64'
+#:endif
+#! Must match calc_flux_base.f90.fypp exactly: the FP32 shadow arrays exist iff
+#! the active flux kernel needs them (see calc_quantities_shadow32 there).
+#:set TERM         = KEEP_PREC == 'term'
+#:set TERM_HOISTED = KERNEL_MODE in ('seq', 'fused', 'warp', 'warp_fused') and TERM
+#:set SHADOW       = KERNEL_MODE in ('seq', 'fused', 'warp', 'warp_fused') and VISC_PREC == 'fp32'
+#:set PRESS32      = PRESS_PREC == 'fp32'
+#:set NEED_U32   = SHADOW or TERM_HOISTED
+#:set NEED_T32   = SHADOW or TERM_HOISTED
+#:set NEED_MU32  = SHADOW
+#:set NEED_RHO32 = TERM_HOISTED
+#:set NEED_P32   = PRESS32 or TERM_HOISTED
+#:def SHARGS()
+#{if NEED_U32}#, u32#{endif}##{if NEED_T32}#, t32#{endif}##{if NEED_MU32}#, mu32#{endif}##{if NEED_RHO32}#, rho32#{endif}##{if NEED_P32}#, p32#{endif}#
+#:enddef
+#:set NG = max(ORDER, VISC_ORDER) // 2
 module calc_time_dev
   use cudafor
   use mod_globals, only : nt, blocks, threads, blocksE, threadsE, blocksEv, threadsEv
@@ -23,11 +53,35 @@ contains
     integer, intent(in)    :: nx                 !< grid dimension
     real(8), intent(inout) :: Q(nx,3)            !< conservative variables on host
     real(8), allocatable, device :: Q1(:,:), Q2(:,:), ruvwp(:,:), T(:), mu(:), E(:,:)
+    #:if NEED_U32
+    real(4), allocatable, device :: u32(:)
+    #:endif
+    #:if NEED_T32
+    real(4), allocatable, device :: t32(:)
+    #:endif
+    #:if NEED_MU32
+    real(4), allocatable, device :: mu32(:)
+    #:endif
+    #:if NEED_RHO32
+    real(4), allocatable, device :: rho32(:)
+    #:endif
+    #:if NEED_P32
+    real(4), allocatable, device :: p32(:)
+    #:endif
     integer t1, ierr
+    integer, parameter :: ng = ${NG}$    !< ghost-cell depth, max(ORDER,VISC_ORDER)/2
+
+    ! Launch geometry lives here rather than in main.f90 because it depends on
+    ! ng, which is a fypp quantity. The flux kernels cover faces ng..nx-ng and
+    ! the RK kernels cover cells ng+1..nx-ng; at ng=1 both reduce to the
+    ! pre-ghost-cell ranges (faces 1..nx-1, cells 2..nx-1).
+    blocksE  = dim3((nx-2*ng+1 + threadsE%x -1) / threadsE%x,  1, 1)
+    blocksEv = dim3((nx-2*ng+1 + threadsEv%x-1) / threadsEv%x, 1, 1)
+    blocks   = dim3((nx-2*ng   + threads%x  -1) / threads%x,   1, 1)
 
     call check_gpu(mygpu)
     call allocate_device_mem(nx, ruvwp, T, mu, E)
-    allocate(Q1(nx,3), Q2(nx,3), stat=ierr)
+    allocate(Q1(nx,3), Q2(nx,3)#{if NEED_U32}#, u32(nx)#{endif}##{if NEED_T32}#, t32(nx)#{endif}##{if NEED_MU32}#, mu32(nx)#{endif}##{if NEED_RHO32}#, rho32(nx)#{endif}##{if NEED_P32}#, p32(nx)#{endif}#, stat=ierr)
     if (ierr /= 0) then
       print *, "myrank is ", myrank, " memory allocation failed", ierr
     else
@@ -38,23 +92,23 @@ contains
     print *, "myrank is ", myrank, " start Runge-Kutta"
     do t1 = 1, nt
       ! Stage 1
-      call calc_E(nx, Q1, ruvwp, T, mu, E)
+      call calc_E(nx, Q1, ruvwp, T, mu${SHARGS()}$, E)
       call calc_step1<<<blocks,threads>>>(nx, 1.d0, E, Q1, Q2)
-      call set_bc(myrank, nx, Q2)
+      call set_bc(myrank, nx, ng, Q2)
 
       ! Stage 2
-      call calc_E(nx, Q2, ruvwp, T, mu, E)
+      call calc_E(nx, Q2, ruvwp, T, mu${SHARGS()}$, E)
       call calc_step2_3<<<blocks,threads>>>(nx, 0.75d0, 0.25d0, 0.25d0, 1.d0, E, Q1, Q2)
-      call set_bc(myrank, nx, Q2)
+      call set_bc(myrank, nx, ng, Q2)
 
       ! Stage 3
-      call calc_E(nx, Q2, ruvwp, T, mu, E)
+      call calc_E(nx, Q2, ruvwp, T, mu${SHARGS()}$, E)
       call calc_step2_3<<<blocks,threads>>>(nx, 2.d0, 1.d0, 2.d0, one_third, E, Q2, Q1)
-      call set_bc(myrank, nx, Q1)
+      call set_bc(myrank, nx, ng, Q1)
     enddo
 
     Q = Q1 ! device -> host
-    deallocate(Q1, Q2, ruvwp, T, mu, E)
+    deallocate(Q1, Q2, ruvwp, T, mu, E${SHARGS()}$)
     print *, "myrank is ", myrank, " deallocate GPU memory"
   end subroutine RungeKutta
 end module calc_time_dev

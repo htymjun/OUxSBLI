@@ -6,4 +6,40 @@
 #:set RESCALE      = False
 #:set RESTART      = False
 #:set RK           = 3
-#:set KERNEL_MODE  = 'fused'
+#! --- 1D-solver-specific knobs (see 1D_solver/CLAUDE.md) --------------------
+#:set KERNEL_MODE  = 'warp_fused'
+#! 'split' = separate convective/viscous launches
+#! 'seq'   = one ordinary same-thread KEEP then viscous mixed-precision kernel
+#! 'fused' = one manually inlined KEEP+viscous kernel
+#! 'warp'  = one warp-specialised kernel (half block KEEP, half block viscous)
+#! 'warp_fused' = warp mode with explicit KEEP pressure terms moved to the
+#!                viscous-side warp role
+#:set KEEP_PREC    = 'fp64'
+#! Convective (KEEP) flux precision:
+#!   'fp64' - uniform double, the accuracy reference
+#!   'fp32' - uniform single
+#!   'term' - leading (nearest-neighbour) terms FP64, wide-stencil corrections
+#!            FP32. Needs ORDER >= 4; KEEP2 has no corrections to demote.
+#!   'df'   - double-float emulation for all KEEP arithmetic
+#:set VISC_PREC    = 'fp32'
+#! Viscous flux precision in the FUSED kernel only ('fp64' or 'fp32'). The split
+#! path's calc_Ev is always FP64 and serves as the reference.
+#!
+#! KEEP_PREC /= VISC_PREC is what puts work on both hardware pipes at once. The
+#! FP32 half only stays fed if it has enough instructions to interleave -- that
+#! is what VISC_ORDER below is for. See report/SASS_ilp.md.
+#:set PRESS_PREC   = 'fp64'
+#! precision of the explicit KEEP pressure terms (KEEPNP/KEEPP split),
+#! available on seq/fused/warp_fused.
+#!   'fp64' - pressure at the KEEP working precision (no demotion; the default)
+#!   'fp32' - demote KEEPP to FP32. Requires KEEP_PREC in ('fp64','term') and
+#!            VISC_PREC='fp32'; anything else is a compile-time error.
+#:set VISC_ORDER   = ORDER
+#! Viscous stencil width: 2, 4 or 6, independent of ORDER (same knob name and
+#! meaning as 3D_solver). Raising it is what grows the FP32 instruction count;
+#! it does NOT raise the order of accuracy of the viscous divergence, which is
+#! 2nd order at every width -- see 1D_solver/CLAUDE.md.
+#!
+#! The ghost-cell depth ng = max(ORDER, VISC_ORDER)//2 and the shared-memory halo
+#! io = ng - 1 are derived inside the templates rather than set here, so they
+#! cannot drift out of sync with the stencil widths.

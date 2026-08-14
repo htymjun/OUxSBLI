@@ -1,53 +1,174 @@
 #:include 'config.fypp'
-!> KEEP convective flux kernel, 2nd-order (2-point face average, no MUSCL/TVD
-!> reconstruction -- ORDER=2 collapses to a single unconditional flux formula).
+#:if not defined('KEEP_PREC')
+  #:set KEEP_PREC = 'fp64'
+#:endif
+#:if KEEP_PREC not in ('fp64', 'fp32', 'term', 'df')
+  $:error("KEEP_PREC must be 'fp64', 'fp32', 'term' or 'df' (got '" + str(KEEP_PREC) + "')")
+#:endif
+#:if ORDER not in (2, 4, 6)
+  $:error("ORDER must be 2, 4 or 6 (got '" + str(ORDER) + "'); the #:else arms below silently mean 6")
+#:endif
+#:set TERM = KEEP_PREC == 'term'
+#:set WK = 4 if KEEP_PREC == 'fp32' else 8
+#:set CK = 4 if TERM else WK
+#:if not defined('KERNEL_MODE')
+  #:set KERNEL_MODE = 'fused'
+#:endif
+#:if not defined('PRESS_PREC')
+  #:set PRESS_PREC = 'fp64'
+#:endif
+#! split never calls KEEPNP/KEEPP (calc_keep_x always calls plain KEEP), but
+#! this module is compiled on every build regardless of the active
+#! KERNEL_MODE, and its unconditional `include 'calc_keep_1d.f90'` below pulls
+#! in whatever the shared fragment's global NEED_KEEPNP_KEEPP decides -- driven
+#! by the ACTIVE KERNEL_MODE/PRESS_PREC, not by 'split' itself. So the FP32-twin
+#! constants those (unused-here) bodies reference must still be declared.
+#:set PRESS32 = PRESS_PREC == 'fp32'
+#:if not defined('VISC_ORDER')
+  #:set VISC_ORDER = ORDER
+#:endif
+#:set NG  = max(ORDER, VISC_ORDER) // 2
+#:set IO  = ORDER // 2 - 1
+#! Under 'term' the wide-stencil correction terms run in real(4) and read from
+#! FP32 mirrors of the shared tile, filled once per point by the load loop.
+#:def ARGS(lo, hi)
+rho(${lo}$:${hi}$), u(${lo}$:${hi}$), p(${lo}$:${hi}$), tmp(${lo}$:${hi}$)#{if TERM}#, rho_s(${lo}$:${hi}$), u_s(${lo}$:${hi}$), p_s(${lo}$:${hi}$), tmp_s(${lo}$:${hi}$)#{endif}#
+#:enddef
+#! KEEP2 never takes correction arrays (no l>=2 terms exist at that width).
+#:def ARGS2(lo, hi)
+rho(${lo}$:${hi}$), u(${lo}$:${hi}$), p(${lo}$:${hi}$), tmp(${lo}$:${hi}$)
+#:enddef
+!> KEEP convective flux kernel (split path). ORDER selects the stencil, which is
+!> applied uniformly at every face this kernel computes -- `set_bc` fills
+!> ng = max(ORDER,VISC_ORDER)/2 ghost cells, so no order-degrading branch near
+!> the domain edge is needed. See 1D_solver/CLAUDE.md.
 module calc_keep_kernel
+  use cudafor  ! for __stcs
+  #:if KEEP_PREC == 'df'
+  use cudadevice
+  use fltflt
+  #:endif
   use mod_globals, only : threadsE
   use mod_constant, only : R_over_gamma_1
   implicit none
   private
   public calc_keep_x
-contains
-  include 'calc_keep_1d.f90'
+  #:if KEEP_PREC == 'df'
+  include 'fltflt_operator_interfaces.f90'
+  include 'fltflt_subroutines_interfaces.f90'
+  #:endif
+  integer, parameter :: ng = ${NG}$          !< ghost-cell depth
+  integer, parameter :: io = ${IO}$          !< shared-memory halo per side
+  ! Order tag: only the KIND carries information (see mod_constant.f90.fypp).
+  integer(${{2: 2, 4: 4, 6: 8}[ORDER]}$), parameter :: id_acc = 0_${{2: 2, 4: 4, 6: 8}[ORDER]}$
+  real(${WK}$), parameter :: keep_R_g1_w = real(R_over_gamma_1, ${WK}$)
+  real(${CK}$), parameter :: keep_R_g1_c = real(R_over_gamma_1, ${CK}$)
+#:if ORDER == 2
+  real(${WK}$), parameter :: keep_1_4_w = real(1.d0 /  4.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_1_2_w = real(1.d0 /  2.d0, kind=${WK}$)
+#:endif
+#:if ORDER >= 4
+  real(${WK}$), parameter :: keep_1_3_w  = real(1.d0 /  3.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_1_6_w  = real(1.d0 /  6.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_2_3_w  = real(2.d0 /  3.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_7_12_w = real(7.d0 / 12.d0, kind=${WK}$)
+  real(${CK}$), parameter :: keep_1_12_c = real(1.d0 / 12.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_1_24_c = real(1.d0 / 24.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_1_48_c = real(1.d0 / 48.d0, kind=${CK}$)
+#:endif
+#:if ORDER == 6
+  real(${WK}$), parameter :: keep_3_8_w   = real(3.d0  /  8.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_3_16_w  = real(3.d0  / 16.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_3_4_w   = real(3.d0  /  4.d0, kind=${WK}$)
+  real(${WK}$), parameter :: keep_37_60_w = real(37.d0 / 60.d0, kind=${WK}$)
+  real(${CK}$), parameter :: keep_m3_40_c = real(-3.d0 / 40.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_3_80_c  = real(3.d0  / 80.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_m3_20_c = real(-3.d0 / 20.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_1_60_c  = real(1.d0  / 60.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_1_120_c = real(1.d0  / 120.d0, kind=${CK}$)
+  real(${CK}$), parameter :: keep_1_240_c = real(1.d0  / 240.d0, kind=${CK}$)
+#:endif
+#:if PRESS32
+#! FP32 twins of exactly the constants KEEPP consumes (unused here -- see note
+#! above -- but must exist for the shared fragment's KEEPP bodies to compile).
+#:if ORDER == 2
+  real(4), parameter :: keep_1_2_p   = real(1.d0 /  2.d0, 4)
+#:elif ORDER == 4
+  real(4), parameter :: keep_7_12_p  = real(7.d0 / 12.d0, 4)
+  real(4), parameter :: keep_2_3_p   = real(2.d0 /  3.d0, 4)
+  real(4), parameter :: keep_1_12_p  = real(1.d0 / 12.d0, 4)
+#:else
+  real(4), parameter :: keep_37_60_p = real(37.d0 / 60.d0, 4)
+  real(4), parameter :: keep_3_4_p   = real(3.d0  /  4.d0, 4)
+  real(4), parameter :: keep_m3_20_p = real(-3.d0 / 20.d0, 4)
+  real(4), parameter :: keep_1_60_p  = real(1.d0  / 60.d0, 4)
+#:endif
+#:endif
 
-  attributes(global) subroutine calc_keep_x(nx, Q, T, E)
+  interface KEEP
+    module procedure KEEP${ORDER}$
+  end interface KEEP
+contains
+  #:if KEEP_PREC == 'df'
+  include 'fltflt_operator.f90'
+  include 'fltflt_subroutines.f90'
+  include 'calc_keep_1d_df.f90'
+  #:else
+  include 'calc_keep_1d.f90'
+  #:endif
+
+  attributes(global) subroutine calc_keep_x(nx, ruvwp, T, E)
     integer, intent(in), value               :: nx
-    ! 1. 介面改為接收 real(8) 的全域陣列，完美對接外層的 calc_conv
-    real(8), intent(in), device, contiguous  :: Q(nx,3), T(nx)
-    real(8), intent(out), device, contiguous :: E(3,nx-1)
-    
+    !> primitives (rho, u, p) -- NOT the conservative Q
+    real(8), intent(in), device, contiguous  :: ruvwp(nx,3), T(nx)
+    real(8), intent(out), device, contiguous :: E(nx-1,3)
+
     integer i, it, ii, i_base, idx
-    integer, parameter :: sx = threadsE%x + 1
-    
-    ! 2. 共享記憶體維持 real(4)！這不僅節省了一半的極速記憶體空間，更準備好做 FP32 運算
-    real(4), dimension(1:sx), shared :: rho, u, p, tmp
-    ! 新增一個單精度的暫存陣列，用來接 KEEP2 的計算結果
-    real(4) :: e_local(3) 
-    
+    integer, parameter :: block_threads = threadsE%x
+    integer, parameter :: sx = block_threads + 2*io + 1
+    ! Lower bound -(io-1) so thread 1 can read idx-io without underflowing.
+    real(${WK}$), dimension(-(io-1):sx-io), shared :: rho, u, p, tmp
+#:if TERM
+    real(4), dimension(-(io-1):sx-io), shared :: rho_s, u_s, p_s, tmp_s
+#:endif
+    real(${WK}$) :: e_local(3)
+
     it = threadIdx%x
-    i_base = (blockIdx%x-1)*blockDim%x
-    
-    ! 3. 從全域記憶體讀取 real(8)，並明確降階 (real(..., 4)) 存入共享記憶體
-    do ii = it, threadsE%x+1, blockDim%x
+    ! The first face this kernel owns is ng, so shift the tile origin by ng-1
+    ! and leave the rest of the indexing identical to the un-shifted form.
+    i_base = (blockIdx%x-1)*block_threads + (ng-1)
+
+    ! One strided loop covers the interior tile and both halos.
+    do ii = it-io, block_threads+io+1, block_threads
       i = i_base + ii
       if (i >= 1 .and. i <= nx) then
-        rho(ii) = real(Q(i,1), 4)
-        u(ii)   = real(Q(i,2), 4)
-        p(ii)   = real(Q(i,3), 4)
-        tmp(ii) = real(T(i), 4)
+        rho(ii) = real(ruvwp(i,1), ${WK}$)
+        u(ii)   = real(ruvwp(i,2), ${WK}$)
+        p(ii)   = real(ruvwp(i,3), ${WK}$)
+        tmp(ii) = real(T(i), ${WK}$)
+#:if TERM
+        rho_s(ii) = real(ruvwp(i,1), 4)
+        u_s(ii)   = real(ruvwp(i,2), 4)
+        p_s(ii)   = real(ruvwp(i,3), 4)
+        tmp_s(ii) = real(T(i), 4)
+#:endif
       endif
     enddo
-    
+
     call syncthreads()
-    
+
     i = i_base + it
-    if (nx-1 < i) return
+    if (nx-ng < i) return
     idx = it
-    
-    ! 4. 在純單精度 (FP32) 的環境下進行 KEEP2 核心運算
-    e_local = KEEP2(rho(idx:idx+1), u(idx:idx+1), p(idx:idx+1), tmp(idx:idx+1))
-    
-    ! 5. 算完後，將單精度結果升階回雙精度 (real(..., 8))，寫回全域記憶體
-    E(:,i) = real(e_local, 8)
+
+#:if ORDER == 2
+    e_local = KEEP(id_acc, ${ARGS2('idx', 'idx+1')}$)
+#:else
+    e_local = KEEP(id_acc, ${ARGS('idx-io', 'idx+io+1')}$)
+#:endif
+
+    call __stcs(E(i,1), real(e_local(1), 8))
+    call __stcs(E(i,2), real(e_local(2), 8))
+    call __stcs(E(i,3), real(e_local(3), 8))
   end subroutine calc_keep_x
 end module calc_keep_kernel

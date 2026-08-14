@@ -1,0 +1,359 @@
+#:include 'config.fypp'
+#:if not defined('KEEP_PREC')
+  #:set KEEP_PREC = 'fp64'
+#:endif
+#:if KEEP_PREC not in ('fp64', 'fp32', 'term', 'df')
+  $:error("KEEP_PREC must be 'fp64', 'fp32', 'term' or 'df' (got '" + str(KEEP_PREC) + "')")
+#:endif
+#:if KEEP_PREC == 'term' and ORDER < 4
+  $:error("KEEP_PREC='term' needs ORDER >= 4: KEEP2 has no correction terms to demote")
+#:endif
+#! DF has a separate fltflt-backed fragment with the same KEEP interface.
+#! Leave this ordinary real-kind fragment empty in DF builds.
+#:if KEEP_PREC != 'df'
+#! Working kind and matching literal suffix. Every literal below is written with
+#! an explicit decimal point so that '_4' produces a real, not an integer.
+#:set TERM = KEEP_PREC == 'term'
+#:set WK = 4 if KEEP_PREC == 'fp32' else 8
+#:set L  = '_4' if KEEP_PREC == 'fp32' else 'd0'
+#! 'term' splits each flux by stencil width: the l=1 (nearest-neighbour) terms
+#! stay at WK, the wider l>=2 correction terms drop to real(4). Correction
+#! operands arrive as separate real(4) mirror arrays, filled once per point by
+#! the kernel's cooperative load rather than converted at every stencil access.
+#:set CK = 4 if TERM else WK
+#:set CL = '_4' if TERM else L
+#! Names the correction terms read from: the FP32 mirrors under 'term',
+#! otherwise the working-precision arrays themselves. This lets one body serve
+#! all three precisions.
+#:set RC = 'rho_s' if TERM else 'rho'
+#:set UC = 'u_s'   if TERM else 'u'
+#:set PC = 'p_s'   if TERM else 'p'
+#:set TC = 'T_s'   if TERM else 'T'
+#:if not defined('KERNEL_MODE')
+  #:set KERNEL_MODE = 'fused'
+#:endif
+#:if not defined('PRESS_PREC')
+  #:set PRESS_PREC = 'fp64'
+#:endif
+#! KEEPNP/KEEPP are needed unconditionally for warp_fused (its architecture
+#! always re-splits KEEP into KEEPNP+KEEPP so the pressure terms can live on
+#! the viscous-role warp -- independent of PRESS_PREC), or for seq/fused only
+#! when PRESS_PREC='fp32' actually demotes the pressure part (otherwise
+#! seq/fused keep calling the monolithic KEEP for the bit-identity invariant).
+#:set PRESS32           = PRESS_PREC == 'fp32'
+#:set NEED_KEEPNP_KEEPP = KERNEL_MODE == 'warp_fused' or (KERNEL_MODE in ('seq', 'fused') and PRESS32)
+#:def CARG(n)
+#{if TERM}#, rho_s, u_s, p_s, T_s#{endif}#
+#:enddef
+#:def CDECL(n)
+#:if TERM
+    real(4), intent(in), dimension(${n}$) :: rho_s, u_s, p_s, T_s
+#:endif
+#:enddef
+!> KEEP (Kinetic-Energy-and-Entropy-Preserving) fluxes, 1D specialisations of
+!> src/calc_scheme_math.f90.fypp. In 1D the transverse velocities vanish and the
+!> face normal is always +1, so both the v/w terms and the `Normal` argument
+!> collapse away.
+!>
+!> Generated at KEEP_PREC = '${KEEP_PREC}$': leading terms real(${WK}$),
+!> correction terms real(${CK}$).
+!>
+!> Each flux is written as a leading (nearest-neighbour, l=1) contribution plus
+!> wide-stencil corrections, e.g. for KEEP4's momentum flux
+!>   -RV3*u1 + (RV1-RV2)*u2 + (RV1-RV3)*u3 - RV2*u4
+!>     ==  RV1*(u2+u3)  +  [-RV3*u1 - RV2*u2 - RV3*u3 - RV2*u4]
+!> which is algebraically identical to the shared 2D/3D form but lets the two
+!> groups carry different precisions.
+!>
+!> The shared versions hand-write fma() chains to pin the association order.
+!> Here the equivalent plain expressions are used instead -- they are
+!> precision-generic (libm's fma is real(8)-only) and -Mfma contracts them to
+!> D/FFMA anyway.
+!>
+!> The unused leading `id_acc` argument carries the stencil order in its integer
+!> KIND, so the generic `KEEP` interface resolves the right one at compile time.
+
+#:if ORDER == 2
+  !> 2-point face average (2nd order). No correction terms exist at this width,
+  !> so it is always uniform precision.
+  pure attributes(device) function KEEP2(id_acc, rho, u, p, T) result(F)
+    integer(2), intent(in), value          :: id_acc
+    real(${WK}$), intent(in), dimension(2) :: rho, u, p, T
+    real(${WK}$) F(3)
+
+    F(1) = keep_1_4_w * (rho(1) + rho(2)) * (u(1) + u(2))
+    F(2) = keep_1_2_w * (F(1) * (u(1) + u(2)) + (p(1) + p(2)))
+    F(3) = F(1) * keep_1_2_w * (T(1) + T(2)) * keep_R_g1_w ! internal energy
+    F(3) = F(3) + keep_1_2_w * (u(1) * p(2) + u(2) * p(1)) ! pressure diffusion
+    F(3) = F(3) + keep_1_2_w * F(1) * (u(1) * u(2))        ! kinetic energy
+  end function KEEP2
+#:endif
+
+#:if ORDER == 4
+  !> 4-point stencil (4th order); the face lies between indices 2 and 3.
+  pure attributes(device) function KEEP4(id_acc, rho, u, p, T${CARG(4)}$) result(F)
+    integer(4), intent(in), value          :: id_acc
+    real(${WK}$), intent(in), dimension(4) :: rho, u, p, T
+$:CDECL(4)
+    real(${WK}$) F(3), RV1, lead
+    real(${CK}$) RV2, RV3, corr
+
+    RV1 = (rho(2) + rho(3)) * (u(2) + u(3))
+    RV2 = (${RC}$(2) + ${RC}$(4)) * (${UC}$(2) + ${UC}$(4))
+    RV3 = (${RC}$(1) + ${RC}$(3)) * (${UC}$(1) + ${UC}$(3))
+
+    ! mass
+    F(1) = keep_1_3_w * RV1 - real((RV2 + RV3) * keep_1_24_c, ${WK}$)
+
+    ! rescale from the mass weight (a_l/4) to the momentum/energy weight (a_l/8)
+    RV1 = keep_1_6_w * RV1
+    RV2 = keep_1_48_c * RV2
+    RV3 = keep_1_48_c * RV3
+
+    ! momentum
+    lead = RV1 * (u(2) + u(3)) + keep_7_12_w * (p(2) + p(3))
+    corr = -RV3 * ${UC}$(1) - RV2 * ${UC}$(2) - RV3 * ${UC}$(3) - RV2 * ${UC}$(4) &
+           - keep_1_12_c * (${PC}$(1) + ${PC}$(4))
+    F(2) = lead + real(corr, ${WK}$)
+
+    ! internal + kinetic energy, then pressure diffusion
+    lead = RV1 * (T(2) + T(3)) * keep_R_g1_w &
+         + RV1 * (u(2) * u(3)) &
+         + keep_2_3_w * (u(2) * p(3) + u(3) * p(2))
+    corr = (-RV3 * ${TC}$(1) - RV2 * ${TC}$(2) - RV3 * ${TC}$(3) - RV2 * ${TC}$(4)) * keep_R_g1_c &
+         - RV2 * (${UC}$(2) * ${UC}$(4)) - RV3 * (${UC}$(1) * ${UC}$(3)) &
+         - keep_1_12_c * (${UC}$(2) * ${PC}$(4) + ${UC}$(4) * ${PC}$(2) &
+                     + ${UC}$(1) * ${PC}$(3) + ${UC}$(3) * ${PC}$(1))
+    F(3) = lead + real(corr, ${WK}$)
+  end function KEEP4
+#:endif
+
+#:if ORDER == 6
+  !> 6-point stencil (6th order); the face lies between indices 3 and 4.
+  pure attributes(device) function KEEP6(id_acc, rho, u, p, T${CARG(6)}$) result(F)
+    integer(8), intent(in), value          :: id_acc
+    real(${WK}$), intent(in), dimension(6) :: rho, u, p, T
+$:CDECL(6)
+    real(${WK}$) F(3), RV1, lead
+    real(${CK}$) RV2, RV3, RV4, RV5, RV6, corr
+
+    RV1 = (rho(3) + rho(4)) * (u(3) + u(4))
+    RV2 = (${RC}$(3) + ${RC}$(5)) * (${UC}$(3) + ${UC}$(5))
+    RV3 = (${RC}$(2) + ${RC}$(4)) * (${UC}$(2) + ${UC}$(4))
+    RV4 = (${RC}$(3) + ${RC}$(6)) * (${UC}$(3) + ${UC}$(6))
+    RV5 = (${RC}$(2) + ${RC}$(5)) * (${UC}$(2) + ${UC}$(5))
+    RV6 = (${RC}$(1) + ${RC}$(4)) * (${UC}$(1) + ${UC}$(4))
+
+    ! mass
+    F(1) = keep_3_8_w * RV1 &
+         + real(keep_m3_40_c * (RV2 + RV3) + (RV4 + RV5 + RV6) * keep_1_120_c, ${WK}$)
+
+    ! rescale from the mass weight (a_l/4) to the momentum/energy weight (a_l/8)
+    RV1 = keep_3_16_w * RV1
+    RV2 = keep_3_80_c * RV2
+    RV3 = keep_3_80_c * RV3
+    RV4 = RV4 * keep_1_240_c
+    RV5 = RV5 * keep_1_240_c
+    RV6 = RV6 * keep_1_240_c
+
+    ! momentum
+    lead = RV1 * (u(3) + u(4)) + keep_37_60_w * (p(3) + p(4))
+    corr = RV6 * ${UC}$(1) + (-RV3 + RV5) * ${UC}$(2) + (-RV2 + RV4) * ${UC}$(3) &
+         + (-RV3 + RV6) * ${UC}$(4) + (-RV2 + RV5) * ${UC}$(5) + RV4 * ${UC}$(6) &
+         + (${PC}$(1) + ${PC}$(6) - 8.0${CL}$ * (${PC}$(2) + ${PC}$(5))) * keep_1_60_c
+    F(2) = lead + real(corr, ${WK}$)
+
+    ! internal + kinetic energy, then pressure diffusion
+    lead = RV1 * (T(3) + T(4)) * keep_R_g1_w &
+         + RV1 * (u(3) * u(4)) &
+         + keep_3_4_w * (u(3) * p(4) + u(4) * p(3))
+    corr = (RV6 * ${TC}$(1) + (-RV3 + RV5) * ${TC}$(2) + (-RV2 + RV4) * ${TC}$(3) &
+          + (-RV3 + RV6) * ${TC}$(4) + (-RV2 + RV5) * ${TC}$(5) + RV4 * ${TC}$(6)) * keep_R_g1_c &
+         + RV6 * (${UC}$(1) * ${UC}$(4)) + RV5 * (${UC}$(2) * ${UC}$(5)) &
+         + RV4 * (${UC}$(3) * ${UC}$(6)) - RV3 * (${UC}$(2) * ${UC}$(4)) &
+         - RV2 * (${UC}$(3) * ${UC}$(5)) &
+         + keep_m3_20_c * (${UC}$(3) * ${PC}$(5) + ${UC}$(5) * ${PC}$(3) &
+                       + ${UC}$(2) * ${PC}$(4) + ${UC}$(4) * ${PC}$(2)) &
+         + (${UC}$(3) * ${PC}$(6) + ${UC}$(6) * ${PC}$(3) &
+          + ${UC}$(2) * ${PC}$(5) + ${UC}$(5) * ${PC}$(2) &
+          + ${UC}$(1) * ${PC}$(4) + ${UC}$(4) * ${PC}$(1)) * keep_1_60_c
+    F(3) = lead + real(corr, ${WK}$)
+  end function KEEP6
+#:endif
+
+#:if NEED_KEEPNP_KEEPP
+#! KEEPNP/KEEPP: the same flux as KEEP{2,4,6}, re-split into a pressure-free
+#! remainder (KEEPNP) and the explicit pressure terms alone (KEEPP). Needed
+#! by warp_fused (which always computes them on separate warp roles) and, when
+#! PRESS_PREC='fp32', by seq/fused too (summed in registers in the same
+#! thread). NOT bit-identical to KEEP{2,4,6} at fp64 -- floating-point
+#! addition is not associative, and KEEP folds the pressure lead/correction
+#! into the same running sum as the advection terms before any top-level add,
+#! while KEEPNP+KEEPP round the two halves independently.
+#:if ORDER == 2
+  pure attributes(device) function KEEPNP2(id_acc, rho, u, p, T) result(F)
+    integer(2), intent(in), value          :: id_acc
+    real(${WK}$), intent(in), dimension(2) :: rho, u, p, T
+    real(${WK}$) F(3)
+
+    F(1) = keep_1_4_w * (rho(1) + rho(2)) * (u(1) + u(2))
+    F(2) = keep_1_2_w * F(1) * (u(1) + u(2))
+    F(3) = F(1) * keep_1_2_w * (T(1) + T(2)) * keep_R_g1_w
+    F(3) = F(3) + keep_1_2_w * F(1) * (u(1) * u(2))
+  end function KEEPNP2
+
+#:if PRESS32
+  pure attributes(device) function KEEPP2(id_acc, u, p) result(F)
+    integer(2), intent(in), value     :: id_acc
+    real(4), intent(in), dimension(2) :: u, p
+    real(4) F(3)
+
+    F(1) = 0.0_4
+    F(2) = keep_1_2_p * (p(1) + p(2))
+    F(3) = keep_1_2_p * (u(1) * p(2) + u(2) * p(1))
+  end function KEEPP2
+#:else
+  pure attributes(device) function KEEPP2(id_acc, rho, u, p, T) result(F)
+    integer(2), intent(in), value          :: id_acc
+    real(${WK}$), intent(in), dimension(2) :: rho, u, p, T
+    real(${WK}$) F(3)
+
+    F(1) = 0.0${'_4' if WK == 4 else 'd0'}$
+    F(2) = keep_1_2_w * (p(1) + p(2))
+    F(3) = keep_1_2_w * (u(1) * p(2) + u(2) * p(1))
+  end function KEEPP2
+#:endif
+#:elif ORDER == 4
+  pure attributes(device) function KEEPNP4(id_acc, rho, u, p, T${CARG(4)}$) result(F)
+    integer(4), intent(in), value          :: id_acc
+    real(${WK}$), intent(in), dimension(4) :: rho, u, p, T
+$:CDECL(4)
+    real(${WK}$) F(3), RV1, lead
+    real(${CK}$) RV2, RV3, corr
+
+    RV1 = (rho(2) + rho(3)) * (u(2) + u(3))
+    RV2 = (${RC}$(2) + ${RC}$(4)) * (${UC}$(2) + ${UC}$(4))
+    RV3 = (${RC}$(1) + ${RC}$(3)) * (${UC}$(1) + ${UC}$(3))
+
+    F(1) = keep_1_3_w * RV1 - real((RV2 + RV3) * keep_1_24_c, ${WK}$)
+
+    RV1 = keep_1_6_w * RV1
+    RV2 = keep_1_48_c * RV2
+    RV3 = keep_1_48_c * RV3
+
+    lead = RV1 * (u(2) + u(3))
+    corr = -RV3 * ${UC}$(1) - RV2 * ${UC}$(2) - RV3 * ${UC}$(3) - RV2 * ${UC}$(4)
+    F(2) = lead + real(corr, ${WK}$)
+
+    lead = RV1 * (T(2) + T(3)) * keep_R_g1_w &
+         + RV1 * (u(2) * u(3))
+    corr = (-RV3 * ${TC}$(1) - RV2 * ${TC}$(2) - RV3 * ${TC}$(3) - RV2 * ${TC}$(4)) * keep_R_g1_c &
+         - RV2 * (${UC}$(2) * ${UC}$(4)) - RV3 * (${UC}$(1) * ${UC}$(3))
+    F(3) = lead + real(corr, ${WK}$)
+  end function KEEPNP4
+
+#:if PRESS32
+  pure attributes(device) function KEEPP4(id_acc, u, p) result(F)
+    integer(4), intent(in), value     :: id_acc
+    real(4), intent(in), dimension(4) :: u, p
+    real(4) F(3)
+
+    F(1) = 0.0_4
+    F(2) = keep_7_12_p * (p(2) + p(3)) &
+         - keep_1_12_p * (p(1) + p(4))
+    F(3) = keep_2_3_p * (u(2) * p(3) + u(3) * p(2)) &
+         - keep_1_12_p * (u(2) * p(4) + u(4) * p(2) &
+                        + u(1) * p(3) + u(3) * p(1))
+  end function KEEPP4
+#:else
+  pure attributes(device) function KEEPP4(id_acc, rho, u, p, T${CARG(4)}$) result(F)
+    integer(4), intent(in), value          :: id_acc
+    real(${WK}$), intent(in), dimension(4) :: rho, u, p, T
+$:CDECL(4)
+    real(${WK}$) F(3)
+
+    F(1) = 0.0${'_4' if WK == 4 else 'd0'}$
+    F(2) = keep_7_12_w * (p(2) + p(3)) &
+         - real(keep_1_12_c * (${PC}$(1) + ${PC}$(4)), ${WK}$)
+    F(3) = keep_2_3_w * (u(2) * p(3) + u(3) * p(2)) &
+         - real(keep_1_12_c * (${UC}$(2) * ${PC}$(4) + ${UC}$(4) * ${PC}$(2) &
+                           + ${UC}$(1) * ${PC}$(3) + ${UC}$(3) * ${PC}$(1)), ${WK}$)
+  end function KEEPP4
+#:endif
+#:else
+  pure attributes(device) function KEEPNP6(id_acc, rho, u, p, T${CARG(6)}$) result(F)
+    integer(8), intent(in), value          :: id_acc
+    real(${WK}$), intent(in), dimension(6) :: rho, u, p, T
+$:CDECL(6)
+    real(${WK}$) F(3), RV1, lead
+    real(${CK}$) RV2, RV3, RV4, RV5, RV6, corr
+
+    RV1 = (rho(3) + rho(4)) * (u(3) + u(4))
+    RV2 = (${RC}$(3) + ${RC}$(5)) * (${UC}$(3) + ${UC}$(5))
+    RV3 = (${RC}$(2) + ${RC}$(4)) * (${UC}$(2) + ${UC}$(4))
+    RV4 = (${RC}$(3) + ${RC}$(6)) * (${UC}$(3) + ${UC}$(6))
+    RV5 = (${RC}$(2) + ${RC}$(5)) * (${UC}$(2) + ${UC}$(5))
+    RV6 = (${RC}$(1) + ${RC}$(4)) * (${UC}$(1) + ${UC}$(4))
+
+    F(1) = keep_3_8_w * RV1 &
+         + real(keep_m3_40_c * (RV2 + RV3) + (RV4 + RV5 + RV6) * keep_1_120_c, ${WK}$)
+
+    RV1 = keep_3_16_w * RV1
+    RV2 = keep_3_80_c * RV2
+    RV3 = keep_3_80_c * RV3
+    RV4 = RV4 * keep_1_240_c
+    RV5 = RV5 * keep_1_240_c
+    RV6 = RV6 * keep_1_240_c
+
+    lead = RV1 * (u(3) + u(4))
+    corr = RV6 * ${UC}$(1) + (-RV3 + RV5) * ${UC}$(2) + (-RV2 + RV4) * ${UC}$(3) &
+         + (-RV3 + RV6) * ${UC}$(4) + (-RV2 + RV5) * ${UC}$(5) + RV4 * ${UC}$(6)
+    F(2) = lead + real(corr, ${WK}$)
+
+    lead = RV1 * (T(3) + T(4)) * keep_R_g1_w &
+         + RV1 * (u(3) * u(4))
+    corr = (RV6 * ${TC}$(1) + (-RV3 + RV5) * ${TC}$(2) + (-RV2 + RV4) * ${TC}$(3) &
+          + (-RV3 + RV6) * ${TC}$(4) + (-RV2 + RV5) * ${TC}$(5) + RV4 * ${TC}$(6)) * keep_R_g1_c &
+         + RV6 * (${UC}$(1) * ${UC}$(4)) + RV5 * (${UC}$(2) * ${UC}$(5)) &
+         + RV4 * (${UC}$(3) * ${UC}$(6)) - RV3 * (${UC}$(2) * ${UC}$(4)) &
+         - RV2 * (${UC}$(3) * ${UC}$(5))
+    F(3) = lead + real(corr, ${WK}$)
+  end function KEEPNP6
+
+#:if PRESS32
+  pure attributes(device) function KEEPP6(id_acc, u, p) result(F)
+    integer(8), intent(in), value     :: id_acc
+    real(4), intent(in), dimension(6) :: u, p
+    real(4) F(3)
+
+    F(1) = 0.0_4
+    F(2) = keep_37_60_p * (p(3) + p(4)) &
+         + (p(1) + p(6) - 8.0_4 * (p(2) + p(5))) * keep_1_60_p
+    F(3) = keep_3_4_p * (u(3) * p(4) + u(4) * p(3)) &
+         + keep_m3_20_p * (u(3) * p(5) + u(5) * p(3) &
+                         + u(2) * p(4) + u(4) * p(2)) &
+         + (u(3) * p(6) + u(6) * p(3) &
+          + u(2) * p(5) + u(5) * p(2) &
+          + u(1) * p(4) + u(4) * p(1)) * keep_1_60_p
+  end function KEEPP6
+#:else
+  pure attributes(device) function KEEPP6(id_acc, rho, u, p, T${CARG(6)}$) result(F)
+    integer(8), intent(in), value          :: id_acc
+    real(${WK}$), intent(in), dimension(6) :: rho, u, p, T
+$:CDECL(6)
+    real(${WK}$) F(3)
+
+    F(1) = 0.0${'_4' if WK == 4 else 'd0'}$
+    F(2) = keep_37_60_w * (p(3) + p(4)) &
+         + real((${PC}$(1) + ${PC}$(6) - 8.0${CL}$ * (${PC}$(2) + ${PC}$(5))) * keep_1_60_c, ${WK}$)
+    F(3) = keep_3_4_w * (u(3) * p(4) + u(4) * p(3)) &
+         + real(keep_m3_20_c * (${UC}$(3) * ${PC}$(5) + ${UC}$(5) * ${PC}$(3) &
+                            + ${UC}$(2) * ${PC}$(4) + ${UC}$(4) * ${PC}$(2)) &
+              + (${UC}$(3) * ${PC}$(6) + ${UC}$(6) * ${PC}$(3) &
+               + ${UC}$(2) * ${PC}$(5) + ${UC}$(5) * ${PC}$(2) &
+               + ${UC}$(1) * ${PC}$(4) + ${UC}$(4) * ${PC}$(1)) * keep_1_60_c, ${WK}$)
+  end function KEEPP6
+#:endif
+#:endif
+#:endif
+#:endif

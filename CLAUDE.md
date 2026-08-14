@@ -13,6 +13,7 @@ This file covers project-wide concerns. Solver-specific detail lives in nested `
 - `3D_solver/CLAUDE.md` — 3D Cartesian build/fypp templates, cases, convective schemes, cell-center gradient optimization, kernel-performance notes
 - `3D_solver_curv/CLAUDE.md` — curvilinear O-grid architecture, data flow, NACA/CORN cases
 - `2D_solver/CLAUDE.md` — 2D cases, and the BL/SBLI shared flat-plate setup with the boundary-condition/tuning lessons learned
+- `1D_solver/CLAUDE.md` — 1D Sod shock-tube testbed for simultaneous FP32/FP64 execution: precision knobs, higher-order KEEP, SASS verification workflow
 - `ouxsbli/CLAUDE.md` — Python test suite, analytical helpers, post-processing utilities
 
 ## Build & Run
