@@ -22,8 +22,9 @@ $:error('1D_solver only implements 3rd-order TVD Runge-Kutta; config.fypp must s
 #! Must match calc_flux_base.f90.fypp exactly: the FP32 shadow arrays exist iff
 #! the active flux kernel needs them (see calc_quantities_shadow32 there).
 #:set TERM         = KEEP_PREC == 'term'
-#:set TERM_HOISTED = KERNEL_MODE in ('seq', 'fused', 'warp', 'warp_fused') and TERM
-#:set SHADOW       = KERNEL_MODE in ('seq', 'fused', 'warp', 'warp_fused') and VISC_PREC == 'fp32'
+#:set KEEP_FUSED_STYLE = SCHEME == 'KEEP' and KERNEL_MODE in ('seq', 'fused', 'warp', 'warp_fused')
+#:set TERM_HOISTED = KEEP_FUSED_STYLE and TERM
+#:set SHADOW       = KEEP_FUSED_STYLE and VISC_PREC == 'fp32'
 #:set PRESS32      = PRESS_PREC == 'fp32'
 #:set NEED_U32   = SHADOW or TERM_HOISTED
 #:set NEED_T32   = SHADOW or TERM_HOISTED

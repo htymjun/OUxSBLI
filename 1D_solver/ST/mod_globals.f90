@@ -4,6 +4,13 @@ module mod_globals
   integer, parameter :: dimension = 1
   integer, parameter :: sp        = kind(1.d0)
 
+  ! calc_muscl.f90.fypp (repo-root src/) unconditionally compiles
+  ! MUSCL3rdThreshold/MUSCL4thThreshold, which reference this constant,
+  ! regardless of which TVD dispatch this case actually selects (1D_solver
+  ! only ever uses TVD='tvd', the Minmod-limited path -- see
+  ! 1D_solver/src/calc_flux_base.f90.fypp's SCHEME='SLAU' guard).
+  real(sp), parameter :: threshold = 0.4d0
+
   ! mesh
   integer, parameter :: nx = 4096
 

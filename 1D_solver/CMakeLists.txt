@@ -29,13 +29,14 @@ macro(add_ouxsbli_1d_case)
   endif()
   set(FYPP_FLAGS "-I${_CASE_DIR}")
 
-  # mod_constant comes from the shared repo-root src/
-  set(_PARENT_FYPP "mod_constant")
+  # mod_constant and calc_muscl come from the shared repo-root src/
+  set(_PARENT_FYPP "mod_constant" "calc_muscl")
   set(_SHARED_FYPP
       "calc_flux_base"
       "calc_time_dev"
       "preprocess"
       "calc_keep_kernel"
+      "calc_slau_kernel"
       "calc_visc"
       "calc_seq_kernel"
       "calc_fused_kernel"
@@ -45,7 +46,7 @@ macro(add_ouxsbli_1d_case)
   # Fortran `include` fragments (device-function bodies shared by several
   # modules). These are fypp-generated but never compiled on their own, so they
   # are kept out of _GEN and instead made a DEPENDS of every generated module.
-  set(_FRAGMENT_FYPP "calc_keep_1d" "calc_keep_1d_df" "calc_visc_1d")
+  set(_FRAGMENT_FYPP "calc_keep_1d" "calc_keep_1d_df" "calc_visc_1d" "calc_slau_1d")
 
   set(_FRAG "")
   foreach(_f ${_FRAGMENT_FYPP})
@@ -84,6 +85,7 @@ macro(add_ouxsbli_1d_case)
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/fltflt.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/set.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../../src/calc_physical_quantities.f90"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../src/calc_weno.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/print_1d.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/main.f90")
 

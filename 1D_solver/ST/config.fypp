@@ -2,7 +2,18 @@
 #:set SCHEME       = 'KEEP'
 #:set ORDER        = 2
 #:set TVD          = 'none'
-#:set SLAU_VARIANT = 'HRSLAU2'
+#:set SLAU_VARIANT = 'SLAU'
+#! 1D_solver only implements SLAU1 (SLAU_VARIANT='SLAU') -- HRSLAU2 needs a
+#! shock/wiggle sensor that isn't ported to 1D (see calc_slau_kernel.f90.fypp).
+#! calc_slau_kernel.f90.fypp is compiled regardless of SCHEME (same as every
+#! other convective kernel module here), so this must stay 'SLAU' even for
+#! SCHEME='KEEP' builds, where SLAU_VARIANT is otherwise a dead knob.
+#:set SLAU_RECON   = 'MUSCL'
+#! SLAU's left/right face-state reconstruction at ORDER>=4: 'MUSCL' (default,
+#! calc_muscl.f90.fypp's delta4/delta6) or 'WENO' (src/calc_weno.f90's
+#! WENO5-Z delta6_weno). 'WENO' needs ORDER=6 (no WENO3 stencil exists).
+#! KERNEL_MODE='warp' applies the FP64/DF split to whichever reconstruction is
+#! selected here.
 #:set RESCALE      = False
 #:set RESTART      = False
 #:set RK           = 3
@@ -34,6 +45,15 @@
 #!   'fp64' - pressure at the KEEP working precision (no demotion; the default)
 #!   'fp32' - demote KEEPP to FP32. Requires KEEP_PREC in ('fp64','term') and
 #!            VISC_PREC='fp32'; anything else is a compile-time error.
+#:set SLAU_MUSCL_RHO_PREC = 'fp64'
+#:set SLAU_MUSCL_U_PREC   = 'fp64'
+#:set SLAU_MUSCL_P_PREC   = 'fp64'
+#! SLAU-only reconstruction precision. The SLAU Riemann flux itself stays
+#! FP64; these knobs only choose the precision of reconstructed left/right
+#! states before the SLAU call. Values: 'fp64' or 'df'. With
+#! SCHEME='SLAU' and KERNEL_MODE='warp', FP64-selected variables are
+#! reconstructed by the lower warp role and DF-selected variables by the upper
+#! warp role, then combined through shared memory.
 #:set VISC_ORDER   = ORDER
 #! Viscous stencil width: 2, 4 or 6, independent of ORDER (same knob name and
 #! meaning as 3D_solver). Raising it is what grows the FP32 instruction count;

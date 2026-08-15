@@ -1,0 +1,447 @@
+#:include 'config.fypp'
+#:if ORDER not in (2, 4, 6)
+  $:error("ORDER must be 2, 4 or 6 (got '" + str(ORDER) + "')")
+#:endif
+#:if not defined('VISC_ORDER')
+  #:set VISC_ORDER = ORDER
+#:endif
+#:if not defined('KERNEL_MODE')
+  #:set KERNEL_MODE = 'fused'
+#:endif
+#:if not defined('SLAU_RECON')
+  #:set SLAU_RECON = 'MUSCL'
+#:endif
+#:if SLAU_RECON not in ('MUSCL', 'WENO')
+  $:error("SLAU_RECON must be 'MUSCL' or 'WENO' (got '" + str(SLAU_RECON) + "')")
+#:endif
+#:if SLAU_RECON == 'WENO' and ORDER != 6
+  $:error("SLAU_RECON='WENO' needs ORDER=6 -- src/calc_weno.f90 only implements the 5-point/6-window WENO5-Z stencil (no WENO3 for ORDER=4, and ORDER=2 has no reconstruction at all)")
+#:endif
+#:if not defined('SLAU_MUSCL_RHO_PREC')
+  #:set SLAU_MUSCL_RHO_PREC = 'fp64'
+#:endif
+#:if not defined('SLAU_MUSCL_U_PREC')
+  #:set SLAU_MUSCL_U_PREC = 'fp64'
+#:endif
+#:if not defined('SLAU_MUSCL_P_PREC')
+  #:set SLAU_MUSCL_P_PREC = 'fp64'
+#:endif
+#:for _name, _val in [('SLAU_MUSCL_RHO_PREC', SLAU_MUSCL_RHO_PREC), ('SLAU_MUSCL_U_PREC', SLAU_MUSCL_U_PREC), ('SLAU_MUSCL_P_PREC', SLAU_MUSCL_P_PREC)]
+#:if _val not in ('fp64', 'df')
+  $:error(_name + " must be 'fp64' or 'df' (got '" + str(_val) + "')")
+#:endif
+#:endfor
+#:set RHO_DF = SLAU_MUSCL_RHO_PREC == 'df'
+#:set U_DF   = SLAU_MUSCL_U_PREC == 'df'
+#:set P_DF   = SLAU_MUSCL_P_PREC == 'df'
+#:set ANY_DF = ORDER >= 4 and (RHO_DF or U_DF or P_DF)
+#:set ANY_FP64 = ORDER >= 4 and ((not RHO_DF) or (not U_DF) or (not P_DF))
+#:set NG = max(ORDER, VISC_ORDER) // 2
+#:set IO = ORDER // 2 - 1
+!> SLAU convective flux kernels for the split baseline and the warp-level
+!> FP64/DF reconstruction experiment. ORDER>=4 reconstructs left/right face
+!> states with MUSCL (src/calc_muscl.f90.fypp's delta4/delta6, always
+!> minmod-limited -- calc_flux_base.f90.fypp requires TVD='tvd'); ORDER==2 is
+!> direct first-order upwind, matching 3D_solver's own SLAU convention at
+!> ORDER==2 and 1D's ghost-cell-not-order-ladder convention (see
+!> 1D_solver/CLAUDE.md).
+!> At ORDER==6, SLAU_RECON selects MUSCL (default) or WENO5-Z
+!> (src/calc_weno.f90's delta6_weno) for the reconstruction; WENO has no
+!> ORDER=4 counterpart.
+module calc_slau_kernel
+  use cudafor  ! for __stcs
+  #:if ANY_DF
+  use cudadevice
+  use fltflt
+  #:endif
+  use mod_globals, only : threadsE
+  use mod_constant, only : id_slau
+  #:if ORDER >= 4
+  use mod_globals, only : sp
+  use calc_muscl, only : delta4, delta6
+  #:endif
+  #:if ORDER == 6 and SLAU_RECON == 'WENO'
+  use calc_weno, only : delta6_weno
+  #:endif
+  implicit none
+  private
+  public calc_slau_x
+  #:if ORDER >= 4
+  public calc_slau_warp_x
+  #:endif
+  integer, parameter :: ng = ${NG}$          !< ghost-cell depth
+  integer, parameter :: io = ${IO}$          !< shared-memory halo per side
+  #:if ANY_DF
+  include 'fltflt_operator_interfaces.f90'
+  include 'fltflt_subroutines_interfaces.f90'
+  #:endif
+  #:if ORDER >= 4
+  ! TVD='tvd' is enforced by calc_flux_base.f90.fypp, which always makes
+  ! delta4/delta6 dispatch to the Minmod-limited body; that body never reads
+  ! its `sensor` argument (only the Threshold/'hybrid' dispatch does), so a
+  ! fixed placeholder is all delta4/delta6's signature needs here.
+  real(sp), parameter :: sensor_unused = 0.0_sp
+  #:endif
+
+  interface SLAU
+    module procedure SLAU1
+  end interface SLAU
+contains
+  #:if ANY_DF
+  include 'fltflt_operator.f90'
+  include 'fltflt_subroutines.f90'
+
+  pure attributes(device) function ff_to_r8(a) result(r)
+    type(fltflt), intent(in) :: a
+    real(8) r
+    r = real(a%hi, 8) + real(a%lo, 8)
+  end function ff_to_r8
+
+  attributes(device) function minmod2_ff_local(x, y) result(ans)
+    type(fltflt), intent(in) :: x, y
+    type(fltflt) ans
+    real(4) sgn
+    sgn = sign(1.0_4, x%hi)
+    ans = sgn * fltflt_max(fltflt_min(fltflt_abs(x), sgn * y), 0.0)
+  end function minmod2_ff_local
+
+  attributes(device) function minmod3_ff_local(x, y, z) result(ans)
+    type(fltflt), intent(in) :: x, y, z
+    type(fltflt) ans
+    real(4) sgn
+    sgn = sign(1.0_4, x%hi)
+    ans = sgn * fltflt_max(fltflt_min(fltflt_min(fltflt_abs(x), sgn * y), sgn * z), 0.0)
+  end function minmod3_ff_local
+
+  attributes(device) function d33_ff_local(d1, d2, d3) result(ans)
+    type(fltflt), intent(in) :: d1, d2, d3
+    type(fltflt) ans
+    ans = minmod3_ff_local(d1, 2.d0 * d2, 2.d0 * d3) &
+        - 2.d0 * minmod3_ff_local(d2, 2.d0 * d1, 2.d0 * d3) &
+        + minmod3_ff_local(d3, 2.d0 * d1, 2.d0 * d2)
+  end function d33_ff_local
+
+  attributes(device) subroutine delta4_df(a, al, ar)
+    real(8), intent(in), dimension(4) :: a
+    real(8), intent(out)              :: al, ar
+    type(fltflt) af(4), d1, d2, d3, dt1, dt2, dt3, dt4, lf, rf
+    type(fltflt) one_sixth_f
+    integer k
+
+    do k = 1, 4
+      af(k) = fltflt_init(a(k))
+    enddo
+    one_sixth_f = fltflt_init(1.d0 / 6.d0)
+    d1 = -af(1) + af(2)
+    d2 = -af(2) + af(3)
+    d3 = -af(3) + af(4)
+    ! TVD='tvd' path: b=(3-1/3)/(1-1/3)=4 exactly.
+    dt1 = minmod2_ff_local(d1, 4.d0 * d2)
+    dt2 = minmod2_ff_local(d2, 4.d0 * d1)
+    lf  = af(2) + (dt1 + 2.d0 * dt2) * one_sixth_f
+    dt3 = minmod2_ff_local(d3, 4.d0 * d2)
+    dt4 = minmod2_ff_local(d2, 4.d0 * d3)
+    rf  = af(3) - (dt3 + 2.d0 * dt4) * one_sixth_f
+    al = ff_to_r8(lf)
+    ar = ff_to_r8(rf)
+  end subroutine delta4_df
+
+  attributes(device) subroutine delta6_df(a, al, ar)
+    real(8), intent(in), dimension(6) :: a
+    real(8), intent(out)              :: al, ar
+    type(fltflt) af(6), d1, d2, d3, d4, d5
+    type(fltflt) delta1, delta2, delta3, dl, dr, lf, rf
+    type(fltflt) one_sixth_f
+    integer k
+
+    do k = 1, 6
+      af(k) = fltflt_init(a(k))
+    enddo
+    one_sixth_f = fltflt_init(1.d0 / 6.d0)
+    d1 = -af(1) + af(2)
+    d2 = -af(2) + af(3)
+    d3 = -af(3) + af(4)
+    d4 = -af(4) + af(5)
+    d5 = -af(5) + af(6)
+    delta2 = d3 - d33_ff_local(d2, d3, d4) * one_sixth_f
+    delta1 = d2 - d33_ff_local(d1, d2, d3) * one_sixth_f
+    dl = minmod2_ff_local(delta1, 4.d0 * delta2)
+    dr = minmod2_ff_local(delta2, 4.d0 * delta1)
+    lf = af(3) + (dl + 2.d0 * dr) * one_sixth_f
+    delta3 = d4 - d33_ff_local(d3, d4, d5) * one_sixth_f
+    dl = minmod2_ff_local(delta2, 4.d0 * delta3)
+    dr = minmod2_ff_local(delta3, 4.d0 * delta2)
+    rf = af(4) - (dr + 2.d0 * dl) * one_sixth_f
+    al = ff_to_r8(lf)
+    ar = ff_to_r8(rf)
+  end subroutine delta6_df
+
+  attributes(device) function weno5z_left_df(v1, v2, v3, v4, v5) result(vf)
+    real(8), intent(in) :: v1, v2, v3, v4, v5
+    real(8) vf
+    type(fltflt) x1, x2, x3, x4, x5
+    type(fltflt) p0, p1, p2, b0, b1, b2, a0, a1, a2, s, tau5
+    type(fltflt) r0, r1, r2
+    type(fltflt) one, eps, ratio_cap, d0, d1, d2, c13_12, c0_25
+
+    x1 = fltflt_init(v1); x2 = fltflt_init(v2); x3 = fltflt_init(v3)
+    x4 = fltflt_init(v4); x5 = fltflt_init(v5)
+    one = fltflt_init(1.d0)
+    eps = fltflt_init(1.d-20)
+    ratio_cap = fltflt_init(1.d9)
+    d0 = fltflt_init(1.d0 / 10.d0)
+    d1 = fltflt_init(6.d0 / 10.d0)
+    d2 = fltflt_init(3.d0 / 10.d0)
+    c13_12 = fltflt_init(13.d0 / 12.d0)
+    c0_25 = fltflt_init(0.25d0)
+
+    p0 = ( 2.d0*x1 - 7.d0*x2 + 11.d0*x3) / 6.d0
+    p1 = (-1.d0*x2 + 5.d0*x3 +  2.d0*x4) / 6.d0
+    p2 = ( 2.d0*x3 + 5.d0*x4 -  1.d0*x5) / 6.d0
+    b0 = c13_12 * ((x1 - 2.d0*x2 + x3) * (x1 - 2.d0*x2 + x3)) &
+       + c0_25  * ((x1 - 4.d0*x2 + 3.d0*x3) * (x1 - 4.d0*x2 + 3.d0*x3))
+    b1 = c13_12 * ((x2 - 2.d0*x3 + x4) * (x2 - 2.d0*x3 + x4)) &
+       + c0_25  * ((x2 - x4) * (x2 - x4))
+    b2 = c13_12 * ((x3 - 2.d0*x4 + x5) * (x3 - 2.d0*x4 + x5)) &
+       + c0_25  * ((3.d0*x3 - 4.d0*x4 + x5) * (3.d0*x3 - 4.d0*x4 + x5))
+    tau5 = fltflt_abs(b0 - b2)
+    r0 = fltflt_min(tau5 / (b0 + eps), ratio_cap)
+    r1 = fltflt_min(tau5 / (b1 + eps), ratio_cap)
+    r2 = fltflt_min(tau5 / (b2 + eps), ratio_cap)
+    a0 = d0 * (one + r0 * r0)
+    a1 = d1 * (one + r1 * r1)
+    a2 = d2 * (one + r2 * r2)
+    s  = a0 + a1 + a2
+    vf = ff_to_r8((a0*p0 + a1*p1 + a2*p2) / s)
+  end function weno5z_left_df
+
+  attributes(device) function weno5z_right_df(v1, v2, v3, v4, v5) result(vf)
+    real(8), intent(in) :: v1, v2, v3, v4, v5
+    real(8) vf
+    type(fltflt) x1, x2, x3, x4, x5
+    type(fltflt) p0, p1, p2, b0, b1, b2, a0, a1, a2, s, tau5
+    type(fltflt) r0, r1, r2
+    type(fltflt) one, eps, ratio_cap, d0, d1, d2, c13_12, c0_25
+
+    x1 = fltflt_init(v1); x2 = fltflt_init(v2); x3 = fltflt_init(v3)
+    x4 = fltflt_init(v4); x5 = fltflt_init(v5)
+    one = fltflt_init(1.d0)
+    eps = fltflt_init(1.d-20)
+    ratio_cap = fltflt_init(1.d9)
+    d0 = fltflt_init(1.d0 / 10.d0)
+    d1 = fltflt_init(6.d0 / 10.d0)
+    d2 = fltflt_init(3.d0 / 10.d0)
+    c13_12 = fltflt_init(13.d0 / 12.d0)
+    c0_25 = fltflt_init(0.25d0)
+
+    p0 = (-1.d0*x1 + 5.d0*x2 +  2.d0*x3) / 6.d0
+    p1 = ( 2.d0*x2 + 5.d0*x3 -  1.d0*x4) / 6.d0
+    p2 = (11.d0*x3 - 7.d0*x4 +  2.d0*x5) / 6.d0
+    b0 = c13_12 * ((x1 - 2.d0*x2 + x3) * (x1 - 2.d0*x2 + x3)) &
+       + c0_25  * ((x1 - 4.d0*x2 + 3.d0*x3) * (x1 - 4.d0*x2 + 3.d0*x3))
+    b1 = c13_12 * ((x2 - 2.d0*x3 + x4) * (x2 - 2.d0*x3 + x4)) &
+       + c0_25  * ((x2 - x4) * (x2 - x4))
+    b2 = c13_12 * ((x3 - 2.d0*x4 + x5) * (x3 - 2.d0*x4 + x5)) &
+       + c0_25  * ((3.d0*x3 - 4.d0*x4 + x5) * (3.d0*x3 - 4.d0*x4 + x5))
+    tau5 = fltflt_abs(b0 - b2)
+    r0 = fltflt_min(tau5 / (b0 + eps), ratio_cap)
+    r1 = fltflt_min(tau5 / (b1 + eps), ratio_cap)
+    r2 = fltflt_min(tau5 / (b2 + eps), ratio_cap)
+    a0 = d0 * (one + r0 * r0)
+    a1 = d1 * (one + r1 * r1)
+    a2 = d2 * (one + r2 * r2)
+    s  = a0 + a1 + a2
+    vf = ff_to_r8((a0*p0 + a1*p1 + a2*p2) / s)
+  end function weno5z_right_df
+
+  attributes(device) subroutine delta6_weno_df(a, al, ar)
+    real(8), intent(in), dimension(6) :: a
+    real(8), intent(out)              :: al, ar
+    al = weno5z_left_df (a(1), a(2), a(3), a(4), a(5))
+    ar = weno5z_right_df(a(2), a(3), a(4), a(5), a(6))
+  end subroutine delta6_weno_df
+  #:endif
+
+  include 'calc_slau_1d.f90'
+
+  attributes(global) subroutine calc_slau_x(nx, ruvwp, E)
+    integer, intent(in), value               :: nx
+    !> primitives (rho, u, p) -- NOT the conservative Q
+    real(8), intent(in), device, contiguous  :: ruvwp(nx,3)
+    real(8), intent(out), device, contiguous :: E(nx-1,3)
+
+    integer i, it, ii, i_base, idx
+    integer, parameter :: block_threads = threadsE%x
+    integer, parameter :: sx = block_threads + 2*io + 1
+    ! Lower bound -(io-1) so thread 1 can read idx-io without underflowing.
+    real(8), dimension(-(io-1):sx-io), shared :: rho, u, p
+    real(8) :: F1, F2, F3
+    #:if ORDER >= 4
+    real(8) rhol, rhor, ul, ur, pl, pr
+    #:endif
+
+    it = threadIdx%x
+    ! The first face this kernel owns is ng, so shift the tile origin by ng-1
+    ! and leave the rest of the indexing identical to the un-shifted form.
+    i_base = (blockIdx%x-1)*block_threads + (ng-1)
+
+    ! One strided loop covers the interior tile and both halos.
+    do ii = it-io, block_threads+io+1, block_threads
+      i = i_base + ii
+      if (i >= 1 .and. i <= nx) then
+        rho(ii) = ruvwp(i,1)
+        u(ii)   = ruvwp(i,2)
+        p(ii)   = ruvwp(i,3)
+      endif
+    enddo
+
+    call syncthreads()
+
+    i = i_base + it
+    if (nx-ng < i) return
+    idx = it
+
+    #:if ORDER == 2
+    call SLAU(id_slau, rho(idx), rho(idx+1), u(idx), u(idx+1), p(idx), p(idx+1), 1.d0, F1, F2, F3)
+    #:else
+    #:if ORDER == 4
+    call delta4(sensor_unused, rho(idx-io:idx+io+1), rhol, rhor)
+    call delta4(sensor_unused,   u(idx-io:idx+io+1),   ul,   ur)
+    call delta4(sensor_unused,   p(idx-io:idx+io+1),   pl,   pr)
+    #:else
+    #:if SLAU_RECON == 'WENO'
+    call delta6_weno(rho(idx-io:idx+io+1), rhol, rhor)
+    call delta6_weno(  u(idx-io:idx+io+1),   ul,   ur)
+    call delta6_weno(  p(idx-io:idx+io+1),   pl,   pr)
+    #:else
+    call delta6(sensor_unused, rho(idx-io:idx+io+1), rhol, rhor)
+    call delta6(sensor_unused,   u(idx-io:idx+io+1),   ul,   ur)
+    call delta6(sensor_unused,   p(idx-io:idx+io+1),   pl,   pr)
+    #:endif
+    #:endif
+    call SLAU(id_slau, rhol, rhor, ul, ur, pl, pr, 1.d0, F1, F2, F3)
+    #:endif
+
+    call __stcs(E(i,1), F1)
+    call __stcs(E(i,2), F2)
+    call __stcs(E(i,3), F3)
+  end subroutine calc_slau_x
+
+  #:if ORDER >= 4
+  attributes(global) subroutine calc_slau_warp_x(nx, ruvwp, E)
+    integer, intent(in), value               :: nx
+    real(8), intent(in), device, contiguous  :: ruvwp(nx,3)
+    real(8), intent(out), device, contiguous :: E(nx-1,3)
+
+    integer i, it, ii, i_base, idx
+    integer, parameter :: block_threads = 2 * threadsE%x
+    integer, parameter :: face_threads = threadsE%x
+    integer, parameter :: sx = face_threads + 2*io + 1
+    real(8), dimension(-(io-1):sx-io), shared :: rho, u, p
+    ! (idx, field) gives consecutive idx for each reconstructed field and
+    ! avoids 8-byte shared-memory bank conflicts when the SLAU role reads it.
+    real(8), dimension(face_threads, 6), shared :: qlr
+    real(8) :: F1, F2, F3
+
+    it = threadIdx%x
+    idx = mod(it - 1, face_threads) + 1
+    i_base = (blockIdx%x-1) * face_threads + (ng-1)
+
+    if (it <= face_threads) then
+      do ii = it-io, face_threads+io+1, face_threads
+        i = i_base + ii
+        if (i >= 1 .and. i <= nx) then
+          rho(ii) = ruvwp(i,1)
+          u(ii)   = ruvwp(i,2)
+          p(ii)   = ruvwp(i,3)
+        endif
+      enddo
+    endif
+
+    call syncthreads()
+
+    i = i_base + idx
+    if (i <= nx-ng) then
+      if (it <= face_threads) then
+        #:if not RHO_DF
+        #:if ORDER == 4
+        call delta4(sensor_unused, rho(idx-io:idx+io+1), qlr(idx,1), qlr(idx,2))
+        #:else
+        #:if SLAU_RECON == 'WENO'
+        call delta6_weno(rho(idx-io:idx+io+1), qlr(idx,1), qlr(idx,2))
+        #:else
+        call delta6(sensor_unused, rho(idx-io:idx+io+1), qlr(idx,1), qlr(idx,2))
+        #:endif
+        #:endif
+        #:endif
+        #:if not U_DF
+        #:if ORDER == 4
+        call delta4(sensor_unused, u(idx-io:idx+io+1), qlr(idx,3), qlr(idx,4))
+        #:else
+        #:if SLAU_RECON == 'WENO'
+        call delta6_weno(u(idx-io:idx+io+1), qlr(idx,3), qlr(idx,4))
+        #:else
+        call delta6(sensor_unused, u(idx-io:idx+io+1), qlr(idx,3), qlr(idx,4))
+        #:endif
+        #:endif
+        #:endif
+        #:if not P_DF
+        #:if ORDER == 4
+        call delta4(sensor_unused, p(idx-io:idx+io+1), qlr(idx,5), qlr(idx,6))
+        #:else
+        #:if SLAU_RECON == 'WENO'
+        call delta6_weno(p(idx-io:idx+io+1), qlr(idx,5), qlr(idx,6))
+        #:else
+        call delta6(sensor_unused, p(idx-io:idx+io+1), qlr(idx,5), qlr(idx,6))
+        #:endif
+        #:endif
+        #:endif
+      else
+        #:if RHO_DF
+        #:if ORDER == 4
+        call delta4_df(rho(idx-io:idx+io+1), qlr(idx,1), qlr(idx,2))
+        #:else
+        #:if SLAU_RECON == 'WENO'
+        call delta6_weno_df(rho(idx-io:idx+io+1), qlr(idx,1), qlr(idx,2))
+        #:else
+        call delta6_df(rho(idx-io:idx+io+1), qlr(idx,1), qlr(idx,2))
+        #:endif
+        #:endif
+        #:endif
+        #:if U_DF
+        #:if ORDER == 4
+        call delta4_df(u(idx-io:idx+io+1), qlr(idx,3), qlr(idx,4))
+        #:else
+        #:if SLAU_RECON == 'WENO'
+        call delta6_weno_df(u(idx-io:idx+io+1), qlr(idx,3), qlr(idx,4))
+        #:else
+        call delta6_df(u(idx-io:idx+io+1), qlr(idx,3), qlr(idx,4))
+        #:endif
+        #:endif
+        #:endif
+        #:if P_DF
+        #:if ORDER == 4
+        call delta4_df(p(idx-io:idx+io+1), qlr(idx,5), qlr(idx,6))
+        #:else
+        #:if SLAU_RECON == 'WENO'
+        call delta6_weno_df(p(idx-io:idx+io+1), qlr(idx,5), qlr(idx,6))
+        #:else
+        call delta6_df(p(idx-io:idx+io+1), qlr(idx,5), qlr(idx,6))
+        #:endif
+        #:endif
+        #:endif
+      endif
+    endif
+
+    call syncthreads()
+
+    if (it <= face_threads .and. i <= nx-ng) then
+      call SLAU(id_slau, qlr(idx,1), qlr(idx,2), qlr(idx,3), qlr(idx,4), &
+                qlr(idx,5), qlr(idx,6), 1.d0, F1, F2, F3)
+      call __stcs(E(i,1), F1)
+      call __stcs(E(i,2), F2)
+      call __stcs(E(i,3), F3)
+    endif
+  end subroutine calc_slau_warp_x
+  #:endif
+end module calc_slau_kernel

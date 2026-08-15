@@ -8,6 +8,21 @@
 #:if ORDER not in (2, 4, 6)
   $:error("ORDER must be 2, 4 or 6 (got '" + str(ORDER) + "')")
 #:endif
+#:if SCHEME not in ('KEEP', 'SLAU')
+  $:error("1D_solver only implements SCHEME='KEEP' or 'SLAU' (got '" + str(SCHEME) + "')")
+#:endif
+#:if SCHEME == 'SLAU' and KERNEL_MODE not in ('split', 'warp')
+  $:error("SCHEME='SLAU' supports KERNEL_MODE='split' or 'warp' only. 'warp' means warp-level FP64/DF reconstruction followed by FP64 SLAU; seq/fused/warp_fused are KEEP-only. Got KERNEL_MODE='" + str(KERNEL_MODE) + "'")
+#:endif
+#:if SCHEME == 'SLAU' and KERNEL_MODE == 'warp' and ORDER == 2
+  $:error("SCHEME='SLAU' with KERNEL_MODE='warp' needs ORDER >= 4 because the experiment targets face-state reconstruction; ORDER=2 has no reconstruction work to split")
+#:endif
+#:if SCHEME == 'SLAU' and TVD != 'tvd'
+  $:error("SCHEME='SLAU' only supports TVD='tvd' (minmod-limited MUSCL) in 1D_solver -- 'none'/'hybrid' aren't implemented. Got TVD='" + str(TVD) + "'")
+#:endif
+#:if SCHEME == 'SLAU' and SLAU_VARIANT != 'SLAU'
+  $:error("SCHEME='SLAU' only supports SLAU_VARIANT='SLAU' in 1D_solver -- HRSLAU2 isn't implemented (needs a shock/wiggle sensor not ported to 1D). Got SLAU_VARIANT='" + str(SLAU_VARIANT) + "'")
+#:endif
 #:if not defined('KEEP_PREC')
   #:set KEEP_PREC = 'fp64'
 #:endif
@@ -17,14 +32,32 @@
 #:if not defined('PRESS_PREC')
   #:set PRESS_PREC = 'fp64'
 #:endif
+#:if not defined('SLAU_MUSCL_RHO_PREC')
+  #:set SLAU_MUSCL_RHO_PREC = 'fp64'
+#:endif
+#:if not defined('SLAU_MUSCL_U_PREC')
+  #:set SLAU_MUSCL_U_PREC = 'fp64'
+#:endif
+#:if not defined('SLAU_MUSCL_P_PREC')
+  #:set SLAU_MUSCL_P_PREC = 'fp64'
+#:endif
+#:for _name, _val in [('SLAU_MUSCL_RHO_PREC', SLAU_MUSCL_RHO_PREC), ('SLAU_MUSCL_U_PREC', SLAU_MUSCL_U_PREC), ('SLAU_MUSCL_P_PREC', SLAU_MUSCL_P_PREC)]
+#:if _val not in ('fp64', 'df')
+  $:error(_name + " must be 'fp64' or 'df' (got '" + str(_val) + "')")
+#:endif
+#:endfor
+#:if SCHEME == 'SLAU' and KERNEL_MODE == 'split' and (SLAU_MUSCL_RHO_PREC != 'fp64' or SLAU_MUSCL_U_PREC != 'fp64' or SLAU_MUSCL_P_PREC != 'fp64')
+  $:error("SLAU_MUSCL_*_PREC='df' requires SCHEME='SLAU' with KERNEL_MODE='warp'; split has only the FP64 reconstruction baseline")
+#:endif
 #! SHADOW: the fused-style kernels read pre-converted FP32 copies of u/T/mu
 #! (and p under PRESS32, and rho under TERM) from global memory instead of
 #! converting at tile load. Both F2F directions issue on the FP64 pipe, so the
 #! conversions are hoisted into calc_quantities_shadow32, a single fused
 #! primitives+shadow pass run once per RK stage.
 #:set TERM         = KEEP_PREC == 'term'
-#:set TERM_HOISTED = KERNEL_MODE in ('seq', 'fused', 'warp', 'warp_fused') and TERM
-#:set SHADOW       = KERNEL_MODE in ('seq', 'fused', 'warp', 'warp_fused') and VISC_PREC == 'fp32'
+#:set KEEP_FUSED_STYLE = SCHEME == 'KEEP' and KERNEL_MODE in ('seq', 'fused', 'warp', 'warp_fused')
+#:set TERM_HOISTED = KEEP_FUSED_STYLE and TERM
+#:set SHADOW       = KEEP_FUSED_STYLE and VISC_PREC == 'fp32'
 #:set PRESS32      = PRESS_PREC == 'fp32'
 #! Per-array shadow requirements. NEED_ANY gates whether the fused kernel below
 #! replaces calc_quantities_T_1D, or calc_quantities_T_1D is called directly,
@@ -48,11 +81,14 @@ module calc_flux_base
   use calc_physical_quantities
   use calc_keep_kernel
   use calc_visc
+  #:if SCHEME == 'SLAU'
+  use calc_slau_kernel
+  #:endif
   #:if KERNEL_MODE == 'seq'
   use calc_seq_kernel
   #:elif KERNEL_MODE == 'fused'
   use calc_fused_kernel
-  #:elif KERNEL_MODE in ('warp', 'warp_fused')
+  #:elif SCHEME == 'KEEP' and KERNEL_MODE in ('warp', 'warp_fused')
   use calc_warp_kernel
   #:endif
   implicit none
@@ -133,6 +169,28 @@ contains
     call calc_keep_x<<<blocksE,threadsE>>>(nx, ruvwp, T, E)
   end subroutine calc_conv
 
+  #:if SCHEME == 'SLAU'
+  !> calc_slau_x never uses T (SLAU's energy flux uses phi(rho,k,p,1/rho)
+  !> directly), unlike calc_conv above.
+  subroutine calc_slau_conv(nx, ruvwp, E)
+    integer, intent(in), value               :: nx
+    real(8), intent(in), device, contiguous  :: ruvwp(nx,3)
+    real(8), intent(out), device, contiguous :: E(nx-1,3)
+
+    call calc_slau_x<<<blocksE,threadsE>>>(nx, ruvwp, E)
+  end subroutine calc_slau_conv
+
+  #:if KERNEL_MODE == 'warp'
+  subroutine calc_slau_warp_conv(nx, ruvwp, E)
+    integer, intent(in), value               :: nx
+    real(8), intent(in), device, contiguous  :: ruvwp(nx,3)
+    real(8), intent(out), device, contiguous :: E(nx-1,3)
+
+    call calc_slau_warp_x<<<blocksE, dim3(2*threadsE%x,1,1)>>>(nx, ruvwp, E)
+  end subroutine calc_slau_warp_conv
+  #:endif
+  #:endif
+
   !> Compute convective + viscous flux for the compressible NS equations
   subroutine calc_E(nx, Q, ruvwp, T, mu${SHARGS()}$, E)
     integer, intent(in), value               :: nx
@@ -171,19 +229,28 @@ contains
     ! literal.
     call calc_fused_x<<<blocksE,threadsE>>>(nx, ruvwp, T, mu${SHARGS()}$, E)
     #:elif KERNEL_MODE == 'warp'
+    #:if SCHEME == 'KEEP'
     ! calc_warp_x splits its block in half by role, so it needs 2x the threads
     ! to cover the same threadsE%x faces per block that seq/fused cover. Keeping
     ! faces/block equal is what makes the three variants comparable: at
     ! threadsE%x/2 faces per block the grid doubles and warp gains a launch-
     ! quantization advantage unrelated to warp-level overlap.
     call calc_warp_x<<<blocksE, dim3(2*threadsE%x,1,1)>>>(nx, ruvwp, T, mu${SHARGS()}$, E)
+    #:else
+    call calc_slau_warp_conv(nx, ruvwp, E)
+    call calc_Ev<<<blocksEv,threadsEv>>>(nx, ruvwp, T, mu, E)
+    #:endif
     #:elif KERNEL_MODE == 'warp_fused'
     ! Like warp mode, but the upper role computes both viscous flux and the
     ! explicit KEEP pressure contribution, leaving the lower role with the
     ! pressure-free KEEP remainder.
     call calc_warp_fused_x<<<blocksE, dim3(2*threadsE%x,1,1)>>>(nx, ruvwp, T, mu${SHARGS()}$, E)
     #:else
+    #:if SCHEME == 'KEEP'
     call calc_conv(nx, ruvwp, T, E)
+    #:elif SCHEME == 'SLAU'
+    call calc_slau_conv(nx, ruvwp, E)
+    #:endif
     call calc_Ev<<<blocksEv,threadsEv>>>(nx, ruvwp, T, mu, E)
     #:endif
   end subroutine calc_E

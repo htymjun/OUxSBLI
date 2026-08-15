@@ -1,0 +1,69 @@
+!> SLAU convective flux, 1D specialisation of src/calc_scheme_math.f90.fypp's
+!> SLAU_common/phi/SLAU1. In 1D the transverse velocities vanish and the face
+!> normal is always +1 (same collapse calc_keep_1d.f90.fypp applies to KEEP),
+!> so un1==u1, un2==u2, and the Norm(2) multiply drops out of the momentum
+!> flux. Only SLAU1 (SLAU_VARIANT='SLAU') is implemented -- HRSLAU2 needs the
+!> shock/wiggle sensor (wiggle_detector, 3D_solver/src/calc_hybrid.f90) that
+!> isn't ported to 1D, so calc_flux_base.f90.fypp requires SLAU_VARIANT='SLAU'
+!> whenever SCHEME='SLAU'.
+!>
+!> Written with plain arithmetic (no fma()/libm): SLAU here is fixed at
+!> real(8), so fma()'s precision-genericity benefit (the reason
+!> calc_keep_1d.f90.fypp avoids it) doesn't apply, but plain arithmetic keeps
+!> this file consistent with the rest of 1D_solver/src.
+attributes(device) subroutine SLAU_common(rho1, rho2, over_rho1, over_rho2, u1, u2, p1, p2, &
+                                           c, over_c, Mp, Mm, bp, bm, dp, Vtp, Vtm)
+  use mod_globals, only : gamma
+  real(8), intent(in)  :: rho1, rho2, over_rho1, over_rho2, u1, u2, p1, p2
+  real(8), intent(out) :: c, over_c, Mp, Mm, bp, bm, dp, Vtp, Vtm
+  real(8) cl, cr, g, one_g_Vt
+
+  cl = sqrt(gamma * p1 * over_rho1)
+  cr = sqrt(gamma * p2 * over_rho2)
+  c  = 0.5d0 * (cl + cr)
+  over_c = 1.d0 / c
+  Mp = u1 * over_c
+  Mm = u2 * over_c
+  g  = -max(min(Mp, 0.d0), -1.d0) * min(max(Mm, 0.d0), 1.d0)
+  one_g_Vt = (1.d0 - g) * (rho1 * abs(u1) + rho2 * abs(u2)) / (rho1 + rho2)
+  Vtp = one_g_Vt + g * abs(u1)
+  Vtm = one_g_Vt + g * abs(u2)
+  bp = merge(0.25d0 * (2.d0 - Mp) * (Mp + 1.d0)**2, 0.5d0 * (1.d0 + sign(1.d0, Mp)),  abs(Mp) < 1.d0)
+  bm = merge(0.25d0 * (2.d0 + Mm) * (Mm - 1.d0)**2, 0.5d0 * (1.d0 + sign(1.d0, -Mm)), abs(Mm) < 1.d0)
+  dp = -p1 + p2
+end subroutine SLAU_common
+
+
+pure attributes(device) function phi(rho, k, p, over_rho) result(ans)
+  use mod_globals, only : gamma
+  use mod_constant, only : over_gamma_1
+  real(8), intent(in) :: rho, k, p, over_rho
+  real(8) ans
+  ans = (p * gamma * over_gamma_1 + rho * k) * over_rho
+end function phi
+
+
+attributes(device) subroutine SLAU1(id_slau, rho1, rho2, u1, u2, p1, p2, HR, F1, F2, F3)
+  integer(2), intent(in), value :: id_slau
+  real(8), intent(in)           :: rho1, rho2, u1, u2, p1, p2
+  real(8), intent(in), value    :: HR  !< unused: SLAU1 has no HR-weighted term (that's HRSLAU2, not implemented in 1D)
+  real(8), intent(out)          :: F1, F2, F3
+  real(8) c, over_c, Mp, Mm, bp, bm, dp, Vtp, Vtm
+  real(8) over_rho1, over_rho2, k1, k2, M, x, mass, mass1, mass2, pres
+
+  over_rho1 = 1.d0 / rho1
+  over_rho2 = 1.d0 / rho2
+  call SLAU_common(rho1, rho2, over_rho1, over_rho2, u1, u2, p1, p2, &
+                    c, over_c, Mp, Mm, bp, bm, dp, Vtp, Vtm)
+  k1 = 0.5d0 * u1 * u1
+  k2 = 0.5d0 * u2 * u2
+  M  = min(1.d0, sqrt(k1 + k2) * over_c)
+  x  = (1.d0 - M)**2
+  mass  = 0.25d0 * (rho1 * (u1 + Vtp) + rho2 * (u2 - Vtm) - x * dp * over_c)
+  mass1 = mass + abs(mass)
+  mass2 = mass - abs(mass)
+  pres  = 0.5d0 * ((p1 + p2) * ((1.d0 - x) * (bp + bm - 1.d0) + 1.d0) + (bm - bp) * dp)
+  F1 = mass1 + mass2
+  F2 = mass1 * u1 + mass2 * u2 + pres
+  F3 = mass1 * phi(rho1, k1, p1, over_rho1) + mass2 * phi(rho2, k2, p2, over_rho2)
+end subroutine SLAU1
