@@ -7,6 +7,8 @@ ncu_common_defaults() {
   BENCH="$SOLVER_ROOT/report/bench.sh"
   MPIEXEC="${MPIEXEC:-${MPIRUN:-mpirun}}"
   MPIEXEC_NP_FLAG="${MPIEXEC_NP_FLAG:--n}"
+  NCU_LAUNCH_MODE="${NCU_LAUNCH_MODE:-auto}"
+  NCU_RANKS="${NCU_RANKS:-1}"
 
   OUT=""
   GPU_CC="${CASE_GPU_CC:-native}"
@@ -89,7 +91,8 @@ Common options:
   --require-full-ncu       abort if a full report fails
 
 MPI is taken from PATH after module load. Override with MPIEXEC=mpiexec or
-MPIEXEC_NP_FLAG=-np if needed.
+MPIEXEC_NP_FLAG=-np if needed. Under ncu, NCU_LAUNCH_MODE=auto prefers direct
+launch for 1-rank jobs and falls back to mpirun only if needed.
 EOF
 }
 
@@ -202,6 +205,8 @@ ncu_write_env() {
     echo "[mpi]"
     echo "MPIEXEC=$MPIEXEC"
     echo "MPIEXEC_NP_FLAG=$MPIEXEC_NP_FLAG"
+    echo "NCU_LAUNCH_MODE=$NCU_LAUNCH_MODE"
+    echo "NCU_RANKS=$NCU_RANKS"
     command -v "$MPIEXEC" 2>/dev/null || true
     "$MPIEXEC" --version 2>&1 | head -20 || true
     echo
@@ -278,7 +283,11 @@ ncu_timing_complete() {
       exit 1
     }
     NR > 1 && $1 == t && $2 == c && $3 == r &&
-    $time_col != "" && $time_col !~ /(^|_)FAIL$/ {
+    $time_col != "" &&
+    $time_col !~ /(^|_)FAIL$/ &&
+    $time_col !~ /^[Nn][Aa][Nn]$/ &&
+    $time_col !~ /^[Ii][Nn][Ff]$/ &&
+    $time_col !~ /^-[Ii][Nn][Ff]$/ {
       found = 1
     }
     END { exit found ? 0 : 1 }
@@ -286,10 +295,17 @@ ncu_timing_complete() {
 }
 
 ncu_full_profile_complete() {
-  local report_base="$5"
+  local table_id="$1" case_id="$2" rep="$3" profile="$4" report_base="$5"
   [ "$RESUME" -eq 1 ] || return 1
-  [ -s "${report_base}.ncu-rep" ] && return 0
-  return 1
+  [ -s "$OUT/full_reports.tsv" ] || return 1
+  [ -s "${report_base}.ncu-rep" ] || return 1
+
+  awk -F '\t' -v t="$table_id" -v c="$case_id" -v r="$rep" -v p="$profile" '
+    NR > 1 && $1 == t && $2 == c && $3 == r && $4 == p && $5 == "OK" {
+      found = 1
+    }
+    END { exit found ? 0 : 1 }
+  ' "$OUT/full_reports.tsv"
 }
 
 ncu_prune_timing_rows() {
@@ -449,8 +465,45 @@ ncu_collect_full_report() {
   local kernel status
   kernel="$(ncu_kernel_for_mode "$mode")"
 
+  ncu_launch_attempts() {
+    case "$NCU_LAUNCH_MODE" in
+      auto)
+        if [ "$NCU_RANKS" = 1 ]; then
+          printf '%s\n' direct mpi
+        else
+          printf '%s\n' mpi
+        fi
+        ;;
+      direct)
+        printf '%s\n' direct
+        ;;
+      mpi)
+        printf '%s\n' mpi
+        ;;
+      *)
+        echo "bad NCU_LAUNCH_MODE: $NCU_LAUNCH_MODE (use auto, direct, or mpi)" >&2
+        return 2
+        ;;
+    esac
+  }
+
+  ncu_setup_launch() {
+    local launch_mode="$1"
+    if [ "$launch_mode" = direct ]; then
+      NCU_TARGET_PROCESSES=application-only
+      NCU_LAUNCH_DESC=direct
+      NCU_LAUNCH_CMD=(./a.out)
+      return 0
+    fi
+
+    NCU_TARGET_PROCESSES=all
+    NCU_LAUNCH_DESC="${MPIEXEC} ${MPIEXEC_NP_FLAG} ${NCU_RANKS} ./a.out"
+    NCU_LAUNCH_CMD=("$MPIEXEC" "$MPIEXEC_NP_FLAG" "$NCU_RANKS" ./a.out)
+  }
+
   ncu_run_full_ncu() {
     local profile="$1" report_base="$2" log="$3"
+    local launch_mode attempt_status
     shift 3
 
     if ncu_full_profile_complete "$table_id" "$case_id" "$rep" "$profile" "$report_base"; then
@@ -460,16 +513,30 @@ ncu_collect_full_report() {
     ncu_prune_full_profile_rows "$table_id" "$case_id" "$rep" "$profile"
 
     echo "[$(date +%H:%M:%S)] full ncu ${profile} ${table_id}/${case_id} repeat ${rep}" | tee -a "$OUT/progress.log"
-    set +e
-    (cd "$SOLVER_ROOT/ST/build" && "${NCU:-ncu}" \
-      --target-processes all --kernel-name "regex:$kernel" \
-      --launch-skip "$FULL_NCU_LAUNCH_SKIP" --launch-count "$FULL_NCU_LAUNCH_COUNT" \
-      --replay-mode "$FULL_NCU_REPLAY_MODE" \
-      "$@" --import-source "$FULL_NCU_IMPORT_SOURCE" \
-      --export "$report_base" --force-overwrite --log-file "$log" \
-      "$MPIEXEC" "$MPIEXEC_NP_FLAG" 1 ./a.out)
-    status=$?
-    set -e
+    status=1
+    while IFS= read -r launch_mode; do
+      ncu_setup_launch "$launch_mode"
+      set +e
+      (cd "$SOLVER_ROOT/ST/build" && "${NCU:-ncu}" \
+        --target-processes "$NCU_TARGET_PROCESSES" --kernel-name "regex:$kernel" \
+        --launch-skip "$FULL_NCU_LAUNCH_SKIP" --launch-count "$FULL_NCU_LAUNCH_COUNT" \
+        --replay-mode "$FULL_NCU_REPLAY_MODE" \
+        "$@" --import-source "$FULL_NCU_IMPORT_SOURCE" \
+        --export "$report_base" --force-overwrite --log-file "$log" \
+        "${NCU_LAUNCH_CMD[@]}")
+      attempt_status=$?
+      set -e
+
+      if [ "$attempt_status" -eq 0 ]; then
+        status=0
+        break
+      fi
+
+      if [ "$NCU_LAUNCH_MODE" = auto ]; then
+        echo "[$(date +%H:%M:%S)] retry full ncu ${profile} ${table_id}/${case_id} with launch=${launch_mode} failed (status=${attempt_status})" | tee -a "$OUT/progress.log" >&2
+      fi
+      status="$attempt_status"
+    done < <(ncu_launch_attempts)
 
     if [ "$status" -eq 0 ]; then
       echo -e "${table_id}\t${case_id}\t${rep}\t${profile}\tOK\t${report_base}\t${log}" >> "$OUT/full_reports.tsv"

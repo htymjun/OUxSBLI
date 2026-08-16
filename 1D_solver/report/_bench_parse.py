@@ -15,6 +15,7 @@ spread on this case is ~1%, which is larger than several of the deltas earlier
 sweeps reported as signal.
 """
 import csv
+import math
 import statistics
 import sys
 
@@ -40,7 +41,9 @@ def col(prefix):
             vals = []
             for r in data:
                 try:
-                    vals.append(float(r[j].replace(",", "")))
+                    v = float(r[j].replace(",", ""))
+                    if math.isfinite(v):
+                        vals.append(v)
                 except (ValueError, IndexError):
                     pass
             if vals:

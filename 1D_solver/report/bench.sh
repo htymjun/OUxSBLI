@@ -33,6 +33,8 @@ MPIEXEC_NP_FLAG="${MPIEXEC_NP_FLAG:--n}"
 NCU="${NCU:-ncu}"
 NCU_LAUNCH_SKIP="${NCU_LAUNCH_SKIP:-20}"
 NCU_LAUNCH_COUNT="${NCU_LAUNCH_COUNT:-10}"
+NCU_LAUNCH_MODE="${NCU_LAUNCH_MODE:-auto}"
+NCU_RANKS="${NCU_RANKS:-1}"
 
 if [ "${1:-}" = "--header" ]; then
   echo "mode,order,visc_order,keep_prec,visc_prec,press_prec,slau_rho_prec,slau_u_prec,slau_p_prec,nx,time_us,time_min_us,spread_us,fp64_pipe_inst,fp64_pipe_pct,dram_pct,sm_pct,occupancy_pct,waves_sm,regs,shared_b"
@@ -125,6 +127,64 @@ RES=$(cuobjdump -res-usage build/a.out 2>/dev/null | grep -A1 -i "${K}_" | tr '\
 REG=$(echo "$RES" | grep -oP 'REG:\K[0-9]+'    | head -1)
 SHM=$(echo "$RES" | grep -oP 'SHARED:\K[0-9]+' | head -1)
 
+bench_launch_attempts() {
+  case "$NCU_LAUNCH_MODE" in
+    auto)
+      if [ "$NCU_RANKS" = 1 ]; then
+        printf '%s\n' direct mpi
+      else
+        printf '%s\n' mpi
+      fi
+      ;;
+    direct)
+      printf '%s\n' direct
+      ;;
+    mpi)
+      printf '%s\n' mpi
+      ;;
+    *)
+      echo "bad NCU_LAUNCH_MODE: $NCU_LAUNCH_MODE (use auto, direct, or mpi)" >&2
+      exit 2
+      ;;
+  esac
+}
+
+bench_setup_launch() {
+  local launch_mode="$1"
+  if [ "$launch_mode" = direct ]; then
+    BENCH_TARGET_PROCESSES=application-only
+    BENCH_LAUNCH_DESC=direct
+    BENCH_LAUNCH_CMD=(./a.out)
+    return 0
+  fi
+
+  BENCH_TARGET_PROCESSES=all
+  BENCH_LAUNCH_DESC="${MPIEXEC} ${MPIEXEC_NP_FLAG} ${NCU_RANKS} ./a.out"
+  BENCH_LAUNCH_CMD=("$MPIEXEC" "$MPIEXEC_NP_FLAG" "$NCU_RANKS" ./a.out)
+}
+
+bench_line_has_valid_time() {
+  local line="$1"
+  local c1 c2 c3 c4 c5 c6 c7 c8 c9 c10 time_us time_min_us spread_us rest
+
+  [ -n "$line" ] || return 1
+  case "$line" in
+    *NCU_FAIL*|*RUN_FAIL*|*BUILD_FAIL*)
+      return 1
+      ;;
+  esac
+
+  IFS=, read -r c1 c2 c3 c4 c5 c6 c7 c8 c9 c10 time_us time_min_us spread_us rest <<< "$line"
+  [ -n "${time_us:-}" ] || return 1
+  [ -n "${time_min_us:-}" ] || return 1
+  case "$time_us,$time_min_us,$spread_us" in
+    *nan*|*NaN*|*inf*|*Inf*)
+      return 1
+      ;;
+  esac
+  return 0
+}
+
 # --launch-skip 20 skips the first RK stages (warm-up); 10 profiled launches.
 CSVF=$(mktemp)
 RAWCSV="${NCU_RAW_CSV:-}"
@@ -136,7 +196,7 @@ else
   CLEAN_RAWCSV=0
 fi
 
-NCU_ARGS=(--target-processes all --kernel-name "regex:$K"
+NCU_ARGS=(--kernel-name "regex:$K"
       --launch-skip "$NCU_LAUNCH_SKIP" --launch-count "$NCU_LAUNCH_COUNT"
       --metrics gpu__time_duration.sum,launch__waves_per_multiprocessor,\
 sm__inst_executed_pipe_fp64.sum,\
@@ -150,11 +210,28 @@ if [ -n "${NCU_EXPORT:-}" ]; then
   NCU_ARGS+=(--export "$NCU_EXPORT" --force-overwrite)
 fi
 
-(cd build && "$NCU" "${NCU_ARGS[@]}" "$MPIEXEC" "$MPIEXEC_NP_FLAG" 1 ./a.out 2>/dev/null) > "$RAWCSV"
-# ncu writes its own ==PROF== chatter to stdout; strip it so the CSV parses.
-grep -v '^==' "$RAWCSV" > "$CSVF"
+LINE=""
+for LAUNCH_MODE in $(bench_launch_attempts); do
+  bench_setup_launch "$LAUNCH_MODE"
+  : > "$RAWCSV"
+  (cd build && "$NCU" \
+    --target-processes "$BENCH_TARGET_PROCESSES" \
+    "${NCU_ARGS[@]}" \
+    "${BENCH_LAUNCH_CMD[@]}") > "$RAWCSV" 2>&1 || true
 
-python3 "$R/report/_bench_parse.py" "$REPORT_MODE" "$O" "$VO" "$KP" "$VP" "$PP" "$SR" "$SU" "$SPREC" "$NX" "${REG:-}" "${SHM:-}" "$CSVF"
+  # ncu writes its own ==PROF== chatter to stdout; strip it so the CSV parses.
+  grep -v '^==' "$RAWCSV" > "$CSVF"
+  LINE="$(python3 "$R/report/_bench_parse.py" "$REPORT_MODE" "$O" "$VO" "$KP" "$VP" "$PP" "$SR" "$SU" "$SPREC" "$NX" "${REG:-}" "${SHM:-}" "$CSVF")"
+  if bench_line_has_valid_time "$LINE"; then
+    break
+  fi
+
+  if [ "$NCU_LAUNCH_MODE" = auto ]; then
+    echo "bench retry: launch_mode=$LAUNCH_MODE produced no finite kernel time for $REPORT_MODE/$O/$KP" >&2
+  fi
+done
+
+printf '%s\n' "$LINE"
 rm -f "$CSVF"
 if [ "$CLEAN_RAWCSV" -eq 1 ]; then
   rm -f "$RAWCSV"
