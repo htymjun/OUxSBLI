@@ -537,7 +537,35 @@ ncu_collect_full_report() {
 
 ncu_run_case() {
   local table_id="$1" case_id="$2" mode="$3" order="$4" visc_order="$5" keep_prec="$6" visc_prec="$7" press_prec="$8" sr="$9" su="${10}" sprec="${11}"
-  local rep raw stem line status timing_report raw_csv
+  local rep raw stem line status timing_report raw_csv bench_mode bench_scheme bench_tvd bench_recon bench_kernel
+
+  bench_mode="$mode"
+  bench_scheme=KEEP
+  bench_tvd=none
+  bench_recon=MUSCL
+  bench_kernel="$(ncu_kernel_for_mode "$mode")"
+  case "$mode" in
+    slau)
+      bench_mode=split
+      bench_scheme=SLAU
+      bench_tvd=tvd
+      bench_recon=MUSCL;;
+    slau_warp)
+      bench_mode=warp
+      bench_scheme=SLAU
+      bench_tvd=tvd
+      bench_recon=MUSCL;;
+    slau_weno)
+      bench_mode=split
+      bench_scheme=SLAU
+      bench_tvd=tvd
+      bench_recon=WENO;;
+    slau_weno_warp)
+      bench_mode=warp
+      bench_scheme=SLAU
+      bench_tvd=tvd
+      bench_recon=WENO;;
+  esac
 
   for rep in $(seq 1 "$REPEAT"); do
     stem="$(ncu_sanitize "${table_id}__${case_id}__r${rep}")"
@@ -568,8 +596,10 @@ ncu_run_case() {
     echo "[$(date +%H:%M:%S)] ${table_id}/${case_id} repeat ${rep}/${REPEAT}" | tee -a "$OUT/progress.log"
 
     set +e
-    line="$(NCU_EXPORT="$timing_report" NCU_RAW_CSV="$raw_csv" "$BENCH" \
-      "$mode" "$order" "$visc_order" "$keep_prec" "$visc_prec" "$NX" "$NT" \
+    line="$(BENCH_REPORT_MODE="$mode" BENCH_KERNEL="$bench_kernel" \
+      BENCH_SCHEME="$bench_scheme" BENCH_TVD="$bench_tvd" BENCH_RECON="$bench_recon" \
+      NCU_EXPORT="$timing_report" NCU_RAW_CSV="$raw_csv" "$BENCH" \
+      "$bench_mode" "$order" "$visc_order" "$keep_prec" "$visc_prec" "$NX" "$NT" \
       "$press_prec" "$sr" "$su" "$sprec" 2>&1 | tee "$raw" | tail -n 1)"
     status=$?
     set -e
