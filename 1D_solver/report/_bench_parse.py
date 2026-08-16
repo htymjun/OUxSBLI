@@ -18,7 +18,7 @@ import csv
 import statistics
 import sys
 
-MODE, O, VO, KP, VP, PP, NX, REG, SHM, PATH = sys.argv[1:11]
+MODE, O, VO, KP, VP, PP, SR, SU, SPREC, NX, REG, SHM, PATH = sys.argv[1:14]
 
 with open(PATH) as fh:
     rows = [r for r in csv.reader(fh) if r]
@@ -27,7 +27,7 @@ with open(PATH) as fh:
 hdr = next((i for i, r in enumerate(rows)
             if any(c.startswith("gpu__time_duration") for c in r)), None)
 if hdr is None or len(rows) < hdr + 3:
-    print(f"{MODE},{O},{VO},{KP},{VP},{PP},{NX},NCU_FAIL,,,,,,,,,{REG},{SHM}")
+    print(f"{MODE},{O},{VO},{KP},{VP},{PP},{SR},{SU},{SPREC},{NX},NCU_FAIL,,,,,,,,,{REG},{SHM}")
     sys.exit(0)
 
 names, units, data = rows[hdr], rows[hdr + 1], rows[hdr + 2:]
@@ -50,7 +50,7 @@ def col(prefix):
 
 t, tmin, tmax, unit = col("gpu__time_duration.sum")
 if t is None:
-    print(f"{MODE},{O},{VO},{KP},{VP},{PP},{NX},NCU_FAIL,,,,,,,,,{REG},{SHM}")
+    print(f"{MODE},{O},{VO},{KP},{VP},{PP},{SR},{SU},{SPREC},{NX},NCU_FAIL,,,,,,,,,{REG},{SHM}")
     sys.exit(0)
 
 scale = {"ns": 1e-3, "nsecond": 1e-3, "us": 1.0, "usecond": 1.0,
@@ -64,7 +64,7 @@ def num(prefix, fmt="{:.1f}"):
 
 
 print(",".join([
-    MODE, O, VO, KP, VP, PP, NX,
+    MODE, O, VO, KP, VP, PP, SR, SU, SPREC, NX,
     f"{t_us:.2f}", f"{tmin_us:.2f}", f"{spread:.2f}",
     num("sm__inst_executed_pipe_fp64.sum", "{:.0f}"),
     num("sm__pipe_fp64_cycles_active"),
