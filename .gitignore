@@ -15,6 +15,7 @@
 *.egg-info
 *.pyc
 .vscode
+1D_solver/report/*/*
 2D_solver/*/build*
 2D_solver/*/data*
 3D_solver/*/build*
