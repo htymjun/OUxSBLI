@@ -1789,9 +1789,13 @@ contains
   !                  NO barrier -- each role owns complete reconstructions and
   !                  stores its own columns of `out` directly.
   !   w64_only_*     ablation: the weights64 stream alone, no polynomials.
-  !                  t(weight_poly32_seqX) - t(w64_only_seqX) isolates whether
-  !                  the FP32 polynomial half of weight_poly32_seq is really
-  !                  hidden under the FP64 stream (ILP co-issue) or serialized.
+  !   poly32_only_*  ablation: the candidate polynomials alone, no weights.
+  !                  Together these let us separate
+  !                  (a) "the polynomial half is intrinsically small" from
+  !                  (b) "the polynomial half is hidden under the FP64 stream".
+  !                  If t(weight_poly32_seqX) - t(w64_only_seqX) << t(poly32_only_seqX),
+  !                  the FP32 half is not merely light -- it is being hidden by
+  !                  single-thread instruction-level overlap.
   !
   ! The serial/warp pair here fixes two known unfairnesses of the older pair:
   ! only the real(4) weights cross shared memory (9216/12288/15360 B at
@@ -2344,6 +2348,83 @@ contains
     out(i,3) = q(3); out(i,4) = q(4)
     out(i,5) = q(5); out(i,6) = q(6)
   end subroutine weno_w64_only_seq9
+
+  ! ---------------- family F: poly32_only_seq{,7,9} ----------------
+  ! Candidate polynomials ALONE (no weights): the partner ablation to
+  ! w64_only_seqX. The output is a fixed linear combination of the polynomial
+  ! candidates so checksums are NOT comparable with the mixed/full families.
+
+  attributes(global) subroutine weno_poly32_only_seq(n, nrepeat, x, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: i, k, f
+    real(8) :: q(6), acc
+    real(4) :: p0, p1, p2
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n-5) return
+    acc = 0.d0
+    do k = 1, nrepeat
+      do f = 1, 3
+        call poly5_32_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), p0, p1, p2)
+        q(2*f-1) = real(p0,8) + 2.d0*real(p1,8) + 3.d0*real(p2,8)
+        call poly5_32_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), p0, p1, p2)
+        q(2*f) = real(p0,8) + 2.d0*real(p1,8) + 3.d0*real(p2,8)
+      enddo
+      acc = acc + q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+    enddo
+    out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+    out(i,3) = q(3); out(i,4) = q(4)
+    out(i,5) = q(5); out(i,6) = q(6)
+  end subroutine weno_poly32_only_seq
+
+  attributes(global) subroutine weno_poly32_only_seq7(n, nrepeat, x, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: i, k, f
+    real(8) :: q(6), acc
+    real(4) :: p0, p1, p2, p3
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n-7) return
+    acc = 0.d0
+    do k = 1, nrepeat
+      do f = 1, 3
+        call poly7_32_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), p0, p1, p2, p3)
+        q(2*f-1) = real(p0,8) + 2.d0*real(p1,8) + 3.d0*real(p2,8) + 4.d0*real(p3,8)
+        call poly7_32_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), p0, p1, p2, p3)
+        q(2*f) = real(p0,8) + 2.d0*real(p1,8) + 3.d0*real(p2,8) + 4.d0*real(p3,8)
+      enddo
+      acc = acc + q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+    enddo
+    out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+    out(i,3) = q(3); out(i,4) = q(4)
+    out(i,5) = q(5); out(i,6) = q(6)
+  end subroutine weno_poly32_only_seq7
+
+  attributes(global) subroutine weno_poly32_only_seq9(n, nrepeat, x, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: i, k, f
+    real(8) :: q(6), acc
+    real(4) :: p0, p1, p2, p3, p4
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n-9) return
+    acc = 0.d0
+    do k = 1, nrepeat
+      do f = 1, 3
+        call poly9_32_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), p0, p1, p2, p3, p4)
+        q(2*f-1) = real(p0,8) + 2.d0*real(p1,8) + 3.d0*real(p2,8) + 4.d0*real(p3,8) + 5.d0*real(p4,8)
+        call poly9_32_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), p0, p1, p2, p3, p4)
+        q(2*f) = real(p0,8) + 2.d0*real(p1,8) + 3.d0*real(p2,8) + 4.d0*real(p3,8) + 5.d0*real(p4,8)
+      enddo
+      acc = acc + q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+    enddo
+    out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+    out(i,3) = q(3); out(i,4) = q(4)
+    out(i,5) = q(5); out(i,6) = q(6)
+  end subroutine weno_poly32_only_seq9
 end module weno_micro_kernels
 
 program weno_micro
@@ -2570,10 +2651,16 @@ contains
       call weno_w32mix_poly64_seq9<<<g128,b128>>>(n, nrepeat, 2, x, out)
     case ('w64_only_seq')
       call weno_w64_only_seq<<<g128,b128>>>(n, nrepeat, x, out)
+    case ('poly32_only_seq')
+      call weno_poly32_only_seq<<<g128,b128>>>(n, nrepeat, x, out)
     case ('w64_only_seq7')
       call weno_w64_only_seq7<<<g128,b128>>>(n, nrepeat, x, out)
+    case ('poly32_only_seq7')
+      call weno_poly32_only_seq7<<<g128,b128>>>(n, nrepeat, x, out)
     case ('w64_only_seq9')
       call weno_w64_only_seq9<<<g128,b128>>>(n, nrepeat, x, out)
+    case ('poly32_only_seq9')
+      call weno_poly32_only_seq9<<<g128,b128>>>(n, nrepeat, x, out)
     case ('var3_fp64_seq9')
       call weno_varsplit_seq9<<<g128,b128>>>(n, nrepeat, 3, 3, x, out)
     case ('var3_fp32_seq9')

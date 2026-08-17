@@ -7,10 +7,9 @@
 # repeatedly on this hardware while the unprofiled binary ran fine
 # (report/rtx4060_weno_division_reduction.md). The per-row nsys capture this
 # script once carried (--nsys/--trace) was removed 2026-08-17; run a profiler
-# by hand on a single mode if a timeline is ever needed. By default this
-# script also runs the solver-level WENO_ORDER={5,7,9} sweep in a sibling
-# output directory, so one command gives both the isolated microbenchmark and
-# the solver data.
+# by hand on a single mode if a timeline is ever needed. The optional
+# solver-level WENO_ORDER={5,7,9} sweep still exists, but is now opt-in
+# because it goes through the older report/run_weno_nsys.sh profiling path.
 #
 # Two harness rules are enforced here rather than left to the caller:
 #
@@ -36,7 +35,7 @@ REPEAT=3
 OUT=""
 RESUME=0
 KEEP_GOING=0
-RUN_SOLVER_WENO_ORDERS=1
+RUN_SOLVER_WENO_ORDERS=0
 SOLVER_WENO_NT="${SOLVER_WENO_NT:-20}"
 SOLVER_WENO_REPEAT="${SOLVER_WENO_REPEAT:-}"
 
@@ -82,17 +81,21 @@ MODES=(
   # w32_poly64_* is the REVERSE algebraic split (FP32 weights + FP64
   # polynomials/combine), w32mix*_ tunes how many weight calls stay FP64,
   # var{3,4,5}_* splits by physical variable at nv=3/4/5 with k vars FP64,
-  # and w64_only_* is the weights-only ablation that isolates whether the
-  # FP32 half of weight_poly32_seq* rides free (ILP co-issue).
+  # and w64_only_*/poly32_only_* are the paired ablations that isolate whether
+  # the FP32 half of weight_poly32_seq* is intrinsically small or is hidden by
+  # single-thread instruction-level overlap.
   w64_only_seq
+  poly32_only_seq
   w32_poly64_seq
   w32_poly64_serial
   w32_poly64_warp
   w64_only_seq7
+  poly32_only_seq7
   w32_poly64_seq7
   w32_poly64_serial7
   w32_poly64_warp7
   w64_only_seq9
+  poly32_only_seq9
   w32_poly64_seq9
   w32_poly64_serial9
   w32_poly64_warp9
@@ -129,7 +132,8 @@ Options:
   --nlaunch N           timed launches per run, min is reported, default 10
   --repeat N            interleaved rounds, default 3
   --modes "A B ..."     override the mode list
-  --no-solver-orders    do not run the solver-level WENO_ORDER=5/7/9 sweep
+  --solver-orders       also run the solver-level WENO_ORDER=5/7/9 sweep
+  --no-solver-orders    compatibility alias; solver sweep is off by default
   --solver-nt N         time steps for the solver-level sweep, default 20
   --resume              skip completed rows in an existing --out
   --keep-going          continue after a failed mode
@@ -137,7 +141,7 @@ Options:
 Outputs:
   summary.csv                  WENO5-Z isolated microbenchmark
   solver_weno_orders/summary.csv
-                               SLAU+WENO5/7/9 solver-level sweep, produced by
+                               only when --solver-orders is given; produced by
                                1D_solver/report/run_weno_nsys.sh
 
 Modes:
@@ -176,6 +180,12 @@ Modes:
                    t(weight_poly32_seqX) - t(w64_only_seqX) isolates whether
                    the FP32 half of weight_poly32_seqX is hidden (ILP
                    co-issue) or serialized.
+  poly32_only_*    partner ablation to w64_only_*: candidate polynomials only,
+                   no weights. Compare poly32_only_* against
+                   weight_poly32_seqX - w64_only_seqX to separate "the
+                   polynomial half is intrinsically small" from "it is hidden
+                   under the FP64 stream by single-thread instruction-level
+                   overlap".
 
   The binary also accepts var_rho64_warp, var_u64_warp and var_p64_warp; they
   are left out of the default list because var_fp64_warp and var_fp32_warp
@@ -205,6 +215,7 @@ while [ $# -gt 0 ]; do
       echo "       nsys has hung on this hardware. Profile a single mode by" >&2
       echo "       hand if a timeline is ever needed." >&2
       exit 2;;
+    --solver-orders) RUN_SOLVER_WENO_ORDERS=1; shift;;
     --no-solver-orders) RUN_SOLVER_WENO_ORDERS=0; shift;;
     --solver-nt) SOLVER_WENO_NT="${2:?missing --solver-nt value}"; shift 2;;
     --resume) RESUME=1; shift;;
