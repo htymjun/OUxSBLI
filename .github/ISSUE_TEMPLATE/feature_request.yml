@@ -1,0 +1,57 @@
+name: ✨ Feature Request
+description: Suggest a new feature or improvement for OUxSBLI.
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please describe the proposed functionality and why it is useful.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Proposed feature
+      description: What should OUxSBLI be able to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Explain the scientific, numerical, or practical motivation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: example
+    attributes:
+      label: Example
+      description: Show how the proposed feature could be used.
+
+  - type: checkboxes
+    id: benefit
+    attributes:
+      label: Expected benefit
+      options:
+        - label: Accuracy
+        - label: Stability
+        - label: Performance
+        - label: Usability
+        - label: New physical model
+        - label: New numerical method
+        - label: Other
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Possible implementation
+      description: If you have an implementation idea, describe it here.
+
+  - type: textarea
+    id: references
+    attributes:
+      label: Additional information
+      description: Add references, related issues, papers, benchmarks, or other relevant information.

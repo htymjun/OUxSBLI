@@ -1,0 +1,70 @@
+name: 🧪 Validation Issue
+description: Report a numerical validation problem or propose a new validation case.
+title: "[Validation] "
+labels:
+  - validation
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for comparisons with analytical solutions, experiments,
+        benchmark cases, or published numerical results.
+
+  - type: dropdown
+    id: solver
+    attributes:
+      label: Solver
+      options:
+        - 2D solver
+        - 3D solver
+        - Curvilinear solver
+        - Python / post-processing
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: case
+    attributes:
+      label: Validation case
+      description: Describe the physical and numerical setup.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reference
+    attributes:
+      label: Reference
+      description: Give the analytical solution, experiment, paper, or reference dataset.
+    validations:
+      required: true
+
+  - type: textarea
+    id: setup
+    attributes:
+      label: Numerical setup
+      description: Include grid, boundary conditions, Mach/Reynolds number, scheme, etc.
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+      description: Provide reference values, curves, or qualitative behavior.
+
+  - type: textarea
+    id: obtained
+    attributes:
+      label: Obtained result
+      description: Provide computed values, plots, or observations.
+
+  - type: textarea
+    id: discrepancy
+    attributes:
+      label: Discrepancy
+      description: Quantify or describe the difference.
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the case path, commit, configuration, and commands needed to reproduce the result.
