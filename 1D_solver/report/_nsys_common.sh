@@ -137,6 +137,7 @@ nsys_write_env() {
     echo "gpu_cc=$GPU_CC"
     echo "nx=$NX"
     echo "nt=$NT"
+    echo "bench_weno_order=${BENCH_WENO_ORDER:-5}"
     echo "repeat=$REPEAT"
     echo "resume=$RESUME"
     echo "nsys_trace=$NSYS_TRACE"

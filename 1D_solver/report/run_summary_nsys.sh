@@ -10,15 +10,17 @@ PASS_ARGS=()
 usage() {
   cat <<'EOF'
 Usage:
-  bash report/run_summary_nsys.sh [--suite keep|slau|all] --out DIR [common options]
+  bash report/run_summary_nsys.sh [--suite keep|slau|weno|all] --out DIR [common options]
 
 Focused scripts:
   keep: report/run_keep_nsys.sh
   slau: report/run_slau_nsys.sh
+  weno: report/run_weno_nsys.sh
 
 When --suite all is used, --out DIR becomes:
   DIR/keep
   DIR/slau
+  DIR/weno
 
 Use --resume with the same --out directory to continue an interrupted run.
 All unknown options are passed through to the selected focused script(s).
@@ -43,10 +45,10 @@ while [ $# -gt 0 ]; do
 done
 
 case "$SUITE" in
-  keep|slau|all)
+  keep|slau|weno|all)
     ;;
   *)
-    echo "bad --suite: $SUITE (use keep, slau, or all)" >&2
+    echo "bad --suite: $SUITE (use keep, slau, weno, or all)" >&2
     exit 2;;
 esac
 
@@ -63,12 +65,19 @@ run_slau() {
   bash "$SCRIPT_DIR/run_slau_nsys.sh" --out "$1" "${PASS_ARGS[@]}"
 }
 
+run_weno() {
+  bash "$SCRIPT_DIR/run_weno_nsys.sh" --out "$1" "${PASS_ARGS[@]}"
+}
+
 case "$SUITE" in
   keep)
     run_keep "$OUT";;
   slau)
     run_slau "$OUT";;
+  weno)
+    run_weno "$OUT";;
   all)
     run_keep "$OUT/keep"
-    run_slau "$OUT/slau";;
+    run_slau "$OUT/slau"
+    run_weno "$OUT/weno";;
 esac

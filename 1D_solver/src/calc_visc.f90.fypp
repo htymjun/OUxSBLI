@@ -5,7 +5,7 @@
 #:if not defined('VISC_PREC')
   #:set VISC_PREC = 'fp32'
 #:endif
-#:set NG  = max(ORDER, VISC_ORDER) // 2
+#:set NG  = max(ORDER, VISC_ORDER, RECON_SPAN) // 2
 #:set IOV = VISC_ORDER // 2 - 1
 #:set IK  = {2: 2, 4: 4, 6: 8}[VISC_ORDER]
 !> Viscous flux kernel, split path: a separate launch that subtracts the viscous

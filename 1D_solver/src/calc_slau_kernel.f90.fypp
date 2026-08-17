@@ -15,8 +15,17 @@
   $:error("SLAU_RECON must be 'MUSCL' or 'WENO' (got '" + str(SLAU_RECON) + "')")
 #:endif
 #:if SLAU_RECON == 'WENO' and ORDER != 6
-  $:error("SLAU_RECON='WENO' needs ORDER=6 -- src/calc_weno.f90 only implements the 5-point/6-window WENO5-Z stencil (no WENO3 for ORDER=4, and ORDER=2 has no reconstruction at all)")
+  $:error("SLAU_RECON='WENO' needs ORDER=6 -- ORDER still selects the KEEP stencil, and there is no WENO counterpart for ORDER=4 (no WENO3) or ORDER=2 (no reconstruction at all). Use WENO_ORDER to widen the WENO stencil instead.")
 #:endif
+#:if not defined('WENO_ORDER')
+  #:set WENO_ORDER = 5
+#:endif
+#:if SLAU_RECON == 'WENO' and WENO_ORDER not in (5, 7, 9)
+  $:error("WENO_ORDER must be 5 (WENO5-Z, delta6_weno) 7 (WENO7-Z, delta8_weno) or 9 (WENO9-Z, delta10_weno); got '" + str(WENO_ORDER) + "'.")
+#:endif
+#! delta6_weno for WENO_ORDER=5, delta8_weno for 7: the window is WENO_ORDER+1
+#! points wide, which is exactly the subroutine's name.
+#:set WENO_SUB = 'delta' + str(WENO_ORDER + 1) + '_weno'
 #:if not defined('SLAU_MUSCL_RHO_PREC')
   #:set SLAU_MUSCL_RHO_PREC = 'fp64'
 #:endif
@@ -36,8 +45,11 @@
 #:set P_DF   = SLAU_MUSCL_P_PREC == 'df'
 #:set ANY_DF = ORDER >= 4 and (RHO_DF or U_DF or P_DF)
 #:set ANY_FP64 = ORDER >= 4 and ((not RHO_DF) or (not U_DF) or (not P_DF))
-#:set NG = max(ORDER, VISC_ORDER) // 2
-#:set IO = ORDER // 2 - 1
+#:set NG = max(ORDER, VISC_ORDER, RECON_SPAN) // 2
+#! Shared-memory halo per side. The stencil slice is always a(idx-io:idx+io+1),
+#! a window of 2*io+2 points, so io follows whichever reconstruction is
+#! actually compiled: MUSCL reads ORDER points, WENO reads WENO_ORDER+1.
+#:set IO = ((WENO_ORDER - 1) // 2) if SLAU_RECON == 'WENO' else (ORDER // 2 - 1)
 !> SLAU convective flux kernels for the split baseline and the warp-level
 !> FP64/DF reconstruction experiment. ORDER>=4 reconstructs left/right face
 !> states with MUSCL (src/calc_muscl.f90.fypp's delta4/delta6, always
@@ -61,12 +73,13 @@ module calc_slau_kernel
   use calc_muscl, only : delta4, delta6
   #:endif
   #:if ORDER == 6 and SLAU_RECON == 'WENO'
-  use calc_weno, only : delta6_weno
+  use calc_weno, only : ${WENO_SUB}$
   #:endif
   implicit none
   private
   public calc_slau_x
   #:if ORDER >= 4
+  public calc_slau_smem_x
   public calc_slau_warp_x
   #:endif
   integer, parameter :: ng = ${NG}$          !< ghost-cell depth
@@ -176,17 +189,28 @@ contains
     ar = ff_to_r8(rf)
   end subroutine delta6_df
 
+  #:if SLAU_RECON != 'WENO' or WENO_ORDER == 5
+  !> Double-float twin of src/calc_weno.f90's weno5z_left. It tracks that
+  !> file's first division-removal rewrite -- the 1/6 folded into the final
+  !> normalisation -- but deliberately NOT the second (one reciprocal shared by
+  !> the three tau5/(b_i+eps) ratios). fltflt carries FP32 exponent range, and
+  !> on a constant plateau every b_i is 0 so every c_i is eps = 1e-20: the
+  !> product c0*c1*c2 = 1e-60 flushes to zero here, 1/D becomes Inf and the
+  !> ratios become 0*Inf = NaN. In FP64 that same product is ~250 decades above
+  !> min normal, which is why the batched inversion is safe there and not here.
+  !> So DF keeps 4 divisions per call where FP64 now has 2.
   attributes(device) function weno5z_left_df(v1, v2, v3, v4, v5) result(vf)
     real(8), intent(in) :: v1, v2, v3, v4, v5
     real(8) vf
     type(fltflt) x1, x2, x3, x4, x5
-    type(fltflt) p0, p1, p2, b0, b1, b2, a0, a1, a2, s, tau5
+    type(fltflt) q0, q1, q2, b0, b1, b2, a0, a1, a2, s, tau5
     type(fltflt) r0, r1, r2
-    type(fltflt) one, eps, ratio_cap, d0, d1, d2, c13_12, c0_25
+    type(fltflt) one, six, eps, ratio_cap, d0, d1, d2, c13_12, c0_25
 
     x1 = fltflt_init(v1); x2 = fltflt_init(v2); x3 = fltflt_init(v3)
     x4 = fltflt_init(v4); x5 = fltflt_init(v5)
     one = fltflt_init(1.d0)
+    six = fltflt_init(6.d0)
     eps = fltflt_init(1.d-20)
     ratio_cap = fltflt_init(1.d9)
     d0 = fltflt_init(1.d0 / 10.d0)
@@ -195,9 +219,10 @@ contains
     c13_12 = fltflt_init(13.d0 / 12.d0)
     c0_25 = fltflt_init(0.25d0)
 
-    p0 = ( 2.d0*x1 - 7.d0*x2 + 11.d0*x3) / 6.d0
-    p1 = (-1.d0*x2 + 5.d0*x3 +  2.d0*x4) / 6.d0
-    p2 = ( 2.d0*x3 + 5.d0*x4 -  1.d0*x5) / 6.d0
+    ! Candidate polynomials scaled by 6; undone in the final division.
+    q0 =  2.d0*x1 - 7.d0*x2 + 11.d0*x3
+    q1 = -1.d0*x2 + 5.d0*x3 +  2.d0*x4
+    q2 =  2.d0*x3 + 5.d0*x4 -  1.d0*x5
     b0 = c13_12 * ((x1 - 2.d0*x2 + x3) * (x1 - 2.d0*x2 + x3)) &
        + c0_25  * ((x1 - 4.d0*x2 + 3.d0*x3) * (x1 - 4.d0*x2 + 3.d0*x3))
     b1 = c13_12 * ((x2 - 2.d0*x3 + x4) * (x2 - 2.d0*x3 + x4)) &
@@ -211,32 +236,39 @@ contains
     a0 = d0 * (one + r0 * r0)
     a1 = d1 * (one + r1 * r1)
     a2 = d2 * (one + r2 * r2)
-    s  = a0 + a1 + a2
-    vf = ff_to_r8((a0*p0 + a1*p1 + a2*p2) / s)
+    s  = six * (a0 + a1 + a2)
+    vf = ff_to_r8((a0*q0 + a1*q1 + a2*q2) / s)
   end function weno5z_left_df
 
+  !> See weno5z_left_df for why only the 1/6 rewrite is carried over from
+  !> src/calc_weno.f90. The optimal weights d0/d2 are MIRRORED relative to the
+  !> left-biased routine (3/10 on the near-face candidate, 1/10 on the one that
+  !> reaches furthest) -- see the comment on weno5z_right in src/calc_weno.f90
+  !> for why, and for the third-order bug that came from copying them in the
+  !> left-biased order.
   attributes(device) function weno5z_right_df(v1, v2, v3, v4, v5) result(vf)
     real(8), intent(in) :: v1, v2, v3, v4, v5
     real(8) vf
     type(fltflt) x1, x2, x3, x4, x5
-    type(fltflt) p0, p1, p2, b0, b1, b2, a0, a1, a2, s, tau5
+    type(fltflt) q0, q1, q2, b0, b1, b2, a0, a1, a2, s, tau5
     type(fltflt) r0, r1, r2
-    type(fltflt) one, eps, ratio_cap, d0, d1, d2, c13_12, c0_25
+    type(fltflt) one, six, eps, ratio_cap, d0, d1, d2, c13_12, c0_25
 
     x1 = fltflt_init(v1); x2 = fltflt_init(v2); x3 = fltflt_init(v3)
     x4 = fltflt_init(v4); x5 = fltflt_init(v5)
     one = fltflt_init(1.d0)
+    six = fltflt_init(6.d0)
     eps = fltflt_init(1.d-20)
     ratio_cap = fltflt_init(1.d9)
-    d0 = fltflt_init(1.d0 / 10.d0)
+    d0 = fltflt_init(3.d0 / 10.d0)
     d1 = fltflt_init(6.d0 / 10.d0)
-    d2 = fltflt_init(3.d0 / 10.d0)
+    d2 = fltflt_init(1.d0 / 10.d0)
     c13_12 = fltflt_init(13.d0 / 12.d0)
     c0_25 = fltflt_init(0.25d0)
 
-    p0 = (-1.d0*x1 + 5.d0*x2 +  2.d0*x3) / 6.d0
-    p1 = ( 2.d0*x2 + 5.d0*x3 -  1.d0*x4) / 6.d0
-    p2 = (11.d0*x3 - 7.d0*x4 +  2.d0*x5) / 6.d0
+    q0 = -1.d0*x1 + 5.d0*x2 +  2.d0*x3
+    q1 =  2.d0*x2 + 5.d0*x3 -  1.d0*x4
+    q2 = 11.d0*x3 - 7.d0*x4 +  2.d0*x5
     b0 = c13_12 * ((x1 - 2.d0*x2 + x3) * (x1 - 2.d0*x2 + x3)) &
        + c0_25  * ((x1 - 4.d0*x2 + 3.d0*x3) * (x1 - 4.d0*x2 + 3.d0*x3))
     b1 = c13_12 * ((x2 - 2.d0*x3 + x4) * (x2 - 2.d0*x3 + x4)) &
@@ -250,8 +282,8 @@ contains
     a0 = d0 * (one + r0 * r0)
     a1 = d1 * (one + r1 * r1)
     a2 = d2 * (one + r2 * r2)
-    s  = a0 + a1 + a2
-    vf = ff_to_r8((a0*p0 + a1*p1 + a2*p2) / s)
+    s  = six * (a0 + a1 + a2)
+    vf = ff_to_r8((a0*q0 + a1*q1 + a2*q2) / s)
   end function weno5z_right_df
 
   attributes(device) subroutine delta6_weno_df(a, al, ar)
@@ -260,6 +292,296 @@ contains
     al = weno5z_left_df (a(1), a(2), a(3), a(4), a(5))
     ar = weno5z_right_df(a(2), a(3), a(4), a(5), a(6))
   end subroutine delta6_weno_df
+  #:endif
+  #:if SLAU_RECON == 'WENO' and WENO_ORDER == 7
+  !> GENERATED by report/check_weno_order.py --gen-df 4. Double-float twin of
+  !> src/calc_weno.f90's WENO7-Z. Like the WENO5-Z twin above it takes the
+  !> polynomial-scaling rewrite but NOT the batched ratio inversion: in fltflt's
+  !> FP32 exponent range c0*c1*c2*c3 = 1e-80 flushes to zero on a smooth
+  !> plateau, so 1/D is Inf and the ratios become 0*Inf = NaN. The smoothness
+  !> indicators are scaled by their common denominator so every coefficient is
+  !> an exact integer (all < 2^24, hence exact in FP32); a common factor on all
+  !> beta cancels in tau/(beta+eps).
+  attributes(device) function weno7z_left_df(v1, v2, v3, v4, v5, v6, v7) result(vf)
+    real(8), intent(in) :: v1, v2, v3, v4, v5, v6, v7
+    real(8) vf
+    type(fltflt) x1, x2, x3, x4, x5, x6, x7
+    type(fltflt) q0, q1, q2, q3, b0, b1, b2, b3, a0, a1, a2, a3, r0, r1, r2, r3, s, tau
+    type(fltflt) one, qscale, eps, ratio_cap, dd0, dd1, dd2, dd3
+
+    x1 = fltflt_init(v1)
+    x2 = fltflt_init(v2)
+    x3 = fltflt_init(v3)
+    x4 = fltflt_init(v4)
+    x5 = fltflt_init(v5)
+    x6 = fltflt_init(v6)
+    x7 = fltflt_init(v7)
+    one = fltflt_init(1.d0)
+    qscale = fltflt_init(12.d0)
+    eps = fltflt_init(1.d-20)
+    ratio_cap = fltflt_init(1.d9)
+    dd0 = fltflt_init(1.d0 / 35.d0)
+    dd1 = fltflt_init(12.d0 / 35.d0)
+    dd2 = fltflt_init(18.d0 / 35.d0)
+    dd3 = fltflt_init(4.d0 / 35.d0)
+
+    q0 = - 3.d0*x1 + 13.d0*x2 - 23.d0*x3 + 25.d0*x4
+    q1 = 1.d0*x2 - 5.d0*x3 + 13.d0*x4 + 3.d0*x5
+    q2 = - 1.d0*x3 + 7.d0*x4 + 7.d0*x5 - 1.d0*x6
+    q3 = 3.d0*x4 + 13.d0*x5 - 5.d0*x6 + 1.d0*x7
+    b0 = x1*(547.d0*x1 - 3882.d0*x2 + 4642.d0*x3 - 1854.d0*x4) &
+         + x2*(7043.d0*x2 - 17246.d0*x3 + 7042.d0*x4) &
+         + x3*(11003.d0*x3 - 9402.d0*x4) &
+         + x4*(2107.d0*x4)
+    b1 = x2*(267.d0*x2 - 1642.d0*x3 + 1602.d0*x4 - 494.d0*x5) &
+         + x3*(2843.d0*x3 - 5966.d0*x4 + 1922.d0*x5) &
+         + x4*(3443.d0*x4 - 2522.d0*x5) &
+         + x5*(547.d0*x5)
+    b2 = x3*(547.d0*x3 - 2522.d0*x4 + 1922.d0*x5 - 494.d0*x6) &
+         + x4*(3443.d0*x4 - 5966.d0*x5 + 1602.d0*x6) &
+         + x5*(2843.d0*x5 - 1642.d0*x6) &
+         + x6*(267.d0*x6)
+    b3 = x4*(2107.d0*x4 - 9402.d0*x5 + 7042.d0*x6 - 1854.d0*x7) &
+         + x5*(11003.d0*x5 - 17246.d0*x6 + 4642.d0*x7) &
+         + x6*(7043.d0*x6 - 3882.d0*x7) &
+         + x7*(547.d0*x7)
+    tau = fltflt_abs(1.d0*b0 + 3.d0*b1 - 3.d0*b2 - 1.d0*b3)
+    r0 = fltflt_min(tau / (b0 + eps), ratio_cap)
+    r1 = fltflt_min(tau / (b1 + eps), ratio_cap)
+    r2 = fltflt_min(tau / (b2 + eps), ratio_cap)
+    r3 = fltflt_min(tau / (b3 + eps), ratio_cap)
+    a0 = dd0 * (one + r0 * r0)
+    a1 = dd1 * (one + r1 * r1)
+    a2 = dd2 * (one + r2 * r2)
+    a3 = dd3 * (one + r3 * r3)
+    s  = qscale * (a0 + a1 + a2 + a3)
+    vf = ff_to_r8((a0*q0 + a1*q1 + a2*q2 + a3*q3) / s)
+  end function weno7z_left_df
+
+  attributes(device) function weno7z_right_df(v1, v2, v3, v4, v5, v6, v7) result(vf)
+    real(8), intent(in) :: v1, v2, v3, v4, v5, v6, v7
+    real(8) vf
+    type(fltflt) x1, x2, x3, x4, x5, x6, x7
+    type(fltflt) q0, q1, q2, q3, b0, b1, b2, b3, a0, a1, a2, a3, r0, r1, r2, r3, s, tau
+    type(fltflt) one, qscale, eps, ratio_cap, dd0, dd1, dd2, dd3
+
+    x1 = fltflt_init(v1)
+    x2 = fltflt_init(v2)
+    x3 = fltflt_init(v3)
+    x4 = fltflt_init(v4)
+    x5 = fltflt_init(v5)
+    x6 = fltflt_init(v6)
+    x7 = fltflt_init(v7)
+    one = fltflt_init(1.d0)
+    qscale = fltflt_init(12.d0)
+    eps = fltflt_init(1.d-20)
+    ratio_cap = fltflt_init(1.d9)
+    dd0 = fltflt_init(4.d0 / 35.d0)
+    dd1 = fltflt_init(18.d0 / 35.d0)
+    dd2 = fltflt_init(12.d0 / 35.d0)
+    dd3 = fltflt_init(1.d0 / 35.d0)
+
+    q3 = - 3.d0*x7 + 13.d0*x6 - 23.d0*x5 + 25.d0*x4
+    q2 = 1.d0*x6 - 5.d0*x5 + 13.d0*x4 + 3.d0*x3
+    q1 = - 1.d0*x5 + 7.d0*x4 + 7.d0*x3 - 1.d0*x2
+    q0 = 3.d0*x4 + 13.d0*x3 - 5.d0*x2 + 1.d0*x1
+    b3 = x7*(547.d0*x7 - 3882.d0*x6 + 4642.d0*x5 - 1854.d0*x4) &
+         + x6*(7043.d0*x6 - 17246.d0*x5 + 7042.d0*x4) &
+         + x5*(11003.d0*x5 - 9402.d0*x4) &
+         + x4*(2107.d0*x4)
+    b2 = x6*(267.d0*x6 - 1642.d0*x5 + 1602.d0*x4 - 494.d0*x3) &
+         + x5*(2843.d0*x5 - 5966.d0*x4 + 1922.d0*x3) &
+         + x4*(3443.d0*x4 - 2522.d0*x3) &
+         + x3*(547.d0*x3)
+    b1 = x5*(547.d0*x5 - 2522.d0*x4 + 1922.d0*x3 - 494.d0*x2) &
+         + x4*(3443.d0*x4 - 5966.d0*x3 + 1602.d0*x2) &
+         + x3*(2843.d0*x3 - 1642.d0*x2) &
+         + x2*(267.d0*x2)
+    b0 = x4*(2107.d0*x4 - 9402.d0*x3 + 7042.d0*x2 - 1854.d0*x1) &
+         + x3*(11003.d0*x3 - 17246.d0*x2 + 4642.d0*x1) &
+         + x2*(7043.d0*x2 - 3882.d0*x1) &
+         + x1*(547.d0*x1)
+    tau = fltflt_abs(- 1.d0*b0 - 3.d0*b1 + 3.d0*b2 + 1.d0*b3)
+    r0 = fltflt_min(tau / (b0 + eps), ratio_cap)
+    r1 = fltflt_min(tau / (b1 + eps), ratio_cap)
+    r2 = fltflt_min(tau / (b2 + eps), ratio_cap)
+    r3 = fltflt_min(tau / (b3 + eps), ratio_cap)
+    a0 = dd0 * (one + r0 * r0)
+    a1 = dd1 * (one + r1 * r1)
+    a2 = dd2 * (one + r2 * r2)
+    a3 = dd3 * (one + r3 * r3)
+    s  = qscale * (a0 + a1 + a2 + a3)
+    vf = ff_to_r8((a0*q0 + a1*q1 + a2*q2 + a3*q3) / s)
+  end function weno7z_right_df
+
+  attributes(device) subroutine delta8_weno_df(a, al, ar)
+    real(8), intent(in), dimension(8) :: a
+    real(8), intent(out)              :: al, ar
+    al = weno7z_left_df (a(1), a(2), a(3), a(4), a(5), a(6), a(7))
+    ar = weno7z_right_df(a(2), a(3), a(4), a(5), a(6), a(7), a(8))
+  end subroutine delta8_weno_df
+  #:endif
+  #:if SLAU_RECON == 'WENO' and WENO_ORDER == 9
+  !> GENERATED by report/check_weno_order.py --gen-df 5. Double-float twin of
+  !> src/calc_weno.f90's WENO9-Z. As for WENO5/7 DF, the ratio divisions are
+  !> deliberately NOT batched: in fltflt's FP32 exponent range the plateau
+  !> product of five eps terms would underflow to zero and produce NaNs.
+  attributes(device) function weno9z_left_df(v1, v2, v3, v4, v5, v6, v7, v8, v9) result(vf)
+    real(8), intent(in) :: v1, v2, v3, v4, v5, v6, v7, v8, v9
+    real(8) vf
+    type(fltflt) x1, x2, x3, x4, x5, x6, x7, x8, x9
+    type(fltflt) q0, q1, q2, q3, q4
+    type(fltflt) b0, b1, b2, b3, b4
+    type(fltflt) a0, a1, a2, a3, a4
+    type(fltflt) r0, r1, r2, r3, r4, s, tau
+    type(fltflt) one, qscale, eps, ratio_cap, dd0, dd1, dd2, dd3, dd4
+
+    x1 = fltflt_init(v1)
+    x2 = fltflt_init(v2)
+    x3 = fltflt_init(v3)
+    x4 = fltflt_init(v4)
+    x5 = fltflt_init(v5)
+    x6 = fltflt_init(v6)
+    x7 = fltflt_init(v7)
+    x8 = fltflt_init(v8)
+    x9 = fltflt_init(v9)
+    one = fltflt_init(1.d0)
+    qscale = fltflt_init(60.d0)
+    eps = fltflt_init(1.d-20)
+    ratio_cap = fltflt_init(1.d9)
+    dd0 = fltflt_init(1.d0 / 126.d0)
+    dd1 = fltflt_init(10.d0 / 63.d0)
+    dd2 = fltflt_init(10.d0 / 21.d0)
+    dd3 = fltflt_init(20.d0 / 63.d0)
+    dd4 = fltflt_init(5.d0 / 126.d0)
+
+    q0 = 12.d0*x1 - 63.d0*x2 + 137.d0*x3 - 163.d0*x4 + 137.d0*x5
+    q1 = - 3.d0*x2 + 17.d0*x3 - 43.d0*x4 + 77.d0*x5 + 12.d0*x6
+    q2 = 2.d0*x3 - 13.d0*x4 + 47.d0*x5 + 27.d0*x6 - 3.d0*x7
+    q3 = - 3.d0*x4 + 27.d0*x5 + 47.d0*x6 - 13.d0*x7 + 2.d0*x8
+    q4 = 12.d0*x5 + 77.d0*x6 - 43.d0*x7 + 17.d0*x8 - 3.d0*x9
+    b0 = x1*(45316.d0*x1 - 417002.d0*x2 + 729726.d0*x3 - 576014.d0*x4 + 172658.d0*x5) &
+         + x2*(965926.d0*x2 - 3408792.d0*x3 + 2716916.d0*x4 - 822974.d0*x5) &
+         + x3*(3042786.d0*x3 - 4924152.d0*x4 + 1517646.d0*x5) &
+         + x4*(2041126.d0*x4 - 1299002.d0*x5) &
+         + x5*(215836.d0*x5)
+    b1 = x2*(13816.d0*x2 - 121742.d0*x3 + 198426.d0*x4 - 140474.d0*x5 + 36158.d0*x6) &
+         + x3*(277126.d0*x3 - 929952.d0*x4 + 674036.d0*x5 - 176594.d0*x6) &
+         + x4*(812586.d0*x4 - 1223952.d0*x5 + 330306.d0*x6) &
+         + x5*(485446.d0*x5 - 280502.d0*x6) &
+         + x6*(45316.d0*x6)
+    b2 = x3*(13816.d0*x3 - 102002.d0*x4 + 135846.d0*x5 - 77894.d0*x6 + 16418.d0*x7) &
+         + x4*(209926.d0*x4 - 598152.d0*x5 + 358196.d0*x6 - 77894.d0*x7) &
+         + x5*(462306.d0*x5 - 598152.d0*x6 + 135846.d0*x7) &
+         + x6*(209926.d0*x6 - 102002.d0*x7) &
+         + x7*(13816.d0*x7)
+    b3 = x4*(45316.d0*x4 - 280502.d0*x5 + 330306.d0*x6 - 176594.d0*x7 + 36158.d0*x8) &
+         + x5*(485446.d0*x5 - 1223952.d0*x6 + 674036.d0*x7 - 140474.d0*x8) &
+         + x6*(812586.d0*x6 - 929952.d0*x7 + 198426.d0*x8) &
+         + x7*(277126.d0*x7 - 121742.d0*x8) &
+         + x8*(13816.d0*x8)
+    b4 = x5*(215836.d0*x5 - 1299002.d0*x6 + 1517646.d0*x7 - 822974.d0*x8 + 172658.d0*x9) &
+         + x6*(2041126.d0*x6 - 4924152.d0*x7 + 2716916.d0*x8 - 576014.d0*x9) &
+         + x7*(3042786.d0*x7 - 3408792.d0*x8 + 729726.d0*x9) &
+         + x8*(965926.d0*x8 - 417002.d0*x9) &
+         + x9*(45316.d0*x9)
+    tau = fltflt_abs(1.d0*b0 + 2.d0*b1 - 6.d0*b2 + 2.d0*b3 + 1.d0*b4)
+    r0 = fltflt_min(tau / (b0 + eps), ratio_cap)
+    r1 = fltflt_min(tau / (b1 + eps), ratio_cap)
+    r2 = fltflt_min(tau / (b2 + eps), ratio_cap)
+    r3 = fltflt_min(tau / (b3 + eps), ratio_cap)
+    r4 = fltflt_min(tau / (b4 + eps), ratio_cap)
+    a0 = dd0 * (one + r0 * r0)
+    a1 = dd1 * (one + r1 * r1)
+    a2 = dd2 * (one + r2 * r2)
+    a3 = dd3 * (one + r3 * r3)
+    a4 = dd4 * (one + r4 * r4)
+    s  = qscale * (a0 + a1 + a2 + a3 + a4)
+    vf = ff_to_r8((a0*q0 + a1*q1 + a2*q2 + a3*q3 + a4*q4) / s)
+  end function weno9z_left_df
+
+  attributes(device) function weno9z_right_df(v1, v2, v3, v4, v5, v6, v7, v8, v9) result(vf)
+    real(8), intent(in) :: v1, v2, v3, v4, v5, v6, v7, v8, v9
+    real(8) vf
+    type(fltflt) x1, x2, x3, x4, x5, x6, x7, x8, x9
+    type(fltflt) q0, q1, q2, q3, q4
+    type(fltflt) b0, b1, b2, b3, b4
+    type(fltflt) a0, a1, a2, a3, a4
+    type(fltflt) r0, r1, r2, r3, r4, s, tau
+    type(fltflt) one, qscale, eps, ratio_cap, dd0, dd1, dd2, dd3, dd4
+
+    x1 = fltflt_init(v1)
+    x2 = fltflt_init(v2)
+    x3 = fltflt_init(v3)
+    x4 = fltflt_init(v4)
+    x5 = fltflt_init(v5)
+    x6 = fltflt_init(v6)
+    x7 = fltflt_init(v7)
+    x8 = fltflt_init(v8)
+    x9 = fltflt_init(v9)
+    one = fltflt_init(1.d0)
+    qscale = fltflt_init(60.d0)
+    eps = fltflt_init(1.d-20)
+    ratio_cap = fltflt_init(1.d9)
+    dd0 = fltflt_init(5.d0 / 126.d0)
+    dd1 = fltflt_init(20.d0 / 63.d0)
+    dd2 = fltflt_init(10.d0 / 21.d0)
+    dd3 = fltflt_init(10.d0 / 63.d0)
+    dd4 = fltflt_init(1.d0 / 126.d0)
+
+    q4 = 12.d0*x9 - 63.d0*x8 + 137.d0*x7 - 163.d0*x6 + 137.d0*x5
+    q3 = - 3.d0*x8 + 17.d0*x7 - 43.d0*x6 + 77.d0*x5 + 12.d0*x4
+    q2 = 2.d0*x7 - 13.d0*x6 + 47.d0*x5 + 27.d0*x4 - 3.d0*x3
+    q1 = - 3.d0*x6 + 27.d0*x5 + 47.d0*x4 - 13.d0*x3 + 2.d0*x2
+    q0 = 12.d0*x5 + 77.d0*x4 - 43.d0*x3 + 17.d0*x2 - 3.d0*x1
+    b4 = x9*(45316.d0*x9 - 417002.d0*x8 + 729726.d0*x7 - 576014.d0*x6 + 172658.d0*x5) &
+         + x8*(965926.d0*x8 - 3408792.d0*x7 + 2716916.d0*x6 - 822974.d0*x5) &
+         + x7*(3042786.d0*x7 - 4924152.d0*x6 + 1517646.d0*x5) &
+         + x6*(2041126.d0*x6 - 1299002.d0*x5) &
+         + x5*(215836.d0*x5)
+    b3 = x8*(13816.d0*x8 - 121742.d0*x7 + 198426.d0*x6 - 140474.d0*x5 + 36158.d0*x4) &
+         + x7*(277126.d0*x7 - 929952.d0*x6 + 674036.d0*x5 - 176594.d0*x4) &
+         + x6*(812586.d0*x6 - 1223952.d0*x5 + 330306.d0*x4) &
+         + x5*(485446.d0*x5 - 280502.d0*x4) &
+         + x4*(45316.d0*x4)
+    b2 = x7*(13816.d0*x7 - 102002.d0*x6 + 135846.d0*x5 - 77894.d0*x4 + 16418.d0*x3) &
+         + x6*(209926.d0*x6 - 598152.d0*x5 + 358196.d0*x4 - 77894.d0*x3) &
+         + x5*(462306.d0*x5 - 598152.d0*x4 + 135846.d0*x3) &
+         + x4*(209926.d0*x4 - 102002.d0*x3) &
+         + x3*(13816.d0*x3)
+    b1 = x6*(45316.d0*x6 - 280502.d0*x5 + 330306.d0*x4 - 176594.d0*x3 + 36158.d0*x2) &
+         + x5*(485446.d0*x5 - 1223952.d0*x4 + 674036.d0*x3 - 140474.d0*x2) &
+         + x4*(812586.d0*x4 - 929952.d0*x3 + 198426.d0*x2) &
+         + x3*(277126.d0*x3 - 121742.d0*x2) &
+         + x2*(13816.d0*x2)
+    b0 = x5*(215836.d0*x5 - 1299002.d0*x4 + 1517646.d0*x3 - 822974.d0*x2 + 172658.d0*x1) &
+         + x4*(2041126.d0*x4 - 4924152.d0*x3 + 2716916.d0*x2 - 576014.d0*x1) &
+         + x3*(3042786.d0*x3 - 3408792.d0*x2 + 729726.d0*x1) &
+         + x2*(965926.d0*x2 - 417002.d0*x1) &
+         + x1*(45316.d0*x1)
+    tau = fltflt_abs(1.d0*b0 + 2.d0*b1 - 6.d0*b2 + 2.d0*b3 + 1.d0*b4)
+    r0 = fltflt_min(tau / (b0 + eps), ratio_cap)
+    r1 = fltflt_min(tau / (b1 + eps), ratio_cap)
+    r2 = fltflt_min(tau / (b2 + eps), ratio_cap)
+    r3 = fltflt_min(tau / (b3 + eps), ratio_cap)
+    r4 = fltflt_min(tau / (b4 + eps), ratio_cap)
+    a0 = dd0 * (one + r0 * r0)
+    a1 = dd1 * (one + r1 * r1)
+    a2 = dd2 * (one + r2 * r2)
+    a3 = dd3 * (one + r3 * r3)
+    a4 = dd4 * (one + r4 * r4)
+    s  = qscale * (a0 + a1 + a2 + a3 + a4)
+    vf = ff_to_r8((a0*q0 + a1*q1 + a2*q2 + a3*q3 + a4*q4) / s)
+  end function weno9z_right_df
+
+  attributes(device) subroutine delta10_weno_df(a, al, ar)
+    real(8), intent(in), dimension(10) :: a
+    real(8), intent(out)               :: al, ar
+    al = weno9z_left_df (a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8), a(9))
+    ar = weno9z_right_df(a(2), a(3), a(4), a(5), a(6), a(7), a(8), a(9), a(10))
+  end subroutine delta10_weno_df
+  #:endif
+
   #:endif
 
   include 'calc_slau_1d.f90'
@@ -310,9 +632,9 @@ contains
     call delta4(sensor_unused,   p(idx-io:idx+io+1),   pl,   pr)
     #:else
     #:if SLAU_RECON == 'WENO'
-    call delta6_weno(rho(idx-io:idx+io+1), rhol, rhor)
-    call delta6_weno(  u(idx-io:idx+io+1),   ul,   ur)
-    call delta6_weno(  p(idx-io:idx+io+1),   pl,   pr)
+    call ${WENO_SUB}$(rho(idx-io:idx+io+1), rhol, rhor)
+    call ${WENO_SUB}$(  u(idx-io:idx+io+1),   ul,   ur)
+    call ${WENO_SUB}$(  p(idx-io:idx+io+1),   pl,   pr)
     #:else
     call delta6(sensor_unused, rho(idx-io:idx+io+1), rhol, rhor)
     call delta6(sensor_unused,   u(idx-io:idx+io+1),   ul,   ur)
@@ -328,6 +650,66 @@ contains
   end subroutine calc_slau_x
 
   #:if ORDER >= 4
+  attributes(global) subroutine calc_slau_smem_x(nx, ruvwp, E)
+    integer, intent(in), value               :: nx
+    real(8), intent(in), device, contiguous  :: ruvwp(nx,3)
+    real(8), intent(out), device, contiguous :: E(nx-1,3)
+
+    integer i, it, ii, i_base, idx
+    integer, parameter :: block_threads = threadsE%x
+    integer, parameter :: sx = block_threads + 2*io + 1
+    real(8), dimension(-(io-1):sx-io), shared :: rho, u, p
+    ! Reconstructed face states are intentionally materialized in shared
+    ! memory to model a Riemann stage that cannot keep all states live in
+    ! registers without hurting occupancy/spilling.
+    real(8), dimension(block_threads, 6), shared :: qlr
+    real(8) :: F1, F2, F3
+
+    it = threadIdx%x
+    i_base = (blockIdx%x-1)*block_threads + (ng-1)
+
+    do ii = it-io, block_threads+io+1, block_threads
+      i = i_base + ii
+      if (i >= 1 .and. i <= nx) then
+        rho(ii) = ruvwp(i,1)
+        u(ii)   = ruvwp(i,2)
+        p(ii)   = ruvwp(i,3)
+      endif
+    enddo
+
+    call syncthreads()
+
+    i = i_base + it
+    idx = it
+    if (i <= nx-ng) then
+      #:if ORDER == 4
+      call delta4(sensor_unused, rho(idx-io:idx+io+1), qlr(idx,1), qlr(idx,2))
+      call delta4(sensor_unused,   u(idx-io:idx+io+1), qlr(idx,3), qlr(idx,4))
+      call delta4(sensor_unused,   p(idx-io:idx+io+1), qlr(idx,5), qlr(idx,6))
+      #:else
+      #:if SLAU_RECON == 'WENO'
+      call ${WENO_SUB}$(rho(idx-io:idx+io+1), qlr(idx,1), qlr(idx,2))
+      call ${WENO_SUB}$(  u(idx-io:idx+io+1), qlr(idx,3), qlr(idx,4))
+      call ${WENO_SUB}$(  p(idx-io:idx+io+1), qlr(idx,5), qlr(idx,6))
+      #:else
+      call delta6(sensor_unused, rho(idx-io:idx+io+1), qlr(idx,1), qlr(idx,2))
+      call delta6(sensor_unused,   u(idx-io:idx+io+1), qlr(idx,3), qlr(idx,4))
+      call delta6(sensor_unused,   p(idx-io:idx+io+1), qlr(idx,5), qlr(idx,6))
+      #:endif
+      #:endif
+    endif
+
+    call syncthreads()
+
+    if (i <= nx-ng) then
+      call SLAU(id_slau, qlr(idx,1), qlr(idx,2), qlr(idx,3), qlr(idx,4), &
+                qlr(idx,5), qlr(idx,6), 1.d0, F1, F2, F3)
+      call __stcs(E(i,1), F1)
+      call __stcs(E(i,2), F2)
+      call __stcs(E(i,3), F3)
+    endif
+  end subroutine calc_slau_smem_x
+
   attributes(global) subroutine calc_slau_warp_x(nx, ruvwp, E)
     integer, intent(in), value               :: nx
     real(8), intent(in), device, contiguous  :: ruvwp(nx,3)
@@ -368,7 +750,7 @@ contains
         call delta4(sensor_unused, rho(idx-io:idx+io+1), qlr(idx,1), qlr(idx,2))
         #:else
         #:if SLAU_RECON == 'WENO'
-        call delta6_weno(rho(idx-io:idx+io+1), qlr(idx,1), qlr(idx,2))
+        call ${WENO_SUB}$(rho(idx-io:idx+io+1), qlr(idx,1), qlr(idx,2))
         #:else
         call delta6(sensor_unused, rho(idx-io:idx+io+1), qlr(idx,1), qlr(idx,2))
         #:endif
@@ -379,7 +761,7 @@ contains
         call delta4(sensor_unused, u(idx-io:idx+io+1), qlr(idx,3), qlr(idx,4))
         #:else
         #:if SLAU_RECON == 'WENO'
-        call delta6_weno(u(idx-io:idx+io+1), qlr(idx,3), qlr(idx,4))
+        call ${WENO_SUB}$(u(idx-io:idx+io+1), qlr(idx,3), qlr(idx,4))
         #:else
         call delta6(sensor_unused, u(idx-io:idx+io+1), qlr(idx,3), qlr(idx,4))
         #:endif
@@ -390,7 +772,7 @@ contains
         call delta4(sensor_unused, p(idx-io:idx+io+1), qlr(idx,5), qlr(idx,6))
         #:else
         #:if SLAU_RECON == 'WENO'
-        call delta6_weno(p(idx-io:idx+io+1), qlr(idx,5), qlr(idx,6))
+        call ${WENO_SUB}$(p(idx-io:idx+io+1), qlr(idx,5), qlr(idx,6))
         #:else
         call delta6(sensor_unused, p(idx-io:idx+io+1), qlr(idx,5), qlr(idx,6))
         #:endif
@@ -402,7 +784,7 @@ contains
         call delta4_df(rho(idx-io:idx+io+1), qlr(idx,1), qlr(idx,2))
         #:else
         #:if SLAU_RECON == 'WENO'
-        call delta6_weno_df(rho(idx-io:idx+io+1), qlr(idx,1), qlr(idx,2))
+        call ${WENO_SUB}$_df(rho(idx-io:idx+io+1), qlr(idx,1), qlr(idx,2))
         #:else
         call delta6_df(rho(idx-io:idx+io+1), qlr(idx,1), qlr(idx,2))
         #:endif
@@ -413,7 +795,7 @@ contains
         call delta4_df(u(idx-io:idx+io+1), qlr(idx,3), qlr(idx,4))
         #:else
         #:if SLAU_RECON == 'WENO'
-        call delta6_weno_df(u(idx-io:idx+io+1), qlr(idx,3), qlr(idx,4))
+        call ${WENO_SUB}$_df(u(idx-io:idx+io+1), qlr(idx,3), qlr(idx,4))
         #:else
         call delta6_df(u(idx-io:idx+io+1), qlr(idx,3), qlr(idx,4))
         #:endif
@@ -424,7 +806,7 @@ contains
         call delta4_df(p(idx-io:idx+io+1), qlr(idx,5), qlr(idx,6))
         #:else
         #:if SLAU_RECON == 'WENO'
-        call delta6_weno_df(p(idx-io:idx+io+1), qlr(idx,5), qlr(idx,6))
+        call ${WENO_SUB}$_df(p(idx-io:idx+io+1), qlr(idx,5), qlr(idx,6))
         #:else
         call delta6_df(p(idx-io:idx+io+1), qlr(idx,5), qlr(idx,6))
         #:endif

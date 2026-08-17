@@ -2,7 +2,7 @@
 #:if not defined('VISC_ORDER')
   #:set VISC_ORDER = ORDER
 #:endif
-#:set NG = max(ORDER, VISC_ORDER) // 2
+#:set NG = max(ORDER, VISC_ORDER, RECON_SPAN) // 2
 !> RK stage kernels. Order-independent arithmetic, but the index range is not:
 !> only the physical cells ng+1..nx-ng are updated, the rest being ghosts that
 !> set_bc rewrites every stage. Thread `i` (1-based) owns cell i+ng, which is

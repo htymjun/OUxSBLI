@@ -177,6 +177,7 @@ ncu_write_env() {
     echo "gpu_cc=$GPU_CC"
     echo "nx=$NX"
     echo "nt=$NT"
+    echo "bench_weno_order=${BENCH_WENO_ORDER:-5}"
     echo "repeat=$REPEAT"
     echo "resume=$RESUME"
     echo "collect_full=$COLLECT_FULL"
@@ -259,6 +260,7 @@ ncu_kernel_for_mode() {
     fill) echo calc_quantities_shadow32;;
     quant) echo calc_quantities_t_1d;;
     slau|slau_weno) echo calc_slau_x;;
+    slau_smem|slau_weno_smem) echo calc_slau_smem_x;;
     slau_warp|slau_weno_warp) echo calc_slau_warp_x;;
     *) echo "bad mode: $1" >&2; return 1;;
   esac
@@ -401,6 +403,7 @@ ncu_full_collection_complete() {
 ncu_configure_case() {
   local mode="$1" order="$2" visc_order="$3" keep_prec="$4" visc_prec="$5" press_prec="$6" sr="$7" su="$8" sprec="$9"
   local cmode="$mode" scheme=KEEP tvd=none recon=MUSCL
+  local weno_order="${BENCH_WENO_ORDER:-5}"
 
   [ "$mode" = split_visc ] && cmode=split
   [ "$mode" = quant ] && cmode=seq
@@ -408,20 +411,24 @@ ncu_configure_case() {
   case "$mode" in
     slau)
       scheme=SLAU; tvd=tvd; cmode=split;;
+    slau_smem)
+      scheme=SLAU; tvd=tvd; cmode=smem;;
     slau_warp)
       scheme=SLAU; tvd=tvd; cmode=warp;;
     slau_weno)
       scheme=SLAU; tvd=tvd; recon=WENO; cmode=split;;
+    slau_weno_smem)
+      scheme=SLAU; tvd=tvd; recon=WENO; cmode=smem;;
     slau_weno_warp)
       scheme=SLAU; tvd=tvd; recon=WENO; cmode=warp;;
   esac
 
-  python3 - "$cmode" "$order" "$visc_order" "$keep_prec" "$visc_prec" "$NX" "$NT" "$SOLVER_ROOT" "$press_prec" "$scheme" "$tvd" "$recon" "$sr" "$su" "$sprec" <<'EOF'
+  python3 - "$cmode" "$order" "$visc_order" "$keep_prec" "$visc_prec" "$NX" "$NT" "$SOLVER_ROOT" "$press_prec" "$scheme" "$tvd" "$recon" "$sr" "$su" "$sprec" "$weno_order" <<'EOF'
 import pathlib
 import re
 import sys
 
-mode,o,vo,kp,vp,nx,nt,root,pp,scheme,tvd,recon,sr,su,sprec = sys.argv[1:16]
+mode,o,vo,kp,vp,nx,nt,root,pp,scheme,tvd,recon,sr,su,sprec,weno_order = sys.argv[1:17]
 R = pathlib.Path(root)
 p = R/'ST/config.fypp'
 s = p.read_text()
@@ -437,6 +444,7 @@ s = re.sub(r"(?m)^#:set PRESS_PREC\s*=.*$",  f"#:set PRESS_PREC   = '{pp}'", s)
 s = re.sub(r"(?m)^#:set SLAU_MUSCL_RHO_PREC\s*=.*$", f"#:set SLAU_MUSCL_RHO_PREC = '{sr}'", s)
 s = re.sub(r"(?m)^#:set SLAU_MUSCL_U_PREC\s*=.*$",   f"#:set SLAU_MUSCL_U_PREC   = '{su}'", s)
 s = re.sub(r"(?m)^#:set SLAU_MUSCL_P_PREC\s*=.*$",   f"#:set SLAU_MUSCL_P_PREC   = '{sprec}'", s)
+s = re.sub(r"(?m)^#:set WENO_ORDER\s*=.*$", f"#:set WENO_ORDER   = {weno_order}", s)
 p.write_text(s)
 g = R/'ST/mod_globals.f90'
 s = g.read_text()
@@ -617,6 +625,11 @@ ncu_run_case() {
       bench_scheme=SLAU
       bench_tvd=tvd
       bench_recon=MUSCL;;
+    slau_smem)
+      bench_mode=smem
+      bench_scheme=SLAU
+      bench_tvd=tvd
+      bench_recon=MUSCL;;
     slau_warp)
       bench_mode=warp
       bench_scheme=SLAU
@@ -624,6 +637,11 @@ ncu_run_case() {
       bench_recon=MUSCL;;
     slau_weno)
       bench_mode=split
+      bench_scheme=SLAU
+      bench_tvd=tvd
+      bench_recon=WENO;;
+    slau_weno_smem)
+      bench_mode=smem
       bench_scheme=SLAU
       bench_tvd=tvd
       bench_recon=WENO;;
@@ -665,6 +683,7 @@ ncu_run_case() {
     set +e
     line="$(BENCH_REPORT_MODE="$mode" BENCH_KERNEL="$bench_kernel" \
       BENCH_SCHEME="$bench_scheme" BENCH_TVD="$bench_tvd" BENCH_RECON="$bench_recon" \
+      BENCH_WENO_ORDER="${BENCH_WENO_ORDER:-5}" \
       NCU_EXPORT="$timing_report" NCU_RAW_CSV="$raw_csv" "$BENCH" \
       "$bench_mode" "$order" "$visc_order" "$keep_prec" "$visc_prec" "$NX" "$NT" \
       "$press_prec" "$sr" "$su" "$sprec" 2>&1 | tee "$raw" | tail -n 1)"

@@ -1,7 +1,7 @@
 # CLAUDE.md — 1D_solver
 
 Guidance for the 1D solver. Project-wide concerns live in the repository-root
-`CLAUDE.md`.
+`CLAUDE.md`; the WENO microbenchmark has its own `microbenchmark/CLAUDE.md`.
 
 ## What this is
 
@@ -9,49 +9,46 @@ A 1D compressible Navier-Stokes solver (Sod shock tube) that exists as a
 **testbed for simultaneous FP32/FP64 execution**, not as a production solver.
 It is the smallest thing that runs the same KEEP convective + Sutherland
 viscous physics as `3D_solver`, so precision and instruction-scheduling
-experiments can be read directly out of the SASS instead of being inferred from
-a 500³ profile.
+experiments can be read out of the SASS instead of inferred from a 500³
+profile. It also carries a SLAU + MUSCL/WENO path used for the same study.
 
-Two mechanisms are under study:
-
-- **Instruction-level** — one thread issues FP64 convective and FP32 viscous
-  work; both pipes are busy at once. `src/calc_fused_kernel.f90.fypp`
-  (`KERNEL_MODE='fused'`) is hand-inlined so KEEP and viscous arithmetic can be
-  source-ordered for SASS experiments.
-- **Warp-level** — half of each block computes KEEP and the other half computes
-  the viscous flux, then the two halves combine through shared memory. This is
-  `src/calc_warp_kernel.f90.fypp` (`KERNEL_MODE='warp'`). Its extension
-  `'warp_fused'` also moves the explicit KEEP pressure terms (`KEEPP`) to the
-  viscous-role warps; with `PRESS_PREC='fp32'` those terms run on the FP32 pipe,
-  which is the only way the role split can *reduce* FP64-pipe work rather than
-  merely relocate it.
-
-Background measurements that motivate the whole exercise are in
-`3D_solver_mixed/fp32fp64_report/` (Blackwell/Ada at FP64:FP32 = 1:64 vs GH200
-at 1:2 — the conclusions are opposite between the two).
+Two mechanisms are under study: **instruction-level** (one thread issues FP64
+convective and FP32 viscous work — `KERNEL_MODE='fused'`) and **warp-level**
+(half the block does KEEP, half viscous, combined through shared memory —
+`'warp'`, and `'warp_fused'` which also moves the KEEP pressure terms to the
+viscous role). Motivating measurements: `3D_solver_mixed/fp32fp64_report/`
+(1:64 on Blackwell/Ada vs 1:2 on GH200 — the conclusions invert). Findings from
+this directory: `report/rtx4060_weno_division_reduction.md`,
+`rtx4060_weno_order_sweep.md`, `rtx4060_weno_micro_split.md`,
+`cpasync_cuda_fortran.md`.
 
 ## Layout
 
 | Path | Role |
 |---|---|
-| `src/main.f90` | driver (MPI single rank, kept for structural parity with 2D/3D) |
-| `src/calc_time_dev.f90.fypp` | TVD-RK3 time stepping (`RK=3` only) |
-| `src/calc_flux_base.f90.fypp` | flux dispatcher: `split` (two launches), `seq`, `fused`, `warp` |
-| `src/calc_seq_kernel.f90.fypp` | **`seq` — one thread does KEEP then viscous. The baseline, and the one to beat** |
+| `src/main.f90` | driver (MPI single rank, kept for parity with 2D/3D) |
+| `src/preprocess.f90.fypp` | pre-run setup |
+| `src/calc_time_dev.f90.fypp` | TVD-RK3 stepping (`RK=3` only); owns launch geometry and passes `ng` to `set_bc` |
+| `src/calc_flux_base.f90.fypp` | flux dispatcher over `KERNEL_MODE` and `SCHEME`; also `calc_quantities_shadow32` |
+| `src/calc_seq_kernel.f90.fypp` | **`seq` — one thread does KEEP then viscous. The baseline to beat** |
 | `src/calc_fused_kernel.f90.fypp` | `fused` — same maths hand-inlined and source-interleaved |
-| `src/calc_warp_kernel.f90.fypp` | `warp` — warps 0–3 do KEEP, warps 4–7 do viscous for the same faces |
-| `src/calc_warp_kernel.f90.fypp` | `warp_fused` — warp mode with the explicit KEEP pressure terms (`KEEPNP`/`KEEPP` split) on the viscous role; `PRESS_PREC` selects their precision |
+| `src/calc_warp_kernel.f90.fypp` | `warp` and `warp_fused` — warp-role split |
 | `src/calc_keep_kernel.f90.fypp` | split-path convective kernel |
-| `src/calc_keep_1d.f90.fypp` | KEEP2/KEEP4/KEEP6 device functions (`include` fragment) |
+| `src/calc_keep_1d.f90.fypp` | KEEP2/4/6 device functions (`include` fragment) |
+| `src/calc_keep_1d_df.f90.fypp` | double-float KEEP twin |
+| `src/calc_slau_kernel.f90.fypp` | SLAU kernels: `calc_slau_x`, `calc_slau_smem_x`, `calc_slau_warp_x`, and the MUSCL/WENO double-float twins |
+| `src/calc_slau_1d.f90.fypp` | SLAU1 flux device functions (`include` fragment) |
 | `src/calc_visc.f90.fypp` | split-path viscous kernel (always FP64) |
-| `src/calc_visc_1d.f90.fypp` | VISC2/VISC4/VISC6 device functions (`include` fragment) |
-| `src/calc_steps.f90.fypp` | RK stage kernels; order-independent arithmetic, `ng`-dependent index range |
+| `src/calc_visc_1d.f90.fypp` | VISC2/4/6 device functions (`include` fragment) |
+| `src/calc_steps.f90.fypp` | RK stage kernels; `ng`-dependent index range |
+| `src/fltflt*.f90` | double-float (`'df'`) emulation type, operators and interfaces (5 files) |
 | `src/print_1d.f90` | writes `Q.dat` |
-| `ST/` | the only case: Sod shock tube, `nx=4096` |
-| `report/` | SASS analysis, verification scripts, findings |
+| `ST/` | the only case: Sod shock tube |
+| `report/` | verification scripts, benchmark/profiling drivers, findings |
+| `microbenchmark/` | standalone WENO harness — see `microbenchmark/CLAUDE.md` |
 
-`mod_constant.f90` and `calc_physical_quantities.f90` come from the repo-root
-`src/`, shared with 2D/3D.
+`mod_constant.f90`, `calc_physical_quantities.f90`, `calc_muscl.f90.fypp` and
+`calc_weno.f90` come from the repo-root `src/`, shared with 2D/3D.
 
 ## Build
 
@@ -80,67 +77,51 @@ export OPAL_PREFIX=/opt/nvidia/hpc_sdk/Linux_x86_64/24.7/comm_libs/12.5/hpcx/hpc
 
 ## config.fypp
 
-Only these actually change generated code in 1D. `VISC`, `SCHEME`, `TVD`,
-`SLAU_VARIANT`, `RESCALE`, `RESTART` reach `mod_constant.f90.fypp` as kind tags
-but **nothing in `1D_solver/src` branches on them** — there is no Euler/LES path
-and no SLAU kernel here.
-
 | Variable | Values | Effect |
 |---|---|---|
-| `ORDER` | `2`, `4`, `6` | KEEP stencil width |
+| `SCHEME` | `'KEEP'`, `'SLAU'` | convective scheme; `'SLAU'` constrains `KERNEL_MODE`/`ORDER`/`TVD`/`SLAU_VARIANT` (compile-time `$:error`) |
+| `ORDER` | `2`, `4`, `6` | KEEP stencil width; also gates SLAU reconstruction (`2` = first-order upwind) |
 | `VISC_ORDER` | `2`, `4`, `6` | viscous stencil width; defaults to `ORDER`, independent of it |
-| `KERNEL_MODE` | `'split'`, `'seq'`, `'fused'`, `'warp'`, `'warp_fused'` | two launches / one plain kernel / hand-inlined / warp-specialised / warp-specialised with the pressure split. Validated — a typo is now a build error, not a silent fall-through to `split` |
-| `KEEP_PREC` | `'fp64'`, `'fp32'`, `'term'` | working precision of the convective flux |
-| `VISC_PREC` | `'fp64'`, `'fp32'` | working precision of the viscous flux in `fused`/`warp`; split stays FP64 reference |
-| `PRESS_PREC` | `'fp64'`, `'fp32'` | precision of the split-off KEEP pressure terms (`KEEPNP`/`KEEPP`), available on `seq`/`fused`/`warp_fused`. `'fp32'` requires `KEEP_PREC` in `('fp64','term')` and `VISC_PREC='fp32'`; any other combination (incl. `KERNEL_MODE` in `('split','warp')`) is a compile-time `$:error` |
+| `TVD` | `'none'`, `'tvd'` | SLAU requires `'tvd'` (minmod-limited MUSCL) |
+| `SLAU_VARIANT` | `'SLAU'` | only SLAU1 is ported to 1D; HRSLAU2 needs a wiggle sensor that is not |
+| `SLAU_RECON` | `'MUSCL'`, `'WENO'` | SLAU face-state reconstruction, `ORDER=6` only |
+| `WENO_ORDER` | `5`, `7`, `9` | WENO-Z stencil width when `SLAU_RECON='WENO'`; decoupled from `ORDER` |
+| `RECON_SPAN` | *derived* | `WENO_ORDER+1` for SLAU+WENO, else 0; feeds every template's `ng` (see below) |
+| `KERNEL_MODE` | `'split'`, `'seq'`, `'fused'`, `'smem'`, `'warp'`, `'warp_fused'` | two launches / plain / hand-inlined / SLAU face states via shared memory / warp-specialised / warp-specialised with the pressure split. A typo is a build error, not a silent fall-through |
+| `KEEP_PREC` | `'fp64'`, `'fp32'`, `'term'`, `'df'` | convective flux working precision |
+| `VISC_PREC` | `'fp64'`, `'fp32'` | viscous precision in fused-style kernels; split stays FP64 reference |
+| `PRESS_PREC` | `'fp64'`, `'fp32'` | precision of the split-off KEEP pressure terms; `'fp32'` needs `KEEP_PREC` in `('fp64','term')` and `VISC_PREC='fp32'` |
+| `SLAU_MUSCL_{RHO,U,P}_PREC` | `'fp64'`, `'df'` | per-variable reconstruction precision — **applies to WENO too**, so the name is a misnomer. `'df'` needs `KERNEL_MODE='warp'` |
 | `RK` | `3` | anything else is a compile-time `$:error` |
+| `VISC`, `RESCALE`, `RESTART` | — | reach `mod_constant` as kind tags; **nothing in `1D_solver/src` branches on them** |
 
-`KEEP_PREC='term'` keeps the leading (nearest-neighbour, l=1) terms in FP64 and
-drops the wide-stencil corrections (l≥2) to FP32, reading them from FP32 mirrors
-of the shared tile. It needs `ORDER >= 4` — KEEP2 has no corrections to demote,
-and asking for it is a compile-time `$:error`.
+`KEEP_PREC='term'` keeps the nearest-neighbour terms in FP64 and drops the
+wide-stencil corrections to FP32, reading them from FP32 mirrors of the shared
+tile. Needs `ORDER >= 4`. `KEEP_PREC /= VISC_PREC` is what puts work on both
+pipes at once.
 
-`KEEP_PREC /= VISC_PREC` is what puts work on both hardware pipes at once. The
-split path's `calc_Ev` is always FP64 and serves as the reference.
+**FP32 shadow arrays.** When a fused-style kernel needs FP32 copies of its
+inputs (`VISC_PREC='fp32'`, `PRESS_PREC='fp32'`, `KEEP_PREC='term'`), the
+FP64→FP32 conversions are fused into the per-stage primitives decode by
+`calc_quantities_shadow32` (`src/calc_flux_base.f90.fypp`), which reproduces the
+shared `calc_quantities_T_1D` bit-for-bit and additionally writes whichever of
+`u32`/`t32`/`mu32`/`rho32`/`p32` the config needs. When none are needed the
+shared routine is called unmodified — that is what keeps zero-shadow configs
+bit-identical. Both `F2F` directions issue on the FP64 pipe, so converting once
+here beats converting at every tile load.
 
-**FP32 shadow arrays (`calc_quantities_shadow32`).** Whenever a fused-style
-kernel needs FP32 copies of its inputs (`VISC_PREC='fp32'`, `PRESS_PREC='fp32'`,
-or `KEEP_PREC='term'`), the FP64→FP32 conversions are fused directly into the
-per-stage primitives-decode kernel: `calc_quantities_shadow32`
-(`src/calc_flux_base.f90.fypp`) reproduces the repo-root, shared-with-2D/3D
-`calc_quantities_T_1D`'s exact arithmetic bit-for-bit (that shared file is
-never modified) and additionally writes whichever of `u32`/`t32`/`mu32`/
-`rho32`/`p32` the active config needs, in one launch. When none are needed,
-`calc_quantities_T_1D` is still called directly and unmodified — this is what
-keeps every zero-shadow config bit-for-bit identical. Both F2F directions
-issue on the FP64 pipe — the bound resource — so converting once here instead
-of at every flux-kernel tile load is a net win (`report/rtx4060_precision_vs_specialization.md`:
-this single kernel costs 3518–3653 µs/stage depending on which arrays it
-writes, **less** than the 3307 µs `calc_quantities_T_1D` cost on its own
-*plus* the old separate `fill_shadow32` pass it replaced — that base cost was
-never measured before this fusion and had been silently missing from every
-earlier end-to-end claim in this directory). The flux kernels load the
-shadows with plain 4-byte loads; the FP32 bits are identical either way.
-
-**`VISC_ORDER` is a stencil WIDTH knob, not an order-of-accuracy knob.** The face
-flux it builds is genuinely 2nd/4th/6th-order accurate *at the face*, but `calc_R`
-turns it into a divergence with a one-cell difference, which carries its own
-irreducible `(h²/24)·F'''` term — so `d/dx` of the viscous flux is **2nd order at
-every width**. `report/check_visc_order.py` prints both tables so the fact is
-measured rather than assumed. `3D_solver`'s `calc_visc_high` has exactly the same
-property; 1D mirrors it deliberately. What `VISC_ORDER` is *for* here is that it
-grows the FP32 instruction count, which is what feeds the other hardware pipe.
-
-The ghost-cell depth `ng = max(ORDER, VISC_ORDER)//2` and the shared-memory halo
-`io = ng - 1` are **derived inside the templates**, not set in `config.fypp`, so
-they cannot drift out of sync with the stencil widths. This deviates from the 3D
-convention (`ORDER_IO`) on purpose.
+**`VISC_ORDER` is a stencil WIDTH knob, not an order-of-accuracy knob.** The
+face flux is genuinely 2nd/4th/6th order *at the face*, but `calc_R` turns it
+into a divergence with a one-cell difference carrying its own `(h²/24)·F'''`
+term, so `d/dx` of the viscous flux is **2nd order at every width** —
+`report/check_visc_order.py` measures both. What `VISC_ORDER` is *for* here is
+growing the FP32 instruction count.
 
 ## Ghost cells, not an order-degrading ladder
 
-`set_bc` fills `ng` ghost cells at each end (zero-gradient/flat extension), which
-makes one uniform interior stencil valid at every face the RK update consumes.
-There is **no boundary branch in any flux kernel**.
+`set_bc` fills `ng` ghost cells at each end (zero-gradient), making one uniform
+interior stencil valid at every face. There is **no boundary branch in any flux
+kernel**.
 
 | | range |
 |---|---|
@@ -149,185 +130,165 @@ There is **no boundary branch in any flux kernel**.
 | faces the flux kernels compute | `ng … nx-ng` |
 | cells the stencil reads at face `f` | `f-io … f+io+1` |
 
-The arithmetic is tight: over all computed faces the stencil reach is exactly
-`1 … nx` at every order. `ng=1` reproduces the pre-ghost-cell ranges (faces
-`1..nx-1`, cells `2..nx-1`) exactly, so `ORDER=VISC_ORDER=2` is bit-identical to
-the old order-degrading code — which is the cheapest regression check available
-here, and worth running after any change to the index arithmetic.
+**`ng` is derived identically in eight templates** —
+`calc_{keep,seq,fused,warp,slau}_kernel`, `calc_steps`, `calc_time_dev`,
+`calc_visc` — all as `max(ORDER, VISC_ORDER, RECON_SPAN) // 2`, with the policy
+input `RECON_SPAN` in `config.fypp` (0 for every non-SLAU/WENO build, which
+keeps those bit-identical). Widening `ng` in one kernel alone would make that
+kernel read uninitialised cells, so any change must land in all eight. `io` is
+**per-kernel**, not universally `ng-1`: `calc_slau_kernel` uses
+`(WENO_ORDER-1)//2` for WENO and `ORDER//2-1` for MUSCL, `calc_keep_kernel`
+uses `ORDER//2-1`, and only `seq`/`fused`/`warp` use `ng-1`.
 
-This is not only tidier than degrading the order near the edge; **it is what makes
-the ILP mechanism work at all above ORDER=2.** ptxas cannot co-schedule across a
-basic-block boundary, and the old `if/elseif/else` ladder put the FP32 viscous
-half and the FP64 convective half in different blocks: the emitted SASS was
-`S×12` then `D×151`. Interleaving survived only at ORDER=2, i.e. exactly the case
-where the ladder collapsed to one unconditional statement. Deleting it also
-removed the dead boundary arms from the instruction stream (ORDER=6 FP64: 151 →
-95). See `report/SASS_ilp.md` §7.
+Deleting the old order-degrading boundary ladder is **what makes the ILP
+mechanism work above ORDER=2** — ptxas cannot co-schedule across a basic-block
+boundary, and the ladder put the FP32 and FP64 halves in different blocks.
 
-`ST/set.f90` takes `ng` as a runtime argument rather than deriving it, so that
-file stays out of the fypp pipeline; `calc_time_dev` passes the compile-time
-constant and also owns the `blocksE`/`blocksEv`/`blocks` launch geometry, which
-`main.f90` used to compute.
+Cheapest regression check available: `ORDER=VISC_ORDER=2` must reproduce a
+pre-change `Q.dat` **bit-for-bit**, because `ng=1` degenerates to the original
+index ranges. Capture a baseline before touching index arithmetic.
 
-## Higher-order KEEP
+## Higher-order KEEP and viscous
 
-`src/calc_keep_1d.f90.fypp` generates KEEP2/KEEP4/KEEP6 as 1D specialisations of
-`src/calc_scheme_math.f90.fypp` (repo root). In 1D the transverse velocities
-vanish and the face normal is always +1, so the `v`/`w` terms and the `Normal`
-argument collapse away. The shared file is **not** reused: its
-`VELS = [...] if DIM == 3 else [...]` has no `DIM=1` branch and its `' + '.join()`
-expressions would emit empty strings.
+`src/calc_keep_1d.f90.fypp` and `src/calc_visc_1d.f90.fypp` generate KEEP2/4/6
+and VISC2/4/6 as 1D specialisations of the repo-root
+`calc_scheme_math.f90.fypp` and `3D_solver/src/calc_visc_cent.f90.fypp`. In 1D
+the transverse velocities and the `Normal` argument collapse away, so the
+shared files are not reused directly. Order is selected by the **KIND of an
+unused leading argument** (`integer(2)/(4)/(8)`) through a generic interface;
+only the configured order is generated, keeping dead bodies out of the SASS
+listing.
 
-The shared versions hand-write `fma()` chains to pin the association order; the
-1D versions use the equivalent plain expressions instead, because libm's `fma`
-is real(8)-only and the functions must also compile at `real(4)`. `-Mfma`
-contracts them to D/FFMA regardless.
+Two deliberate deviations from the 3D source: pair sums/differences instead of
+a serial `fma()` accumulator (a serial chain has no internal ILP, and
+independent FP32 instructions are the whole point here), and exact fractions
+evaluated at the working kind (`real(125.d0/1920.d0, VK)`) instead of truncated
+decimals, which lose digits at `real(4)`.
 
-Order is selected by the **KIND of the unused leading `id_acc` argument**
-(`integer(2)/(4)/(8)`) through a generic `KEEP` interface — the same
-compile-time dispatch trick `3D_solver` uses. Only the configured order is
-generated: with no boundary ladder nothing calls the lower orders any more, and
-leaving them out keeps dead function bodies out of the SASS listing the study
-reads.
+## WENO-Z
 
-## Higher-order viscous
+`src/calc_weno.f90` (repo root) holds WENO5-Z (`delta6_weno`), WENO7-Z
+(`delta8_weno`) and WENO9-Z (`delta10_weno`), selected by `WENO_ORDER`. The
+WENO7/9 bodies and all the double-float twins are **generated, not
+hand-written**:
 
-`src/calc_visc_1d.f90.fypp` is the viscous sibling of `calc_keep_1d.f90.fypp`,
-generating `VISC2`/`VISC4`/`VISC6` with the same `id_vacc`-KIND dispatch. It is a
-1D specialisation of `3D_solver/src/calc_visc_cent.f90.fypp` — with no transverse
-velocities there are no cross-derivative terms, leaving only a face interpolation
-of `mu` and `u` and a face derivative of `u` and `T`:
+```bash
+python3 report/check_weno_order.py             # verify — run after ANY change
+python3 report/check_weno_order.py --gen 4     # regenerate weno7z_* bodies
+python3 report/check_weno_order.py --gen 5     # regenerate weno9z_* bodies
+python3 report/check_weno_order.py --gen-df 4  # regenerate the WENO7-Z DF twin
+python3 report/check_weno_order.py --gen-df 5  # regenerate the WENO9-Z DF twin
+```
 
-| p | `interp` | `diff` (× 1/dx) |
-|---|---|---|
-| 2 | `[1,1]/2` | `[-1,1]` |
-| 4 | `[-1,9,9,-1]/16` | `[1,-27,27,-1]/24` |
-| 6 | `[3,-25,150,150,-25,3]/256` | `[-9,125,-2250,2250,-125,9]/1920` |
+`check_weno_order.py` derives every coefficient from its defining conditions in
+**exact rational arithmetic** and then measures the convergence rate on a smooth
+solution (observed 5.00 / 7.02 / 8.95). **`check_vs_numpy.py` does not guard
+this** — it compares the Fortran against a numpy transcription of the *same*
+formulas, so it checks that two implementations agree, not that the scheme
+achieves its design order. That gap hid a real bug: `weno5z_right`'s optimal
+weights were copied from `weno5z_left` unmirrored, making `v^+` **third order
+instead of fifth**, with both implementations carrying it so the check reported
+PASS throughout. `v^+` mirrors `d`: near-face candidate 3/10, furthest 1/10.
 
-Two deliberate deviations from the 3D source. It writes **pair sums/differences**
-rather than 3D's serial `fma()` accumulator: 3D chains six dependent FMAs into
-one register to minimise live values, but that is a serial chain with no internal
-ILP, and here the whole point is to leave independent FP32 instructions for the
-scheduler to slot into the FP64 stream. And coefficients are written as exact
-fractions evaluated at the working kind (`real(125.d0/1920.d0, VK)`) rather than
-3D's truncated decimals like `0.065104167d0`, which lose digits at `real(4)`.
-
-Because the split path must stay FP64 while the fused path follows `VISC_PREC`,
-the fragment emits precision-suffixed specifics (`VISC6_d`, `VISC6_s`) from one
-fypp loop, and each including module names the one it wants in its own generic
-`VISC` interface.
-
-## Which variant to use, and what the ILP experiment actually showed
-
-Measured at `nx=4194304` (`report/rtx4060_variant_optimization.md`): **all three
-variants are within 3% of each other**, and `seq` — which does nothing clever —
-is the reference. `fused` matches it to 0.1%; `warp` is 0.4–3.0% faster and does
-strictly more work per face (a shared-memory round trip plus a second barrier)
-using twice the threads.
-
-Two dead ends are recorded so they are not retried:
-
-- **Do not add `volatile` scalars or artificial `x - x` zero-dependencies to force
-  the FP32/FP64 alternation.** It was tried. `DADD` and *both* `F2F` directions
-  issue on the FP64 unit, so it added +64% FP64-pipe work, and chaining the two
-  halves destroys the independence co-issue needs. The SASS `runs` count rose
-  while FP64 issue stall more than doubled and the kernel got 9–28% slower.
-- **`runs` (the SASS interleaving count) does not predict time** and must not be
-  used as an optimization target. The static metric that *does* track time is
-  FP64-pipe instruction count = `DADD + DMUL + DFMA + F2F`.
-
-The kernel is **FP64-issue-bound at ~86% pipe utilization** whenever
-`KEEP_PREC='fp64'`. The only lever that matters is reducing FP64 work:
-`KEEP_PREC='term'` is worth 2.9× at ORDER=6, where scheduling tricks are worth
-1.00×. Type conversions alone are 39% of FP64-pipe work at ORDER=2.
-
-**Update (2026-08-14, `report/rtx4060_warp_fused_optimization.md`):** hoisting
-those conversions into a shadow pass made every fused-style kernel 4–17%
-faster (bit-identical), and `warp_fused` + `PRESS_PREC='fp32'` — FP32 pressure
-terms on the viscous-role warps — is now the fastest flux kernel at ORDER≥4:
-**0.819×/0.791× seq at ORDER 4/6**.
-
-**Update 2 (2026-08-14, `report/rtx4060_precision_vs_specialization.md`):**
-`PRESS_PREC='fp32'` is no longer `warp_fused`-only — `seq`/`fused` support it
-too, as a control for exactly this question: does the win come from the
-precision demotion or the warp specialization? **Entirely the demotion.**
-`seq(PP=fp32)`/`fused(PP=fp32)` match or *beat* `warp_fused(PP=fp32)` at every
-order (0.948–0.994× its time) — the warp role split contributes no additional
-speedup once the FP64-pipe instructions are actually removed rather than
-relocated; it is pure overhead on top of the same demotion. Prefer `seq`/`fused`
-with `PRESS_PREC='fp32'` over `warp_fused` for this precision combination.
-Separately, the old `fill_shadow32` pass was fused directly into the
-quantities-decode kernel (see above), which turned out to be a real end-to-end
-win (3.3–9.0% per RK stage) once `calc_quantities_T_1D`'s own previously
-unmeasured 3307 µs/stage was accounted for. `KEEP_PREC='term'` composes with
-`PRESS_PREC='fp32'` too (~0.82–0.92×, smaller than the non-term ratio since the
-two demotions overlap rather than stack).
-
-Benchmark with `report/bench.sh`, never with the stock `nx=4096` — see the
-performance note under Notice.
+At a flat 4 divisions per call, widening grows the smoothness-indicator work
+quadratically — 131 → 238 → 366 FP64-pipe instructions per face for WENO5/7/9,
+`io`/`ng` = 2/3, 3/4, 4/5. That is the intended way to give the co-issue
+experiment two halves large enough to overlap:
+`report/rtx4060_weno_order_sweep.md`.
 
 ## Verification
 
-`report/` holds four checks; run all of them after touching a flux stencil.
+`report/` holds five checks; run all after touching a flux stencil.
 
 ```bash
-# 1. the coefficients are genuinely 2nd/4th/6th order (pure numpy, no GPU)
+# 1. coefficients are genuinely the claimed order (pure numpy, no GPU)
 python3 report/check_keep_order.py
 python3 report/check_visc_order.py
+python3 report/check_weno_order.py
 
 # 2. the Fortran on the GPU computes those same coefficients
 #    (set nt=1 in ST/mod_globals.f90, rebuild, run, then:)
 python3 report/check_vs_numpy.py ST/build/Q.dat <ORDER> [VISC_ORDER]
-#    for seq/fused/warp_fused with PRESS_PREC='fp32', append `--press fp32` so
-#    the numpy reference also evaluates the KEEPP pressure terms in float32.
-#    This script has no KEEP_PREC='fp32'/'term' model at all -- only valid
-#    against KEEP_PREC='fp64' builds. For 'term' builds (incl. term x
-#    PRESS_PREC='fp32'), use check 3 instead, against exact and against a
-#    same-config PRESS_PREC='fp64' reference Q.dat.
+#    --press fp32                                for PRESS_PREC='fp32' builds
+#    --scheme SLAU --recon WENO --weno-order N   for SLAU/WENO builds
+#    No KEEP_PREC='fp32'/'term' model exists — use check 3 for those.
 
 # 3. the full run matches the exact Riemann solution (nt=2500)
 python3 report/check_sod.py ST/build/Q.dat [reference_Q.dat]
 ```
 
-Check 1 is the one that catches a mistyped coefficient; a shock tube cannot,
-because every scheme is first-order at a discontinuity. `check_visc_order.py`
-prints two tables — read the docstring before reacting to the second one, which
-is *supposed* to show 2/2/2 (see the `VISC_ORDER` note above). Check 3's density
-L1 against the exact solution barely moves with order (0.185% → 0.182% → 0.182%)
-for the same discontinuity reason — do not read it as an order test.
+Check 1 is the one that catches a mistyped coefficient; **a shock tube cannot**,
+because every scheme is first order at a discontinuity. For the same reason
+check 3's density L1 barely moves with order (0.185% → 0.182%) — do not read it
+as an order test. `check_visc_order.py` prints two tables and the second is
+*supposed* to show 2/2/2 (see the `VISC_ORDER` note above).
 
-The cheapest regression check of all: `ORDER=VISC_ORDER=2` must reproduce a
-pre-change `Q.dat` **bit-for-bit**, because `ng=1` degenerates to the original
-index ranges. Capture a baseline before touching the index arithmetic.
+Benchmark with `report/bench.sh` or the `run_*_ncu.sh` / `run_*_nsys.sh`
+drivers, never with the stock `nx=4096` — see Notice. SASS helpers:
+`report/sass_analyze.py`, `report/ctrl_bits.py`.
 
-SASS analysis helpers (`report/sass_analyze.py`, `report/ctrl_bits.py`) and the
-findings are described in `report/SASS_ilp.md`.
+## Rules established by measurement — do not re-derive
+
+- **FP64-pipe instruction count (`DADD+DMUL+DFMA+F2F`) is the static metric that
+  tracks time.** The SASS interleaving `runs` count does **not** predict time
+  and must never be an optimisation target.
+- **Do not add `volatile` scalars or `x - x` zero-dependencies to force
+  FP32/FP64 alternation.** Tried: `DADD` and both `F2F` directions issue on the
+  FP64 unit, so it added +64% FP64 work, and chaining the halves destroys the
+  independence co-issue needs — 9–28% slower.
+- **Relocating work is free; removing it is what pays.** Warp specialisation at
+  matched precision is worth ~1.00×. `seq`/`fused` with `PRESS_PREC='fp32'`
+  match or beat `warp_fused` with the same demotion, so the win is the precision
+  demotion, not the role split.
+- **FP64 division is never free — `grep -c MUFU.RCP64H` on a `cuobjdump -sass`
+  listing.** `div.rn.f64` expands to `MUFU.RCP64H` + ~9 `DFMA` **plus a
+  `CALL`/`RET`** (~20 instructions and a basic-block boundary), and `-fast` does
+  **not** fold division by a literal: `x/6.0d0` emits `MUFU.RCP64H R9, 6`.
+  Removing them is the only lever here that is not GPU-dependent — it pays on
+  A100/GH200 as much as on Ada. `report/rtx4060_weno_division_reduction.md`.
+- **Batched inversion (`1/(c0*c1*c2)`) is FP64-only.** In `fltflt` the product
+  underflows — every `c_i` is `eps=1e-20` on a plateau, `1e-60` flushes to zero
+  in FP32 exponent range, giving `1/0 = Inf` then `0*Inf = NaN`. The DF twins
+  therefore take only the polynomial-scaling rewrite and are deliberately *not*
+  expression-identical to the FP64 path; both files say so.
+- **`cp.async` lives in the `wmma` module** (`pipelineMemcpyAsync` /
+  `pipelineCommit` / `pipelineWaitPrior`), not `cudadevice` — whose
+  `__pgi_memcpy_async*` are the *host* `cudaMemcpyAsync` specifics and emit no
+  `LDGSTS`. It is **load-only**: `cp.async` is hardware-restricted to
+  global→shared, so a register or `shared` source compiles fine and then fails
+  at launch with **CUDA 717**. `report/cpasync_cuda_fortran.md`.
+
+Four `report/*.md` files cited by earlier revisions of this document
+(`SASS_ilp.md`, `rtx4060_variant_optimization.md`,
+`rtx4060_warp_fused_optimization.md`, `rtx4060_precision_vs_specialization.md`)
+**were never committed**. The conclusions above survive from those sweeps; the
+backing CSVs do not. Do not go looking for them.
 
 ## Notice
 
-* `nx=4096` is far too small to measure throughput: 0.1 waves/SM, ~11% achieved
-  occupancy, launch-latency bound — every configuration sits 4–35× above its own
-  compute floor there. Use `report/bench.sh` (default `nx=4194304`, ~114–341
-  waves/SM, 0.03% launch spread) for any performance claim, and keep `nx=4096`
-  for SASS and correctness only. Four earlier reports drew variant rankings from
-  `nx=4096`; two of those rankings did not survive being re-measured.
-* **GPU clocks cannot be locked on this machine** (`nvidia-smi -lgc` needs root),
-  so a long sweep throttles: mean kernel times drift >2× while pipe-utilization
-  ratios stay put. Compare `time_min_us` from interleaved, repeated rounds, and
-  distrust any `time_us` whose `spread_us` approaches it.
-* `CMakeLists.txt` hard-codes `ccnative` (every other solver uses
-  `cc${CASE_GPU_CC}`), so the target architecture silently follows the build
-  machine. This matters a lot here: FP64:FP32 is 1:64 on consumer Ada/Blackwell
-  and 1:2 on GH200, and the mixed-precision conclusions invert between them.
-* `maxregcount:96` (raised from 64). `ORDER=6` now uses 68–76 registers — the
-  uniform 6-point stencil plus a 6-point viscous half no longer fits under 64,
-  and spilling would put LDL/STL traffic into the very instruction stream the
-  SASS study measures. Occupancy is not a concern at `nx=4096` (see above), but
-  it would be on a real grid. Check `ptxas` output for spills after any change
-  that adds live values.
+* `nx=4096` is far too small to measure throughput: ~0.1 waves/SM, ~11%
+  achieved occupancy, launch-latency bound. Use `report/bench.sh` (default
+  `nx=4194304`) for any performance claim; keep `nx=4096` for SASS and
+  correctness only.
+* **GPU clocks cannot be locked without root**, so long sweeps throttle: mean
+  kernel times drift >2× while pipe-utilisation ratios stay put. Compare
+  `time_min_us` from interleaved, repeated rounds.
+* **Always pass `-DCASE_GPU_CC=<cc>`.** It defaults to `ccnative`, so the target
+  architecture otherwise follows the build machine — and that matters here,
+  because FP64:FP32 is 1:64 on consumer Ada/Blackwell and 1:2 on GH200, with the
+  mixed-precision conclusions inverting between them. A stale cached value also
+  produces a clean build that then fails at every launch with
+  `cudaErrorInvalidPtx`.
+* `maxregcount:96` (raised from 64), set in `1D_solver/CMakeLists.txt`. Check
+  `ptxas` output for spills after any change that adds live values.
+  `calc_slau_x` currently uses 60 registers with zero spill at every
+  `WENO_ORDER`, so the cap is not presently binding.
+* **`ncu` and `nsys` hang on the solver binary on some machines** while the
+  unprofiled binary runs fine. If that happens, fall back to end-to-end wall
+  clock, and kill leftover profiler processes **by PID** — `pkill -f Nsight`
+  also matches the shell running the `pkill` and will kill your own script.
 * A crashed run leaves the previous `Q.dat` in place. Always `rm -f Q.dat`
-  before a run in a sweep script, or a crash will be silently reported as a pass
-  with stale numbers.
-* `nt` in `ST/mod_globals.f90` is switched between `1` (SASS/profiling and
-  `check_vs_numpy.py`) and `2500` (physics and `check_sod.py`). Check which is
-  set before interpreting `Q.dat`.
+  before a run in a sweep script, or a crash is silently reported as a pass.
+* `nt` in `ST/mod_globals.f90` is switched between `1` (SASS/profiling,
+  `check_vs_numpy.py`) and `2500` (physics, `check_sod.py`). Check which is set
+  before interpreting `Q.dat`.

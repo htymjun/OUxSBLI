@@ -14,6 +14,8 @@
 #! WENO5-Z delta6_weno). 'WENO' needs ORDER=6 (no WENO3 stencil exists).
 #! KERNEL_MODE='warp' applies the FP64/DF split to whichever reconstruction is
 #! selected here.
+#:set WENO_ORDER   = 5
+#:set RECON_SPAN   = (WENO_ORDER + 1) if (SCHEME == 'SLAU' and SLAU_RECON == 'WENO') else 0
 #:set RESCALE      = False
 #:set RESTART      = False
 #:set RK           = 3
@@ -22,6 +24,8 @@
 #! 'split' = separate convective/viscous launches
 #! 'seq'   = one ordinary same-thread KEEP then viscous mixed-precision kernel
 #! 'fused' = one manually inlined KEEP+viscous kernel
+#! 'smem'  = SLAU-only: reconstruct face states, store them in shared memory,
+#!           then run the FP64 SLAU Riemann solver
 #! 'warp'  = one warp-specialised kernel (half block KEEP, half block viscous)
 #! 'warp_fused' = warp mode with explicit KEEP pressure terms moved to the
 #!                viscous-side warp role
@@ -38,7 +42,7 @@
 #!
 #! KEEP_PREC /= VISC_PREC is what puts work on both hardware pipes at once. The
 #! FP32 half only stays fed if it has enough instructions to interleave -- that
-#! is what VISC_ORDER below is for. See report/SASS_ilp.md.
+#! is what VISC_ORDER below is for. See 1D_solver/CLAUDE.md.
 #:set PRESS_PREC   = 'fp64'
 #! precision of the explicit KEEP pressure terms (KEEPNP/KEEPP split),
 #! available on seq/fused/warp_fused.
@@ -60,6 +64,7 @@
 #! it does NOT raise the order of accuracy of the viscous divergence, which is
 #! 2nd order at every width -- see 1D_solver/CLAUDE.md.
 #!
-#! The ghost-cell depth ng = max(ORDER, VISC_ORDER)//2 and the shared-memory halo
-#! io = ng - 1 are derived inside the templates rather than set here, so they
-#! cannot drift out of sync with the stencil widths.
+#! The ghost-cell depth ng = max(ORDER, VISC_ORDER, RECON_SPAN)//2 is derived
+#! identically in all eight templates, so it cannot drift out of sync with the
+#! stencil widths. The shared-memory halo io is per-kernel and is NOT always
+#! ng-1 -- see the ghost-cell section of 1D_solver/CLAUDE.md.

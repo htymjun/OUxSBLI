@@ -2,8 +2,8 @@
 #:if not defined('KERNEL_MODE')
   #:set KERNEL_MODE = 'fused'
 #:endif
-#:if KERNEL_MODE not in ('split', 'seq', 'fused', 'warp', 'warp_fused')
-  $:error("KERNEL_MODE must be 'split', 'seq', 'fused', 'warp' or 'warp_fused' (got '" + str(KERNEL_MODE) + "'). A typo used to fall through to the split path silently.")
+#:if KERNEL_MODE not in ('split', 'seq', 'fused', 'warp', 'warp_fused', 'smem')
+  $:error("KERNEL_MODE must be 'split', 'seq', 'fused', 'warp', 'warp_fused' or 'smem' (got '" + str(KERNEL_MODE) + "'). A typo used to fall through to the split path silently.")
 #:endif
 #:if ORDER not in (2, 4, 6)
   $:error("ORDER must be 2, 4 or 6 (got '" + str(ORDER) + "')")
@@ -11,11 +11,14 @@
 #:if SCHEME not in ('KEEP', 'SLAU')
   $:error("1D_solver only implements SCHEME='KEEP' or 'SLAU' (got '" + str(SCHEME) + "')")
 #:endif
-#:if SCHEME == 'SLAU' and KERNEL_MODE not in ('split', 'warp')
-  $:error("SCHEME='SLAU' supports KERNEL_MODE='split' or 'warp' only. 'warp' means warp-level FP64/DF reconstruction followed by FP64 SLAU; seq/fused/warp_fused are KEEP-only. Got KERNEL_MODE='" + str(KERNEL_MODE) + "'")
+#:if SCHEME == 'SLAU' and KERNEL_MODE not in ('split', 'smem', 'warp')
+  $:error("SCHEME='SLAU' supports KERNEL_MODE='split', 'smem' or 'warp' only. 'smem' writes reconstructed face states to shared memory before FP64 SLAU; 'warp' means warp-level FP64/DF reconstruction followed by FP64 SLAU. seq/fused/warp_fused are KEEP-only. Got KERNEL_MODE='" + str(KERNEL_MODE) + "'")
 #:endif
 #:if SCHEME == 'SLAU' and KERNEL_MODE == 'warp' and ORDER == 2
   $:error("SCHEME='SLAU' with KERNEL_MODE='warp' needs ORDER >= 4 because the experiment targets face-state reconstruction; ORDER=2 has no reconstruction work to split")
+#:endif
+#:if SCHEME == 'SLAU' and KERNEL_MODE == 'smem' and ORDER == 2
+  $:error("SCHEME='SLAU' with KERNEL_MODE='smem' needs ORDER >= 4 because it stores reconstructed face states in shared memory; ORDER=2 has no reconstruction work")
 #:endif
 #:if SCHEME == 'SLAU' and TVD != 'tvd'
   $:error("SCHEME='SLAU' only supports TVD='tvd' (minmod-limited MUSCL) in 1D_solver -- 'none'/'hybrid' aren't implemented. Got TVD='" + str(TVD) + "'")
@@ -46,8 +49,8 @@
   $:error(_name + " must be 'fp64' or 'df' (got '" + str(_val) + "')")
 #:endif
 #:endfor
-#:if SCHEME == 'SLAU' and KERNEL_MODE == 'split' and (SLAU_MUSCL_RHO_PREC != 'fp64' or SLAU_MUSCL_U_PREC != 'fp64' or SLAU_MUSCL_P_PREC != 'fp64')
-  $:error("SLAU_MUSCL_*_PREC='df' requires SCHEME='SLAU' with KERNEL_MODE='warp'; split has only the FP64 reconstruction baseline")
+#:if SCHEME == 'SLAU' and KERNEL_MODE != 'warp' and (SLAU_MUSCL_RHO_PREC != 'fp64' or SLAU_MUSCL_U_PREC != 'fp64' or SLAU_MUSCL_P_PREC != 'fp64')
+  $:error("SLAU_MUSCL_*_PREC='df' requires SCHEME='SLAU' with KERNEL_MODE='warp'; split/smem have only the FP64 reconstruction baseline")
 #:endif
 #! SHADOW: the fused-style kernels read pre-converted FP32 copies of u/T/mu
 #! (and p under PRESS32, and rho under TERM) from global memory instead of
@@ -189,6 +192,15 @@ contains
     call calc_slau_warp_x<<<blocksE, dim3(2*threadsE%x,1,1)>>>(nx, ruvwp, E)
   end subroutine calc_slau_warp_conv
   #:endif
+  #:if KERNEL_MODE == 'smem'
+  subroutine calc_slau_smem_conv(nx, ruvwp, E)
+    integer, intent(in), value               :: nx
+    real(8), intent(in), device, contiguous  :: ruvwp(nx,3)
+    real(8), intent(out), device, contiguous :: E(nx-1,3)
+
+    call calc_slau_smem_x<<<blocksE,threadsE>>>(nx, ruvwp, E)
+  end subroutine calc_slau_smem_conv
+  #:endif
   #:endif
 
   !> Compute convective + viscous flux for the compressible NS equations
@@ -249,7 +261,11 @@ contains
     #:if SCHEME == 'KEEP'
     call calc_conv(nx, ruvwp, T, E)
     #:elif SCHEME == 'SLAU'
+    #:if KERNEL_MODE == 'smem'
+    call calc_slau_smem_conv(nx, ruvwp, E)
+    #:else
     call calc_slau_conv(nx, ruvwp, E)
+    #:endif
     #:endif
     call calc_Ev<<<blocksEv,threadsEv>>>(nx, ruvwp, T, mu, E)
     #:endif

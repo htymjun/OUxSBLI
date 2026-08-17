@@ -19,7 +19,9 @@
 # seq; works for any KEEP_PREC/VISC_PREC/PRESS_PREC now that seq accepts
 # PRESS_PREC='fp32' directly). SLAU modes: `slau`/`slau_warp`
 # use MUSCL reconstruction, `slau_weno`/`slau_weno_warp` use WENO5-Z
-# reconstruction. The SLAU Riemann flux itself remains FP64.
+# reconstruction. `slau_smem`/`slau_weno_smem` materialize reconstructed
+# face states in shared memory before the FP64 SLAU call. The SLAU Riemann
+# flux itself remains FP64.
 #
 # Emits one CSV row on stdout; run it in a loop and prepend the header from
 # --header. Correctness is NOT checked here -- use the check_*.py scripts at
@@ -45,11 +47,13 @@ MODE=$1; O=$2; VO=$3; KP=${4:-fp64}; VP=${5:-fp32}; NX=${6:-4194304}; NT=${7:-20
 SR=${9:-fp64}; SU=${10:-fp64}; SPREC=${11:-fp64}
 REPORT_MODE="${BENCH_REPORT_MODE:-$MODE}"
 case $MODE in
-  seq) K=calc_seq_x;; fused) K=calc_fused_x;; warp) K=calc_warp_x;; warp_fused) K=calc_warp_fused_x;; split) K=calc_keep_x;;
+  seq) K=calc_seq_x;; fused) K=calc_fused_x;; warp) K=calc_warp_x;; warp_fused) K=calc_warp_fused_x;; split) K=calc_keep_x;; smem) K=calc_slau_smem_x;;
   split_visc) K=calc_ev;; fill) K=calc_quantities_shadow32;; quant) K=calc_quantities_t_1d;;
   slau) K=calc_slau_x;;
+  slau_smem) K=calc_slau_smem_x;;
   slau_warp) K=calc_slau_warp_x;;
   slau_weno) K=calc_slau_x;;
+  slau_weno_smem) K=calc_slau_smem_x;;
   slau_weno_warp) K=calc_slau_warp_x;;
   *) echo "bad mode: $MODE" >&2; exit 1;;
 esac
@@ -69,10 +73,18 @@ fi
 SCHEME="${BENCH_SCHEME:-KEEP}"
 TVD="${BENCH_TVD:-none}"
 RECON="${BENCH_RECON:-MUSCL}"
+# WENO-Z stencil width, only meaningful with RECON=WENO. Env override
+# rather than a 12th positional argument, matching BENCH_SCHEME/TVD/RECON.
+WENO_ORDER="${BENCH_WENO_ORDER:-5}"
 if [ "$MODE" = slau ]; then
   SCHEME=SLAU
   TVD=tvd
   CMODE=split
+fi
+if [ "$MODE" = slau_smem ]; then
+  SCHEME=SLAU
+  TVD=tvd
+  CMODE=smem
 fi
 if [ "$MODE" = slau_warp ]; then
   SCHEME=SLAU
@@ -85,6 +97,12 @@ if [ "$MODE" = slau_weno ]; then
   RECON=WENO
   CMODE=split
 fi
+if [ "$MODE" = slau_weno_smem ]; then
+  SCHEME=SLAU
+  TVD=tvd
+  RECON=WENO
+  CMODE=smem
+fi
 if [ "$MODE" = slau_weno_warp ]; then
   SCHEME=SLAU
   TVD=tvd
@@ -92,14 +110,15 @@ if [ "$MODE" = slau_weno_warp ]; then
   CMODE=warp
 fi
 
-python3 - "$CMODE" "$O" "$VO" "$KP" "$VP" "$NX" "$NT" "$R" "$PP" "$SCHEME" "$TVD" "$RECON" "$SR" "$SU" "$SPREC" <<'EOF'
+python3 - "$CMODE" "$O" "$VO" "$KP" "$VP" "$NX" "$NT" "$R" "$PP" "$SCHEME" "$TVD" "$RECON" "$SR" "$SU" "$SPREC" "$WENO_ORDER" <<'EOF'
 import re, sys, pathlib
-mode,o,vo,kp,vp,nx,nt,root,pp,scheme,tvd,recon,sr,su,sprec = sys.argv[1:16]
+mode,o,vo,kp,vp,nx,nt,root,pp,scheme,tvd,recon,sr,su,sprec,wo = sys.argv[1:17]
 R = pathlib.Path(root)
 p = R/'ST/config.fypp'; s = p.read_text()
 s = re.sub(r"(?m)^#:set SCHEME\s*=.*$",      f"#:set SCHEME       = '{scheme}'", s)
 s = re.sub(r"(?m)^#:set TVD\s*=.*$",         f"#:set TVD          = '{tvd}'", s)
 s = re.sub(r"(?m)^#:set SLAU_RECON\s*=.*$",  f"#:set SLAU_RECON   = '{recon}'", s)
+s = re.sub(r"(?m)^#:set WENO_ORDER\s*=.*$",  f"#:set WENO_ORDER   = {wo}", s)
 s = re.sub(r"(?m)^#:set ORDER\s*=.*$",       f"#:set ORDER        = {o}", s)
 s = re.sub(r"(?m)^#:set VISC_ORDER\s*=.*$",  f"#:set VISC_ORDER   = {vo}", s)
 s = re.sub(r"(?m)^#:set KEEP_PREC\s*=.*$",   f"#:set KEEP_PREC    = '{kp}'", s)

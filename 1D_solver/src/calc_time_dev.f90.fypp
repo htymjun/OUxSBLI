@@ -34,7 +34,7 @@ $:error('1D_solver only implements 3rd-order TVD Runge-Kutta; config.fypp must s
 #:def SHARGS()
 #{if NEED_U32}#, u32#{endif}##{if NEED_T32}#, t32#{endif}##{if NEED_MU32}#, mu32#{endif}##{if NEED_RHO32}#, rho32#{endif}##{if NEED_P32}#, p32#{endif}#
 #:enddef
-#:set NG = max(ORDER, VISC_ORDER) // 2
+#:set NG = max(ORDER, VISC_ORDER, RECON_SPAN) // 2
 module calc_time_dev
   use cudafor
   use mod_globals, only : nt, blocks, threads, blocksE, threadsE, blocksEv, threadsEv

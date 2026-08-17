@@ -15,8 +15,8 @@ Usage:
   bash report/run_slau_ncu.sh --out report/ncu_runs/slau_a100 --gpu-cc 80 --repeat 3
 
 SLAU sweep:
-  MUSCL: ORDER=4,6 split FP64 baseline and warp FP64/DF variants
-  WENO : ORDER=6 split FP64 baseline and warp FP64/DF variants
+  MUSCL: ORDER=4,6 split/smem FP64 baselines and warp FP64/DF variants
+  WENO : ORDER=6 split/smem FP64 baselines and warp FP64/DF variants
 EOF
   ncu_common_usage_tail
 }
@@ -44,10 +44,12 @@ ncu_common_init slau
 
 # SLAU + MUSCL reconstruction.
 ncu_run_case slau_muscl split_fp64_o4       slau      4 4 fp64 fp64 fp64 fp64 fp64 fp64
+ncu_run_case slau_muscl smem_fp64_o4        slau_smem 4 4 fp64 fp64 fp64 fp64 fp64 fp64
 ncu_run_case slau_muscl warp_fp64_o4        slau_warp 4 4 fp64 fp64 fp64 fp64 fp64 fp64
 ncu_run_case slau_muscl warp_all_df_o4      slau_warp 4 4 fp64 fp64 fp64 df   df   df
 ncu_run_case slau_muscl warp_rho64_o4       slau_warp 4 4 fp64 fp64 fp64 fp64 df   df
 ncu_run_case slau_muscl split_fp64_o6       slau      6 6 fp64 fp64 fp64 fp64 fp64 fp64
+ncu_run_case slau_muscl smem_fp64_o6        slau_smem 6 6 fp64 fp64 fp64 fp64 fp64 fp64
 ncu_run_case slau_muscl warp_fp64_o6        slau_warp 6 6 fp64 fp64 fp64 fp64 fp64 fp64
 ncu_run_case slau_muscl warp_all_df_o6      slau_warp 6 6 fp64 fp64 fp64 df   df   df
 ncu_run_case slau_muscl warp_rho64_o6       slau_warp 6 6 fp64 fp64 fp64 fp64 df   df
@@ -56,6 +58,7 @@ ncu_run_case slau_muscl warp_p64_o6         slau_warp 6 6 fp64 fp64 fp64 df   df
 
 # SLAU + WENO5-Z reconstruction.
 ncu_run_case slau_weno split_fp64_o6        slau_weno      6 6 fp64 fp64 fp64 fp64 fp64 fp64
+ncu_run_case slau_weno smem_fp64_o6         slau_weno_smem 6 6 fp64 fp64 fp64 fp64 fp64 fp64
 ncu_run_case slau_weno warp_fp64_o6         slau_weno_warp 6 6 fp64 fp64 fp64 fp64 fp64 fp64
 ncu_run_case slau_weno warp_all_df_o6       slau_weno_warp 6 6 fp64 fp64 fp64 df   df   df
 ncu_run_case slau_weno warp_rho64_o6        slau_weno_warp 6 6 fp64 fp64 fp64 fp64 df   df

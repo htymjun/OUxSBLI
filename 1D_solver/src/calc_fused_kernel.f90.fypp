@@ -60,7 +60,7 @@
 #:def SHARGS()
 #{if NEED_U32}#, u32#{endif}##{if NEED_T32}#, t32#{endif}##{if NEED_MU32}#, mu32#{endif}##{if NEED_RHO32}#, rho32#{endif}##{if NEED_P32}#, p32#{endif}#
 #:enddef
-#:set NG  = max(ORDER, VISC_ORDER) // 2
+#:set NG  = max(ORDER, VISC_ORDER, RECON_SPAN) // 2
 #:set IO  = NG - 1
 #:set IOC = ORDER // 2 - 1
 #! Under 'term' the wide-stencil correction terms run in real(4) and read from

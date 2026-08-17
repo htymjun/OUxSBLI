@@ -27,7 +27,7 @@
 #:if not defined('VISC_ORDER')
   #:set VISC_ORDER = ORDER
 #:endif
-#:set NG  = max(ORDER, VISC_ORDER) // 2
+#:set NG  = max(ORDER, VISC_ORDER, RECON_SPAN) // 2
 #:set IO  = ORDER // 2 - 1
 #! Under 'term' the wide-stencil correction terms run in real(4) and read from
 #! FP32 mirrors of the shared tile, filled once per point by the load loop.
