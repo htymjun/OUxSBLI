@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # WENO microbenchmark driver.
 #
-# Primary measurement is weno_micro.f90's OWN CUDA-event timing: the binary
+# The only measurement is weno_micro.f90's OWN CUDA-event timing: the binary
 # takes `nlaunch` timed launches and prints time_min_us / time_avg_us. No
-# profiler is required, which matters because ncu and nsys have both hung
+# profiler is involved, which matters because ncu and nsys have both hung
 # repeatedly on this hardware while the unprofiled binary ran fine
-# (report/rtx4060_weno_division_reduction.md). Pass --nsys to additionally
-# capture a timeline. By default this script also runs the solver-level
-# WENO_ORDER={5,7,9} Nsight Systems sweep in a sibling output directory, so one
-# command gives both the WENO5-Z isolated microbenchmark and the WENO7/9 solver
-# data.
+# (report/rtx4060_weno_division_reduction.md). The per-row nsys capture this
+# script once carried (--nsys/--trace) was removed 2026-08-17; run a profiler
+# by hand on a single mode if a timeline is ever needed. By default this
+# script also runs the solver-level WENO_ORDER={5,7,9} sweep in a sibling
+# output directory, so one command gives both the isolated microbenchmark and
+# the solver data.
 #
 # Two harness rules are enforced here rather than left to the caller:
 #
@@ -27,7 +28,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOLVER_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-NSYS="${NSYS:-nsys}"
 FC="${FC:-nvfortran}"
 GPU_CC="${CASE_GPU_CC:-native}"
 NX="${NX:-4194304}"
@@ -36,8 +36,6 @@ REPEAT=3
 OUT=""
 RESUME=0
 KEEP_GOING=0
-USE_NSYS=0
-NSYS_TRACE="${NSYS_TRACE:-cuda,nvtx,osrt}"
 RUN_SOLVER_WENO_ORDERS=1
 SOLVER_WENO_NT="${SOLVER_WENO_NT:-20}"
 SOLVER_WENO_REPEAT="${SOLVER_WENO_REPEAT:-}"
@@ -80,6 +78,40 @@ MODES=(
   weight_poly32_seq9
   weight_poly32_serial9
   weight_poly32_warp9
+  # Balanced-split families (2026-08-17, A100 pipe-balance study):
+  # w32_poly64_* is the REVERSE algebraic split (FP32 weights + FP64
+  # polynomials/combine), w32mix*_ tunes how many weight calls stay FP64,
+  # var{3,4,5}_* splits by physical variable at nv=3/4/5 with k vars FP64,
+  # and w64_only_* is the weights-only ablation that isolates whether the
+  # FP32 half of weight_poly32_seq* rides free (ILP co-issue).
+  w64_only_seq
+  w32_poly64_seq
+  w32_poly64_serial
+  w32_poly64_warp
+  w64_only_seq7
+  w32_poly64_seq7
+  w32_poly64_serial7
+  w32_poly64_warp7
+  w64_only_seq9
+  w32_poly64_seq9
+  w32_poly64_serial9
+  w32_poly64_warp9
+  w32mixh_poly64_seq9
+  w32mix1_poly64_seq9
+  var3_fp64_seq9
+  var3_fp32_seq9
+  var3_k1_seq9
+  var3_k1_warp9
+  var4_fp64_seq9
+  var4_fp32_seq9
+  var4_k1_seq9
+  var4_k2_seq9
+  var4_k1_warp9
+  var5_fp64_seq9
+  var5_fp32_seq9
+  var5_k1_seq9
+  var5_k2_seq9
+  var5_k2_warp9
 )
 
 usage() {
@@ -97,8 +129,6 @@ Options:
   --nlaunch N           timed launches per run, min is reported, default 10
   --repeat N            interleaved rounds, default 3
   --modes "A B ..."     override the mode list
-  --nsys                also capture an nsys timeline per row (slow, optional)
-  --trace LIST          nsys trace list, default cuda,nvtx,osrt
   --no-solver-orders    do not run the solver-level WENO_ORDER=5/7/9 sweep
   --solver-nt N         time steps for the solver-level sweep, default 20
   --resume              skip completed rows in an existing --out
@@ -127,6 +157,25 @@ Modes:
                    barrier; *_halfwarp_* is a shared-memory-free shuffle
                    diagnostic and splits lanes WITHIN a warp, so it is not the
                    main simultaneous-warp strategy.
+  w32_poly64_*     the REVERSE algebraic split -- FP32 WENO-Z weights (~88% of
+                   the arithmetic, on the fat pipe) + FP64 candidate
+                   polynomials and combine. This is the A100 pipe-balance
+                   family (1:2 wants N_FP32 = 2*N_FP64); order-verified by
+                   report/check_weno_order.py --w32-split. *_serial/*_warp are
+                   the controlled pair: only the real(4) weights cross shared
+                   memory, one barrier, register checksum acc.
+  w32mix{h,1}_*    balance tuning: the first 1 (h) or 2 of the 6 var-bias
+                   weight calls stay FP64, the rest FP32; polys always FP64.
+  var{3,4,5}_*     split by physical VARIABLE at nv = 3/4/5 (rho,u,p /
+                   rho,u,v,p / rho,u,v,w,p): _fp64/_fp32 are the all-FP64 /
+                   all-FP32 in-family anchors, _k<K>_ keeps K variables fully
+                   FP64 and the rest fully FP32. The _warp9 forms need NO
+                   shared memory and NO barrier -- each role owns complete
+                   reconstructions and stores its own columns.
+  w64_only_*       ablation: the FP64 weights stream alone, no polynomials.
+                   t(weight_poly32_seqX) - t(w64_only_seqX) isolates whether
+                   the FP32 half of weight_poly32_seqX is hidden (ILP
+                   co-issue) or serialized.
 
   The binary also accepts var_rho64_warp, var_u64_warp and var_p64_warp; they
   are left out of the default list because var_fp64_warp and var_fp32_warp
@@ -136,6 +185,9 @@ Modes:
 Correctness: every row records checksum_all and nonfinite. A nonzero nonfinite,
 or a checksum that moves between modes by more than rounding, invalidates the
 timing -- weno_micro error-stops on non-finite output rather than reporting it.
+Checksums are only comparable WITHIN a family at one stencil width: the 7/9
+halo widths, the var4/var5 column counts, and w64_only's weights-only output
+all shift the sum legitimately.
 EOF
 }
 
@@ -147,8 +199,12 @@ while [ $# -gt 0 ]; do
     --nlaunch) NLAUNCH="${2:?missing --nlaunch value}"; shift 2;;
     --repeat) REPEAT="${2:?missing --repeat value}"; shift 2;;
     --modes) read -r -a MODES <<< "${2:?missing --modes value}"; shift 2;;
-    --nsys) USE_NSYS=1; shift;;
-    --trace) NSYS_TRACE="${2:?missing --trace value}"; shift 2;;
+    --nsys|--trace)
+      echo "error: $1 was removed 2026-08-17. The per-row nsys capture added" >&2
+      echo "       nothing the CUDA-event timing did not already provide, and" >&2
+      echo "       nsys has hung on this hardware. Profile a single mode by" >&2
+      echo "       hand if a timeline is ever needed." >&2
+      exit 2;;
     --no-solver-orders) RUN_SOLVER_WENO_ORDERS=0; shift;;
     --solver-nt) SOLVER_WENO_NT="${2:?missing --solver-nt value}"; shift 2;;
     --resume) RESUME=1; shift;;
@@ -171,7 +227,6 @@ if [ -z "$OUT" ]; then
   OUT="$SOLVER_ROOT/report/weno_micro_${stamp}"
 fi
 mkdir -p "$OUT/raw"
-[ "$USE_NSYS" -eq 1 ] && mkdir -p "$OUT/reports" "$OUT/stats" "$OUT/sqlite"
 OUT="$(cd "$OUT" && pwd)"
 
 BUILD_DIR="$SCRIPT_DIR/build"
@@ -190,7 +245,6 @@ fi
   echo "nrepeat=$NREPEAT (pinned)"
   echo "nlaunch=$NLAUNCH"
   echo "repeat=$REPEAT"
-  echo "use_nsys=$USE_NSYS"
   echo "run_solver_weno_orders=$RUN_SOLVER_WENO_ORDERS"
   echo "solver_weno_nt=$SOLVER_WENO_NT"
   echo "solver_weno_repeat=$SOLVER_WENO_REPEAT"
@@ -200,7 +254,6 @@ fi
   echo
   echo "[compiler]"
   "$FC" --version 2>&1 | head -20 || true
-  [ "$USE_NSYS" -eq 1 ] && { echo; echo "[nsys]"; "$NSYS" --version 2>&1 || true; }
   echo
   echo "[git]"
   git -C "$SOLVER_ROOT/.." rev-parse --short HEAD 2>/dev/null || true
@@ -253,25 +306,6 @@ for rnd in $(seq 1 "$REPEAT"); do
       "${tmin:-NA}" "${tavg:-NA}" "${csum:-NA}" "${nbad:-NA}" \
       "$([ "${nbad:-1}" = "0" ] && echo OK || echo NONFINITE)" >> "$OUT/summary.csv"
     echo "  time_min_us=${tmin:-NA}  nonfinite=${nbad:-NA}" | tee -a "$OUT/progress.log"
-
-    if [ "$USE_NSYS" -eq 1 ]; then
-      report_base="$OUT/reports/$base"
-      set +e
-      "$NSYS" profile --trace="$NSYS_TRACE" --sample=none --cpuctxsw=none --backtrace=none \
-        --force-overwrite=true --output="$report_base" \
-        "$EXE" "$mode" "$NX" "$NREPEAT" "$NLAUNCH" > "$OUT/raw/${base}__nsys.log" 2>&1
-      nrc=$?
-      set -e
-      if [ "$nrc" -eq 0 ]; then
-        "$NSYS" export --type sqlite --force-overwrite=true --output "$OUT/sqlite/$base.sqlite" \
-          "$report_base.nsys-rep" > "$OUT/raw/${base}__export.log" 2>&1 || true
-        "$NSYS" stats --report cuda_gpu_kern_sum:base --format csv \
-          --output "$OUT/stats/${base}__kern_sum" "$report_base.nsys-rep" \
-          > "$OUT/raw/${base}__stats.log" 2>&1 || true
-      else
-        echo "  nsys failed (rc=$nrc); CUDA-event timing above is unaffected" | tee -a "$OUT/progress.log"
-      fi
-    fi
   done
 done
 
@@ -288,8 +322,7 @@ if [ "$RUN_SOLVER_WENO_ORDERS" -eq 1 ]; then
   )
   [ "$RESUME" -eq 1 ] && solver_args+=(--resume)
   [ "$KEEP_GOING" -eq 1 ] && solver_args+=(--keep-going)
-  NSYS="$NSYS" NSYS_TRACE="$NSYS_TRACE" \
-    bash "$SOLVER_ROOT/report/run_weno_nsys.sh" "${solver_args[@]}" \
+  bash "$SOLVER_ROOT/report/run_weno_nsys.sh" "${solver_args[@]}" \
     2>&1 | tee "$OUT/solver_weno_orders.log"
 fi
 

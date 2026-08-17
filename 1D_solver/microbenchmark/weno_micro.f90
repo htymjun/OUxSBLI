@@ -1764,13 +1764,593 @@ contains
       out(i,1) = out(i,1) + 1.d-30*acc
     endif
   end subroutine weno_weight_poly_serial_warp9
+
+  ! ==========================================================================
+  ! Balanced-split families (A100 pipe-balance experiments, 2026-08-17).
+  !
+  ! The families above answered "which half goes to FP32" with the FP64 pipe
+  ! left as the bottleneck in every mode: weight_poly32_* moves only the
+  ! polynomials (~12% of the per-face FP64-pipe instructions), var_fp32_*
+  ! moves everything, leaving no FP64 co-issue partner at all. On A100
+  ! (FP64:FP32 = 1:2) pipe-time balance wants N_FP32 = 2*N_FP64, and none of
+  ! the modes above sit anywhere near that point.
+  !
+  !   w32_poly64_*   the REVERSE split: WENO-Z weights (betas, tau, ratios,
+  !                  normalisation -- ~88% of the arithmetic) in FP32,
+  !                  candidate polynomials + final combine in FP64. Order-
+  !                  verified by report/check_weno_order.py --w32-split: the
+  !                  design order survives down to an ~2e-8 L1 floor because
+  !                  weight errors multiply O(h^r) candidate differences.
+  !   w32mix*_       balance tuning: the first `nsel` of the 6 var-bias weight
+  !                  calls stay FP64, the rest go FP32; polys always FP64.
+  !   var{3,4,5}_*   variable-granular split: k of nv variables fully FP64,
+  !                  the rest fully FP32 (nv = 5 models the 3D solver's
+  !                  [rho,u,v,w,p]). The warp form needs NO shared memory and
+  !                  NO barrier -- each role owns complete reconstructions and
+  !                  stores its own columns of `out` directly.
+  !   w64_only_*     ablation: the weights64 stream alone, no polynomials.
+  !                  t(weight_poly32_seqX) - t(w64_only_seqX) isolates whether
+  !                  the FP32 polynomial half of weight_poly32_seq is really
+  !                  hidden under the FP64 stream (ILP co-issue) or serialized.
+  !
+  ! The serial/warp pair here fixes two known unfairnesses of the older pair:
+  ! only the real(4) weights cross shared memory (9216/12288/15360 B at
+  ! WENO5/7/9 vs 27648..46080 B), and the checksum acc is formed from
+  ! registers instead of re-reading out() from global memory. The single
+  ! barrier sits outside both the repeat loop and the tail guard, copying the
+  ! _oncebar template (the in-guard barrier of the non-oncebar kernels is a
+  ! divergent-barrier hazard in tail blocks).
+  ! ==========================================================================
+
+  !> nv-column twin of init_input for the var4_*/var5_* modes. Columns 1..3
+  !> are bit-identical to init_input; 4 and 5 are the same piecewise-linear
+  !> ramp+step class (every WENO candidate is exact on linear data, so the
+  !> NaN-guard semantics of checksum_all are preserved).
+  attributes(global) subroutine init_input_nv(n, nv, x)
+    integer, intent(in), value :: n, nv
+    real(8), intent(out), device :: x(n,nv)
+    integer :: i
+    real(8) :: z, stepv
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n) return
+    z = dble(i) / dble(max(n,1))
+    if (i > n/2) then
+      stepv = 1.d0
+    else
+      stepv = 0.d0
+    endif
+    x(i,1) = 1.0d0 + 0.03d0*z + 0.15d0*stepv
+    x(i,2) = 0.2d0 + 0.02d0*z - 0.04d0*stepv
+    x(i,3) = 1.0d0 - 0.01d0*z + 0.30d0*stepv
+    if (nv >= 4) x(i,4) = 0.5d0 + 0.015d0*z - 0.06d0*stepv
+    if (nv >= 5) x(i,5) = 0.8d0 - 0.025d0*z + 0.10d0*stepv
+  end subroutine init_input_nv
+
+  ! ---------------- family A: w32_poly64_seq{,7,9} ----------------
+
+  attributes(global) subroutine weno_w32_poly64_seq(n, nrepeat, x, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: i, k, f
+    real(4) :: w0, w1, w2
+    real(8) :: p0, p1, p2, q(6), acc
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n-5) return
+    acc = 0.d0
+    do k = 1, nrepeat
+      do f = 1, 3
+        call weights5_32_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), w0, w1, w2)
+        call poly5_64_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), p0, p1, p2)
+        q(2*f-1) = real(w0,8)*p0 + real(w1,8)*p1 + real(w2,8)*p2
+        call weights5_32_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), w0, w1, w2)
+        call poly5_64_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), p0, p1, p2)
+        q(2*f) = real(w0,8)*p0 + real(w1,8)*p1 + real(w2,8)*p2
+      enddo
+      acc = acc + q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+    enddo
+    out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+    out(i,3) = q(3); out(i,4) = q(4)
+    out(i,5) = q(5); out(i,6) = q(6)
+  end subroutine weno_w32_poly64_seq
+
+  attributes(global) subroutine weno_w32_poly64_seq7(n, nrepeat, x, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: i, k, f
+    real(4) :: w0, w1, w2, w3
+    real(8) :: p0, p1, p2, p3, q(6), acc
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n-7) return
+    acc = 0.d0
+    do k = 1, nrepeat
+      do f = 1, 3
+        call weights7_32_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), w0, w1, w2, w3)
+        call poly7_64_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), p0, p1, p2, p3)
+        q(2*f-1) = real(w0,8)*p0 + real(w1,8)*p1 + real(w2,8)*p2 + real(w3,8)*p3
+        call weights7_32_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), w0, w1, w2, w3)
+        call poly7_64_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), p0, p1, p2, p3)
+        q(2*f) = real(w0,8)*p0 + real(w1,8)*p1 + real(w2,8)*p2 + real(w3,8)*p3
+      enddo
+      acc = acc + q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+    enddo
+    out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+    out(i,3) = q(3); out(i,4) = q(4)
+    out(i,5) = q(5); out(i,6) = q(6)
+  end subroutine weno_w32_poly64_seq7
+
+  attributes(global) subroutine weno_w32_poly64_seq9(n, nrepeat, x, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: i, k, f
+    real(4) :: w0, w1, w2, w3, w4
+    real(8) :: p0, p1, p2, p3, p4, q(6), acc
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n-9) return
+    acc = 0.d0
+    do k = 1, nrepeat
+      do f = 1, 3
+        call weights9_32_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), w0, w1, w2, w3, w4)
+        call poly9_64_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), p0, p1, p2, p3, p4)
+        q(2*f-1) = real(w0,8)*p0 + real(w1,8)*p1 + real(w2,8)*p2 + real(w3,8)*p3 + real(w4,8)*p4
+        call weights9_32_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), w0, w1, w2, w3, w4)
+        call poly9_64_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), p0, p1, p2, p3, p4)
+        q(2*f) = real(w0,8)*p0 + real(w1,8)*p1 + real(w2,8)*p2 + real(w3,8)*p3 + real(w4,8)*p4
+      enddo
+      acc = acc + q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+    enddo
+    out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+    out(i,3) = q(3); out(i,4) = q(4)
+    out(i,5) = q(5); out(i,6) = q(6)
+  end subroutine weno_w32_poly64_seq9
+
+  ! ---------------- family B: w32_poly64_{serial,warp}{,7,9} ----------------
+  ! FP32 role (upper warps): weights32 -> real(4) shared. FP64 role (lower
+  ! warps): poly64 in registers, then combine + register acc after ONE barrier.
+
+  attributes(global) subroutine weno_w32_poly64_warp(n, nrepeat, x, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: it, idx, i, k, f, b
+    real(4), shared :: wsh(face_threads,18)
+    real(8) :: p(18), q(6), acc
+    real(4) :: w0, w1, w2
+    it = threadIdx%x
+    idx = mod(it-1, face_threads) + 1
+    i = (blockIdx%x-1)*face_threads + idx
+    do k = 1, nrepeat
+      if (i <= n-5) then
+        if (it <= face_threads) then
+          do f = 1, 3
+            b = 6*(f-1)
+            call poly5_64_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), p(b+1), p(b+2), p(b+3))
+            call poly5_64_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), p(b+4), p(b+5), p(b+6))
+          enddo
+        else
+          do f = 1, 3
+            b = 6*(f-1)
+            call weights5_32_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), w0, w1, w2)
+            wsh(idx,b+1) = w0; wsh(idx,b+2) = w1; wsh(idx,b+3) = w2
+            call weights5_32_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), w0, w1, w2)
+            wsh(idx,b+4) = w0; wsh(idx,b+5) = w1; wsh(idx,b+6) = w2
+          enddo
+        endif
+      endif
+    enddo
+    call syncthreads()
+    if (it <= face_threads .and. i <= n-5) then
+      do f = 1, 3
+        b = 6*(f-1)
+        q(2*f-1) = real(wsh(idx,b+1),8)*p(b+1) + real(wsh(idx,b+2),8)*p(b+2) + real(wsh(idx,b+3),8)*p(b+3)
+        q(2*f)   = real(wsh(idx,b+4),8)*p(b+4) + real(wsh(idx,b+5),8)*p(b+5) + real(wsh(idx,b+6),8)*p(b+6)
+      enddo
+      acc = q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+      out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+      out(i,3) = q(3); out(i,4) = q(4)
+      out(i,5) = q(5); out(i,6) = q(6)
+    endif
+  end subroutine weno_w32_poly64_warp
+
+  attributes(global) subroutine weno_w32_poly64_serial(n, nrepeat, x, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: it, idx, i, k, f, b
+    real(4), shared :: wsh(face_threads,18)
+    real(8) :: p(18), q(6), acc
+    real(4) :: w0, w1, w2
+    it = threadIdx%x
+    idx = mod(it-1, face_threads) + 1
+    i = (blockIdx%x-1)*face_threads + idx
+    do k = 1, nrepeat
+      if (it <= face_threads .and. i <= n-5) then
+        do f = 1, 3
+          b = 6*(f-1)
+          call poly5_64_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), p(b+1), p(b+2), p(b+3))
+          call poly5_64_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), p(b+4), p(b+5), p(b+6))
+          call weights5_32_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), w0, w1, w2)
+          wsh(idx,b+1) = w0; wsh(idx,b+2) = w1; wsh(idx,b+3) = w2
+          call weights5_32_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), w0, w1, w2)
+          wsh(idx,b+4) = w0; wsh(idx,b+5) = w1; wsh(idx,b+6) = w2
+        enddo
+      endif
+    enddo
+    call syncthreads()
+    if (it <= face_threads .and. i <= n-5) then
+      do f = 1, 3
+        b = 6*(f-1)
+        q(2*f-1) = real(wsh(idx,b+1),8)*p(b+1) + real(wsh(idx,b+2),8)*p(b+2) + real(wsh(idx,b+3),8)*p(b+3)
+        q(2*f)   = real(wsh(idx,b+4),8)*p(b+4) + real(wsh(idx,b+5),8)*p(b+5) + real(wsh(idx,b+6),8)*p(b+6)
+      enddo
+      acc = q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+      out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+      out(i,3) = q(3); out(i,4) = q(4)
+      out(i,5) = q(5); out(i,6) = q(6)
+    endif
+  end subroutine weno_w32_poly64_serial
+
+  attributes(global) subroutine weno_w32_poly64_warp7(n, nrepeat, x, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: it, idx, i, k, f, b
+    real(4), shared :: wsh(face_threads,24)
+    real(8) :: p(24), q(6), acc
+    real(4) :: w0, w1, w2, w3
+    it = threadIdx%x
+    idx = mod(it-1, face_threads) + 1
+    i = (blockIdx%x-1)*face_threads + idx
+    do k = 1, nrepeat
+      if (i <= n-7) then
+        if (it <= face_threads) then
+          do f = 1, 3
+            b = 8*(f-1)
+            call poly7_64_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), p(b+1), p(b+2), p(b+3), p(b+4))
+            call poly7_64_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), p(b+5), p(b+6), p(b+7), p(b+8))
+          enddo
+        else
+          do f = 1, 3
+            b = 8*(f-1)
+            call weights7_32_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), w0, w1, w2, w3)
+            wsh(idx,b+1) = w0; wsh(idx,b+2) = w1; wsh(idx,b+3) = w2; wsh(idx,b+4) = w3
+            call weights7_32_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), w0, w1, w2, w3)
+            wsh(idx,b+5) = w0; wsh(idx,b+6) = w1; wsh(idx,b+7) = w2; wsh(idx,b+8) = w3
+          enddo
+        endif
+      endif
+    enddo
+    call syncthreads()
+    if (it <= face_threads .and. i <= n-7) then
+      do f = 1, 3
+        b = 8*(f-1)
+        q(2*f-1) = real(wsh(idx,b+1),8)*p(b+1) + real(wsh(idx,b+2),8)*p(b+2) + real(wsh(idx,b+3),8)*p(b+3) + real(wsh(idx,b+4),8)*p(b+4)
+        q(2*f)   = real(wsh(idx,b+5),8)*p(b+5) + real(wsh(idx,b+6),8)*p(b+6) + real(wsh(idx,b+7),8)*p(b+7) + real(wsh(idx,b+8),8)*p(b+8)
+      enddo
+      acc = q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+      out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+      out(i,3) = q(3); out(i,4) = q(4)
+      out(i,5) = q(5); out(i,6) = q(6)
+    endif
+  end subroutine weno_w32_poly64_warp7
+
+  attributes(global) subroutine weno_w32_poly64_serial7(n, nrepeat, x, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: it, idx, i, k, f, b
+    real(4), shared :: wsh(face_threads,24)
+    real(8) :: p(24), q(6), acc
+    real(4) :: w0, w1, w2, w3
+    it = threadIdx%x
+    idx = mod(it-1, face_threads) + 1
+    i = (blockIdx%x-1)*face_threads + idx
+    do k = 1, nrepeat
+      if (it <= face_threads .and. i <= n-7) then
+        do f = 1, 3
+          b = 8*(f-1)
+          call poly7_64_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), p(b+1), p(b+2), p(b+3), p(b+4))
+          call poly7_64_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), p(b+5), p(b+6), p(b+7), p(b+8))
+          call weights7_32_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), w0, w1, w2, w3)
+          wsh(idx,b+1) = w0; wsh(idx,b+2) = w1; wsh(idx,b+3) = w2; wsh(idx,b+4) = w3
+          call weights7_32_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), w0, w1, w2, w3)
+          wsh(idx,b+5) = w0; wsh(idx,b+6) = w1; wsh(idx,b+7) = w2; wsh(idx,b+8) = w3
+        enddo
+      endif
+    enddo
+    call syncthreads()
+    if (it <= face_threads .and. i <= n-7) then
+      do f = 1, 3
+        b = 8*(f-1)
+        q(2*f-1) = real(wsh(idx,b+1),8)*p(b+1) + real(wsh(idx,b+2),8)*p(b+2) + real(wsh(idx,b+3),8)*p(b+3) + real(wsh(idx,b+4),8)*p(b+4)
+        q(2*f)   = real(wsh(idx,b+5),8)*p(b+5) + real(wsh(idx,b+6),8)*p(b+6) + real(wsh(idx,b+7),8)*p(b+7) + real(wsh(idx,b+8),8)*p(b+8)
+      enddo
+      acc = q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+      out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+      out(i,3) = q(3); out(i,4) = q(4)
+      out(i,5) = q(5); out(i,6) = q(6)
+    endif
+  end subroutine weno_w32_poly64_serial7
+
+  attributes(global) subroutine weno_w32_poly64_warp9(n, nrepeat, x, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: it, idx, i, k, f, b
+    real(4), shared :: wsh(face_threads,30)
+    real(8) :: p(30), q(6), acc
+    real(4) :: w0, w1, w2, w3, w4
+    it = threadIdx%x
+    idx = mod(it-1, face_threads) + 1
+    i = (blockIdx%x-1)*face_threads + idx
+    do k = 1, nrepeat
+      if (i <= n-9) then
+        if (it <= face_threads) then
+          do f = 1, 3
+            b = 10*(f-1)
+            call poly9_64_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), p(b+1), p(b+2), p(b+3), p(b+4), p(b+5))
+            call poly9_64_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), p(b+6), p(b+7), p(b+8), p(b+9), p(b+10))
+          enddo
+        else
+          do f = 1, 3
+            b = 10*(f-1)
+            call weights9_32_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), w0, w1, w2, w3, w4)
+            wsh(idx,b+1) = w0; wsh(idx,b+2) = w1; wsh(idx,b+3) = w2; wsh(idx,b+4) = w3; wsh(idx,b+5) = w4
+            call weights9_32_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), w0, w1, w2, w3, w4)
+            wsh(idx,b+6) = w0; wsh(idx,b+7) = w1; wsh(idx,b+8) = w2; wsh(idx,b+9) = w3; wsh(idx,b+10) = w4
+          enddo
+        endif
+      endif
+    enddo
+    call syncthreads()
+    if (it <= face_threads .and. i <= n-9) then
+      do f = 1, 3
+        b = 10*(f-1)
+        q(2*f-1) = real(wsh(idx,b+1),8)*p(b+1) + real(wsh(idx,b+2),8)*p(b+2) + real(wsh(idx,b+3),8)*p(b+3) + real(wsh(idx,b+4),8)*p(b+4) + real(wsh(idx,b+5),8)*p(b+5)
+        q(2*f)   = real(wsh(idx,b+6),8)*p(b+6) + real(wsh(idx,b+7),8)*p(b+7) + real(wsh(idx,b+8),8)*p(b+8) + real(wsh(idx,b+9),8)*p(b+9) + real(wsh(idx,b+10),8)*p(b+10)
+      enddo
+      acc = q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+      out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+      out(i,3) = q(3); out(i,4) = q(4)
+      out(i,5) = q(5); out(i,6) = q(6)
+    endif
+  end subroutine weno_w32_poly64_warp9
+
+  attributes(global) subroutine weno_w32_poly64_serial9(n, nrepeat, x, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: it, idx, i, k, f, b
+    real(4), shared :: wsh(face_threads,30)
+    real(8) :: p(30), q(6), acc
+    real(4) :: w0, w1, w2, w3, w4
+    it = threadIdx%x
+    idx = mod(it-1, face_threads) + 1
+    i = (blockIdx%x-1)*face_threads + idx
+    do k = 1, nrepeat
+      if (it <= face_threads .and. i <= n-9) then
+        do f = 1, 3
+          b = 10*(f-1)
+          call poly9_64_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), p(b+1), p(b+2), p(b+3), p(b+4), p(b+5))
+          call poly9_64_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), p(b+6), p(b+7), p(b+8), p(b+9), p(b+10))
+          call weights9_32_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), w0, w1, w2, w3, w4)
+          wsh(idx,b+1) = w0; wsh(idx,b+2) = w1; wsh(idx,b+3) = w2; wsh(idx,b+4) = w3; wsh(idx,b+5) = w4
+          call weights9_32_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), w0, w1, w2, w3, w4)
+          wsh(idx,b+6) = w0; wsh(idx,b+7) = w1; wsh(idx,b+8) = w2; wsh(idx,b+9) = w3; wsh(idx,b+10) = w4
+        enddo
+      endif
+    enddo
+    call syncthreads()
+    if (it <= face_threads .and. i <= n-9) then
+      do f = 1, 3
+        b = 10*(f-1)
+        q(2*f-1) = real(wsh(idx,b+1),8)*p(b+1) + real(wsh(idx,b+2),8)*p(b+2) + real(wsh(idx,b+3),8)*p(b+3) + real(wsh(idx,b+4),8)*p(b+4) + real(wsh(idx,b+5),8)*p(b+5)
+        q(2*f)   = real(wsh(idx,b+6),8)*p(b+6) + real(wsh(idx,b+7),8)*p(b+7) + real(wsh(idx,b+8),8)*p(b+8) + real(wsh(idx,b+9),8)*p(b+9) + real(wsh(idx,b+10),8)*p(b+10)
+      enddo
+      acc = q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+      out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+      out(i,3) = q(3); out(i,4) = q(4)
+      out(i,5) = q(5); out(i,6) = q(6)
+    endif
+  end subroutine weno_w32_poly64_serial9
+
+  ! ---------------- family C: w32mix{h,1}_poly64_seq9 ----------------
+  ! The first `nsel` of the 6 var-bias slots (1=rho left, 2=rho right, ...)
+  ! keep FP64 weights; the rest use FP32 weights. Polys + combine always FP64.
+  ! Branches depend only on (f, nsel), so they are warp-uniform.
+
+  attributes(global) subroutine weno_w32mix_poly64_seq9(n, nrepeat, nsel, x, out)
+    integer, intent(in), value :: n, nrepeat, nsel
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: i, k, f
+    real(8) :: w0, w1, w2, w3, w4
+    real(4) :: s0, s1, s2, s3, s4
+    real(8) :: p0, p1, p2, p3, p4, q(6), acc
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n-9) return
+    acc = 0.d0
+    do k = 1, nrepeat
+      do f = 1, 3
+        call poly9_64_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), p0, p1, p2, p3, p4)
+        if (2*f-1 <= nsel) then
+          call weights9_64_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), w0, w1, w2, w3, w4)
+          q(2*f-1) = w0*p0 + w1*p1 + w2*p2 + w3*p3 + w4*p4
+        else
+          call weights9_32_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), s0, s1, s2, s3, s4)
+          q(2*f-1) = real(s0,8)*p0 + real(s1,8)*p1 + real(s2,8)*p2 + real(s3,8)*p3 + real(s4,8)*p4
+        endif
+        call poly9_64_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), p0, p1, p2, p3, p4)
+        if (2*f <= nsel) then
+          call weights9_64_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), w0, w1, w2, w3, w4)
+          q(2*f) = w0*p0 + w1*p1 + w2*p2 + w3*p3 + w4*p4
+        else
+          call weights9_32_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), s0, s1, s2, s3, s4)
+          q(2*f) = real(s0,8)*p0 + real(s1,8)*p1 + real(s2,8)*p2 + real(s3,8)*p3 + real(s4,8)*p4
+        endif
+      enddo
+      acc = acc + q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+    enddo
+    out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+    out(i,3) = q(3); out(i,4) = q(4)
+    out(i,5) = q(5); out(i,6) = q(6)
+  end subroutine weno_w32mix_poly64_seq9
+
+  ! ---------------- family D: var{3,4,5} splits, WENO9 ----------------
+  ! Variables 1..kk are reconstructed fully in FP64, kk+1..nv fully in FP32.
+  ! Scalar ql/qr with stores inside the loop (no runtime-indexed local array,
+  ! which would spill to local memory under the runtime trip count); the first
+  ! variable of each role carries the 1.d-30*acc anti-DCE term, written last.
+
+  attributes(global) subroutine weno_varsplit_seq9(n, nrepeat, nv, kk, x, out)
+    integer, intent(in), value :: n, nrepeat, nv, kk
+    real(8), intent(in), device :: x(n,nv)
+    real(8), intent(out), device :: out(n,2*nv)
+    integer :: i, k, f
+    real(8) :: ql, qr, ql1, acc
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n-9) return
+    acc = 0.d0
+    ql1 = 0.d0
+    do k = 1, nrepeat
+      do f = 1, nv
+        if (f <= kk) then
+          call weno9_64_pair(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), ql, qr)
+        else
+          call weno9_32_pair(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), ql, qr)
+        endif
+        acc = acc + ql + qr
+        if (f == 1) ql1 = ql
+        if (f > 1) out(i,2*f-1) = ql
+        out(i,2*f) = qr
+      enddo
+    enddo
+    out(i,1) = ql1 + 1.d-30*acc
+  end subroutine weno_varsplit_seq9
+
+  attributes(global) subroutine weno_varsplit_warp9(n, nrepeat, nv, kk, x, out)
+    integer, intent(in), value :: n, nrepeat, nv, kk
+    real(8), intent(in), device :: x(n,nv)
+    real(8), intent(out), device :: out(n,2*nv)
+    integer :: it, idx, i, k, f
+    real(8) :: ql, qr, qfirst, acc
+    it = threadIdx%x
+    idx = mod(it-1, face_threads) + 1
+    i = (blockIdx%x-1)*face_threads + idx
+    ! no shared memory and no barrier anywhere, so the early return is safe
+    if (i > n-9) return
+    acc = 0.d0
+    qfirst = 0.d0
+    if (it <= face_threads) then
+      do k = 1, nrepeat
+        do f = 1, kk
+          call weno9_64_pair(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), ql, qr)
+          acc = acc + ql + qr
+          if (f == 1) qfirst = ql
+          if (f > 1) out(i,2*f-1) = ql
+          out(i,2*f) = qr
+        enddo
+      enddo
+      if (kk >= 1) out(i,1) = qfirst + 1.d-30*acc
+    else
+      do k = 1, nrepeat
+        do f = kk+1, nv
+          call weno9_32_pair(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), ql, qr)
+          acc = acc + ql + qr
+          if (f == kk+1) qfirst = ql
+          if (f > kk+1) out(i,2*f-1) = ql
+          out(i,2*f) = qr
+        enddo
+      enddo
+      if (kk+1 <= nv) out(i,2*kk+1) = qfirst + 1.d-30*acc
+    endif
+  end subroutine weno_varsplit_warp9
+
+  ! ---------------- family E: w64_only_seq{,7,9} ----------------
+  ! The FP64 weights stream ALONE (no polynomials): the ablation partner of
+  ! weight_poly32_seqX. If t(weight_poly32_seqX) - t(w64_only_seqX) is only
+  ! the combine+F2F delta, the FP32 polynomial half is hidden under the FP64
+  ! stream (ILP co-issue); a serialized FP32 half would add its full pipe time
+  ! on top. The output is a fixed combination of the weights, so checksums are
+  ! NOT comparable with any other family.
+
+  attributes(global) subroutine weno_w64_only_seq(n, nrepeat, x, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: i, k, f
+    real(8) :: w0, w1, w2, q(6), acc
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n-5) return
+    acc = 0.d0
+    do k = 1, nrepeat
+      do f = 1, 3
+        call weights5_64_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), w0, w1, w2)
+        q(2*f-1) = w0 + 2.d0*w1 + 3.d0*w2
+        call weights5_64_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), w0, w1, w2)
+        q(2*f) = w0 + 2.d0*w1 + 3.d0*w2
+      enddo
+      acc = acc + q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+    enddo
+    out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+    out(i,3) = q(3); out(i,4) = q(4)
+    out(i,5) = q(5); out(i,6) = q(6)
+  end subroutine weno_w64_only_seq
+
+  attributes(global) subroutine weno_w64_only_seq7(n, nrepeat, x, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: i, k, f
+    real(8) :: w0, w1, w2, w3, q(6), acc
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n-7) return
+    acc = 0.d0
+    do k = 1, nrepeat
+      do f = 1, 3
+        call weights7_64_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), w0, w1, w2, w3)
+        q(2*f-1) = w0 + 2.d0*w1 + 3.d0*w2 + 4.d0*w3
+        call weights7_64_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), w0, w1, w2, w3)
+        q(2*f) = w0 + 2.d0*w1 + 3.d0*w2 + 4.d0*w3
+      enddo
+      acc = acc + q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+    enddo
+    out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+    out(i,3) = q(3); out(i,4) = q(4)
+    out(i,5) = q(5); out(i,6) = q(6)
+  end subroutine weno_w64_only_seq7
+
+  attributes(global) subroutine weno_w64_only_seq9(n, nrepeat, x, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: i, k, f
+    real(8) :: w0, w1, w2, w3, w4, q(6), acc
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n-9) return
+    acc = 0.d0
+    do k = 1, nrepeat
+      do f = 1, 3
+        call weights9_64_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), w0, w1, w2, w3, w4)
+        q(2*f-1) = w0 + 2.d0*w1 + 3.d0*w2 + 4.d0*w3 + 5.d0*w4
+        call weights9_64_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), w0, w1, w2, w3, w4)
+        q(2*f) = w0 + 2.d0*w1 + 3.d0*w2 + 4.d0*w3 + 5.d0*w4
+      enddo
+      acc = acc + q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+    enddo
+    out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+    out(i,3) = q(3); out(i,4) = q(4)
+    out(i,5) = q(5); out(i,6) = q(6)
+  end subroutine weno_w64_only_seq9
 end module weno_micro_kernels
 
 program weno_micro
   use cudafor
   use weno_micro_kernels
   implicit none
-  integer :: n, nrepeat, mode, argn, ierr, nlaunch
+  integer :: n, nrepeat, mode, argn, ierr, nlaunch, nvar
   character(len=128) :: mode_name, arg
   real(8), allocatable, device :: x(:,:), out(:,:)
   real(8), allocatable :: h(:,:)
@@ -1799,7 +2379,15 @@ program weno_micro
     read(arg, *) nlaunch
   endif
 
-  allocate(x(n,3), out(n,6), h(8,6))
+  ! var4_*/var5_* modes carry 4/5 physical variables (rho,u,v,p / rho,u,v,w,p);
+  ! everything else keeps the original 3-variable layout bit-identically.
+  nvar = 3
+  if (len_trim(mode_name) >= 4) then
+    if (mode_name(1:4) == 'var4') nvar = 4
+    if (mode_name(1:4) == 'var5') nvar = 5
+  endif
+
+  allocate(x(n,nvar), out(n,2*nvar), h(8,2*nvar))
   ! Poison the output so a kernel that never runs cannot masquerade as a
   ! successful run producing zeros -- this is what hid cudaErrorInvalidPtx.
   out = -1.d0
@@ -1809,7 +2397,11 @@ program weno_micro
   gface = dim3((n + face_threads - 1)/face_threads,1,1)
   gface2 = dim3((n + 2*face_threads - 1)/(2*face_threads),1,1)
   ghalf = dim3((n + 63)/64,1,1)
-  call init_input<<<g128,b128>>>(n, x)
+  if (nvar == 3) then
+    call init_input<<<g128,b128>>>(n, x)
+  else
+    call init_input_nv<<<g128,b128>>>(n, nvar, x)
+  endif
   call check_launch('init_input')
 
   ! Warm-up launch (JIT, caches, clock ramp), then timed launches. The harness
@@ -1854,7 +2446,7 @@ program weno_micro
     real(8), allocatable :: hall(:,:)
     real(8) :: csum
     integer :: nbad
-    allocate(hall(n,6))
+    allocate(hall(n,2*nvar))
     hall = out
     csum = sum(hall(1:n-5,:))
     nbad = count(.not. ieee_is_finite_all(hall(1:n-5,:)))
@@ -1954,6 +2546,62 @@ contains
       call weno_weight_poly_serial_warp9<<<gface,b256>>>(n, nrepeat, x, out)
     case ('weight_poly32_warp9')
       call weno_weight_poly_warp9<<<gface,b256>>>(n, nrepeat, x, out)
+    case ('w32_poly64_seq')
+      call weno_w32_poly64_seq<<<g128,b128>>>(n, nrepeat, x, out)
+    case ('w32_poly64_serial')
+      call weno_w32_poly64_serial<<<gface,b256>>>(n, nrepeat, x, out)
+    case ('w32_poly64_warp')
+      call weno_w32_poly64_warp<<<gface,b256>>>(n, nrepeat, x, out)
+    case ('w32_poly64_seq7')
+      call weno_w32_poly64_seq7<<<g128,b128>>>(n, nrepeat, x, out)
+    case ('w32_poly64_serial7')
+      call weno_w32_poly64_serial7<<<gface,b256>>>(n, nrepeat, x, out)
+    case ('w32_poly64_warp7')
+      call weno_w32_poly64_warp7<<<gface,b256>>>(n, nrepeat, x, out)
+    case ('w32_poly64_seq9')
+      call weno_w32_poly64_seq9<<<g128,b128>>>(n, nrepeat, x, out)
+    case ('w32_poly64_serial9')
+      call weno_w32_poly64_serial9<<<gface,b256>>>(n, nrepeat, x, out)
+    case ('w32_poly64_warp9')
+      call weno_w32_poly64_warp9<<<gface,b256>>>(n, nrepeat, x, out)
+    case ('w32mixh_poly64_seq9')
+      call weno_w32mix_poly64_seq9<<<g128,b128>>>(n, nrepeat, 1, x, out)
+    case ('w32mix1_poly64_seq9')
+      call weno_w32mix_poly64_seq9<<<g128,b128>>>(n, nrepeat, 2, x, out)
+    case ('w64_only_seq')
+      call weno_w64_only_seq<<<g128,b128>>>(n, nrepeat, x, out)
+    case ('w64_only_seq7')
+      call weno_w64_only_seq7<<<g128,b128>>>(n, nrepeat, x, out)
+    case ('w64_only_seq9')
+      call weno_w64_only_seq9<<<g128,b128>>>(n, nrepeat, x, out)
+    case ('var3_fp64_seq9')
+      call weno_varsplit_seq9<<<g128,b128>>>(n, nrepeat, 3, 3, x, out)
+    case ('var3_fp32_seq9')
+      call weno_varsplit_seq9<<<g128,b128>>>(n, nrepeat, 3, 0, x, out)
+    case ('var3_k1_seq9')
+      call weno_varsplit_seq9<<<g128,b128>>>(n, nrepeat, 3, 1, x, out)
+    case ('var3_k1_warp9')
+      call weno_varsplit_warp9<<<gface,b256>>>(n, nrepeat, 3, 1, x, out)
+    case ('var4_fp64_seq9')
+      call weno_varsplit_seq9<<<g128,b128>>>(n, nrepeat, 4, 4, x, out)
+    case ('var4_fp32_seq9')
+      call weno_varsplit_seq9<<<g128,b128>>>(n, nrepeat, 4, 0, x, out)
+    case ('var4_k1_seq9')
+      call weno_varsplit_seq9<<<g128,b128>>>(n, nrepeat, 4, 1, x, out)
+    case ('var4_k2_seq9')
+      call weno_varsplit_seq9<<<g128,b128>>>(n, nrepeat, 4, 2, x, out)
+    case ('var4_k1_warp9')
+      call weno_varsplit_warp9<<<gface,b256>>>(n, nrepeat, 4, 1, x, out)
+    case ('var5_fp64_seq9')
+      call weno_varsplit_seq9<<<g128,b128>>>(n, nrepeat, 5, 5, x, out)
+    case ('var5_fp32_seq9')
+      call weno_varsplit_seq9<<<g128,b128>>>(n, nrepeat, 5, 0, x, out)
+    case ('var5_k1_seq9')
+      call weno_varsplit_seq9<<<g128,b128>>>(n, nrepeat, 5, 1, x, out)
+    case ('var5_k2_seq9')
+      call weno_varsplit_seq9<<<g128,b128>>>(n, nrepeat, 5, 2, x, out)
+    case ('var5_k2_warp9')
+      call weno_varsplit_warp9<<<gface,b256>>>(n, nrepeat, 5, 2, x, out)
     case default
       print *, 'bad mode: ', trim(mode_name)
       error stop 2
