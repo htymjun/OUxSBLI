@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# WENO5-Z microbenchmark driver.
+# WENO microbenchmark driver.
 #
 # Primary measurement is weno_micro.f90's OWN CUDA-event timing: the binary
 # takes `nlaunch` timed launches and prints time_min_us / time_avg_us. No
 # profiler is required, which matters because ncu and nsys have both hung
 # repeatedly on this hardware while the unprofiled binary ran fine
 # (report/rtx4060_weno_division_reduction.md). Pass --nsys to additionally
-# capture a timeline.
+# capture a timeline. By default this script also runs the solver-level
+# WENO_ORDER={5,7,9} Nsight Systems sweep in a sibling output directory, so one
+# command gives both the WENO5-Z isolated microbenchmark and the WENO7/9 solver
+# data.
 #
 # Two harness rules are enforced here rather than left to the caller:
 #
@@ -35,10 +38,16 @@ RESUME=0
 KEEP_GOING=0
 USE_NSYS=0
 NSYS_TRACE="${NSYS_TRACE:-cuda,nvtx,osrt}"
+RUN_SOLVER_WENO_ORDERS=1
+SOLVER_WENO_NT="${SOLVER_WENO_NT:-20}"
+SOLVER_WENO_REPEAT="${SOLVER_WENO_REPEAT:-}"
 
 # Both families, because the point of the study is which half goes to FP32:
 #   var_*           demote the WENO-Z WEIGHTS (and thus every division)
 #   weight_poly32_* demote the candidate POLYNOMIALS
+# The 7/9 suffix selects the WENO-Z stencil width (WENO7-Z / WENO9-Z); unsuffixed
+# is WENO5-Z. Only the five core co-issue modes have wider-stencil versions --
+# the shared-memory/barrier layout variants stay WENO5-only.
 # The var_* modes were absent from the old default list because they returned
 # NaN; that was an nvfortran `value` miscompile, since fixed, and they turned
 # out to be the interesting ones (weights are ~96% of the FP64-pipe work).
@@ -61,6 +70,16 @@ MODES=(
   weight_poly32_wsmem_tile2_warp
   weight_poly32_halfwarp_serial
   weight_poly32_halfwarp_shfl
+  var_fp64_seq7
+  var_fp32_seq7
+  weight_poly32_seq7
+  weight_poly32_serial7
+  weight_poly32_warp7
+  var_fp64_seq9
+  var_fp32_seq9
+  weight_poly32_seq9
+  weight_poly32_serial9
+  weight_poly32_warp9
 )
 
 usage() {
@@ -80,8 +99,16 @@ Options:
   --modes "A B ..."     override the mode list
   --nsys                also capture an nsys timeline per row (slow, optional)
   --trace LIST          nsys trace list, default cuda,nvtx,osrt
+  --no-solver-orders    do not run the solver-level WENO_ORDER=5/7/9 sweep
+  --solver-nt N         time steps for the solver-level sweep, default 20
   --resume              skip completed rows in an existing --out
   --keep-going          continue after a failed mode
+
+Outputs:
+  summary.csv                  WENO5-Z isolated microbenchmark
+  solver_weno_orders/summary.csv
+                               SLAU+WENO5/7/9 solver-level sweep, produced by
+                               1D_solver/report/run_weno_nsys.sh
 
 Modes:
   var_*            split by physical VARIABLE -- which of rho/u/p keep FP64
@@ -122,6 +149,8 @@ while [ $# -gt 0 ]; do
     --modes) read -r -a MODES <<< "${2:?missing --modes value}"; shift 2;;
     --nsys) USE_NSYS=1; shift;;
     --trace) NSYS_TRACE="${2:?missing --trace value}"; shift 2;;
+    --no-solver-orders) RUN_SOLVER_WENO_ORDERS=0; shift;;
+    --solver-nt) SOLVER_WENO_NT="${2:?missing --solver-nt value}"; shift 2;;
     --resume) RESUME=1; shift;;
     --keep-going) KEEP_GOING=1; shift;;
     --nrepeat|--nrepeat-list)
@@ -135,6 +164,7 @@ while [ $# -gt 0 ]; do
 done
 
 NREPEAT=1   # see the header; not configurable on purpose
+[ -n "$SOLVER_WENO_REPEAT" ] || SOLVER_WENO_REPEAT="$REPEAT"
 
 if [ -z "$OUT" ]; then
   stamp="$(date +%Y%m%d_%H%M%S)"
@@ -161,6 +191,9 @@ fi
   echo "nlaunch=$NLAUNCH"
   echo "repeat=$REPEAT"
   echo "use_nsys=$USE_NSYS"
+  echo "run_solver_weno_orders=$RUN_SOLVER_WENO_ORDERS"
+  echo "solver_weno_nt=$SOLVER_WENO_NT"
+  echo "solver_weno_repeat=$SOLVER_WENO_REPEAT"
   echo
   echo "[gpu]"
   nvidia-smi --query-gpu=name,driver_version,compute_cap,pci.bus_id --format=csv 2>/dev/null || true
@@ -242,6 +275,24 @@ for rnd in $(seq 1 "$REPEAT"); do
   done
 done
 
+if [ "$RUN_SOLVER_WENO_ORDERS" -eq 1 ]; then
+  solver_out="$OUT/solver_weno_orders"
+  echo
+  echo "[$(date +%H:%M:%S)] solver-level WENO_ORDER=5/7/9 sweep -> $solver_out" | tee -a "$OUT/progress.log"
+  solver_args=(
+    --out "$solver_out"
+    --gpu-cc "$GPU_CC"
+    --nx "$NX"
+    --nt "$SOLVER_WENO_NT"
+    --repeat "$SOLVER_WENO_REPEAT"
+  )
+  [ "$RESUME" -eq 1 ] && solver_args+=(--resume)
+  [ "$KEEP_GOING" -eq 1 ] && solver_args+=(--keep-going)
+  NSYS="$NSYS" NSYS_TRACE="$NSYS_TRACE" \
+    bash "$SOLVER_ROOT/report/run_weno_nsys.sh" "${solver_args[@]}" \
+    2>&1 | tee "$OUT/solver_weno_orders.log"
+fi
+
 echo
 echo "summary: $OUT/summary.csv"
 python3 - "$OUT/summary.csv" <<'EOF'
@@ -265,3 +316,26 @@ bad = [r for r in csv.DictReader(open(sys.argv[1])) if r["status"] != "OK"]
 if bad:
     print(f"\n{len(bad)} row(s) NOT ok: " + ", ".join(sorted({r['mode'] for r in bad})))
 EOF
+
+if [ -s "$OUT/solver_weno_orders/summary.csv" ]; then
+  echo
+  echo "solver WENO_ORDER summary: $OUT/solver_weno_orders/summary.csv"
+  python3 - "$OUT/solver_weno_orders/summary.csv" <<'EOF'
+import csv, math, sys
+rows = list(csv.DictReader(open(sys.argv[1])))
+groups = {}
+for r in rows:
+    try:
+        t = float(r.get("time_us", "nan"))
+    except ValueError:
+        continue
+    if not math.isfinite(t):
+        continue
+    groups.setdefault((r.get("table_id",""), r.get("case_id","")), []).append(t)
+if not groups:
+    sys.exit(0)
+print(f"\n{'table':12s} {'case':20s} {'min us':>11} {'runs':>5}")
+for (table, case), vals in sorted(groups.items()):
+    print(f"{table:12s} {case:20s} {min(vals):11.1f} {len(vals):5d}")
+EOF
+fi

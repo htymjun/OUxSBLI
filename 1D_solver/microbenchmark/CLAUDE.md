@@ -34,6 +34,58 @@ cmake --build build -j
 `ccnative`, and a stale cached value builds for the wrong architecture, which
 fails at *launch*, not at build.
 
+## Stencil width: the `7` / `9` mode suffix
+
+Unsuffixed modes are WENO5-Z; `…7` is WENO7-Z and `…9` is WENO9-Z. Only the
+five **core co-issue modes** have wider versions — `var_fp64_seq`,
+`var_fp32_seq`, `weight_poly32_seq`, `weight_poly32_serial`,
+`weight_poly32_warp`. The shared-memory/barrier layout variants stay WENO5-only,
+since their ranking is already settled.
+
+The WENO7/9 device routines (and their `_right` twins) are **generated**:
+
+```bash
+python3 ../report/check_weno_order.py --gen-micro 4   # WENO7-Z split form
+python3 ../report/check_weno_order.py --gen-micro 5   # WENO9-Z
+```
+
+`--gen-micro` emits the *split* form (separate normalised weights and candidate
+polynomials) rather than the fused `result(vf)` form `--gen` emits for the
+solver — folding the weight normalisation into a final division the way the
+solver does would move FP64 work across the very boundary this benchmark
+measures. `micro_split_test()` in that script order-verifies the split form on
+**both biases** at 5.00 / 7.02 / 8.95.
+
+**WENO5-Z stays hand-written on purpose.** Its betas use the textbook
+sum-of-two-squares form, which is a WENO5 special case — the published WENO7/9
+betas are dense quadratic forms. Regenerating r=3 would swap 2 squares for 6
+products and change WENO5's instruction count, invalidating every prior WENO5
+timing.
+
+### What widening actually showed
+
+Measured at `nx=1048576`, RTX 4060:
+
+| | WENO5 | WENO7 | WENO9 |
+|---|---:|---:|---:|
+| `var_fp64_seq` (FP64 baseline) | 5411 µs | 9807 µs (1.81×) | 16080 µs (2.97×) |
+| `var_fp32_seq` (weights → FP32) | 432 µs | 529 µs | 715 µs |
+| **demotion speedup** | **12.5×** | **18.5×** | **22.5×** |
+| `weight_poly32_serial` | 5389 | 9083 | 14188 |
+| `weight_poly32_warp` | 5373 | 9078 | 14809 |
+| **serial → warp (co-issue)** | **1.003×** | **1.001×** | **0.958×** |
+
+`ncu` confirms the mechanism: `smsp__inst_executed_pipe_fp64.sum` scales
+1.00 / 1.81 / 2.76 and time scales identically, matching the 1.00 / 1.82 / 2.79
+predicted from the solver's per-face SASS counts.
+
+**Widening the stencil does not rescue warp co-issue.** The controlled
+`serial → warp` pair is worth nothing at WENO5 and WENO7, and at WENO9 the warp
+split is **4.4% slower** — its shared memory reaches 46 KB, which caps occupancy
+at one block per SM. What *does* grow with the stencil is the precision
+demotion: 12.5× → 18.5× → 22.5×. This is the same conclusion the solver reached
+by a different route — relocating work is free, removing it is what pays.
+
 ## The two mode families
 
 The question the whole directory exists to answer is *which half of WENO goes
@@ -87,8 +139,31 @@ diagnostic, not the cross-warp strategy.
   launch, the checksum covers the *whole* array, and a non-finite value is an
   `error stop`, not a printed warning. `summary.csv` records `checksum_all` and
   `nonfinite`; a nonzero `nonfinite` invalidates the timing.
+- **`checksum_all` is a launch/NaN guard, NOT a correctness check.**
+  `init_input` builds a piecewise-linear field (a ramp plus one step), and every
+  WENO candidate is exact on linear data, so the reconstruction is insensitive
+  to the weights almost everywhere. Measured: giving `v^+` the *wrong* optimal
+  weights — the third-order bug below — moves the result by at most **4.4e-16**
+  (one ulp) and the whole-array sum by 3e-11 out of 1.27e6, far under the
+  printed resolution. Anything that changes *which* WENO you are computing must
+  be checked with `../report/check_weno_order.py`, not with this checksum.
+- **`maxregcount:128`**, raised from the solver's 96. At 96 the WENO9-Z kernels
+  pinned to the cap and spilled 64–84 B, injecting LDL/STL into the instruction
+  stream being measured. At 128 they settle at their natural 114 registers with
+  zero spill, and WENO5/7 are unaffected (61/64/60 either way), so prior WENO5
+  timings stay comparable.
 
-## Two traps that each cost a debugging session
+## Three traps that each cost a debugging session
+
+- **Right-biased reconstruction needs MIRRORED optimal weights.** Until
+  2026-08-17 `weights64`/`weights32` used `d = 0.1/0.6/0.3` for *both* sides
+  while `poly64_right` used the mirrored candidate ordering, making `v^+` third
+  order instead of fifth. Instruction counts are identical, so **every timing
+  result from before the fix still stands** — but the values were wrong, and the
+  checksum could not see it (above). There are now explicit
+  `weights{5,7,9}_{64,32}_{left,right}` routines; the `_right` set carries `d`
+  reversed. The same bug existed in the solver's `weno5z_right`.
+
 
 - **Stale `CASE_GPU_CC` → `cudaErrorInvalidPtx` (218).** A cached CC that does
   not match the GPU builds cleanly and then fails at every launch, because the

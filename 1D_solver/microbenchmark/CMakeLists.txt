@@ -23,8 +23,15 @@ endif()
 # cudaGetLastError check; this message makes the cause visible in build.log.
 message(STATUS "weno_micro target architecture: ${_CASE_GPU_CC_FLAG} (CASE_GPU_CC=${CASE_GPU_CC})")
 
+
+# maxregcount raised 96 -> 128 for the WENO9-Z kernels. At 96 they pinned to
+# exactly the cap and spilled 64-84 bytes, which injects LDL/STL traffic into
+# the very instruction stream this benchmark measures. At 128 they settle at
+# their natural 114 registers with zero spill, and the WENO5/7 kernels are
+# unaffected (61/64/60 registers either way, verified) so prior WENO5 timings
+# remain comparable. The solver keeps 96; this is a microbenchmark-only change.
 set(CMAKE_Fortran_FLAGS
-    "${CMAKE_Fortran_FLAGS} -cuda -fast -Mfma -Mpreprocess -Mchkptr -Minfo=accel -gpu=ptxinfo,rdc,lto,${_CASE_GPU_CC_FLAG},lineinfo,maxregcount:96")
+    "${CMAKE_Fortran_FLAGS} -cuda -fast -Mfma -Mpreprocess -Mchkptr -Minfo=accel -gpu=ptxinfo,rdc,lto,${_CASE_GPU_CC_FLAG},lineinfo,maxregcount:128")
 
 add_executable(weno_micro weno_micro.f90)
 
