@@ -8,10 +8,12 @@ Runge-Kutta, or primitive-decode noise. Solver-wide concerns live in
 | file | role |
 |---|---|
 | `weno_micro.f90` | kernels + driver; **self-timing** via CUDA events |
+| `check_df_accuracy.sh` | accuracy gate for the family G double-float polynomials — the one check `checksum_all` cannot perform |
 | `run_weno_nsys.sh` | sweep driver, writes `summary.csv` and a ranked table (self-timed only — its per-row nsys capture and `parse_weno_nsys.py` were removed 2026-08-17; the name survives for the historical findings docs) |
 | `CMakeLists.txt` | standalone `weno_micro` target, own `CASE_GPU_CC` handling |
 
-Findings: `../report/rtx4060_weno_micro_split.md`.
+Findings: `../report/rtx4060_weno_micro_split.md`,
+`../report/rtx4060_weno_df_hybrid.md` (the FP64/DF hybrid).
 
 ## Run it
 
@@ -101,6 +103,40 @@ to FP32*. The families answer it differently:
 | `w32mix{h,1}_poly64_seq9` | all but the first 1 / 2 of the 6 var-bias **weight calls** | balance tuning between `weight_poly32` (0 of 6) and `w32_poly64` (6 of 6) |
 | `var{3,4,5}_{fp64,fp32,k*}_seq9` / `_k*_warp9` | all but the first k **variables**, at nv = 3/4/5 (ρ,u,p / ρ,u,v,p / ρ,u,v,w,p) | variable-granular balance; nv=5 models the 3D solver. `_warp9` needs **no shared memory and no barrier** — each role owns complete reconstructions and stores its own columns. One parameterized kernel pair (`weno_varsplit_{seq,warp}9(n,nrepeat,nv,k,…)`); `var3_fp64/fp32_seq9` reproduce `var_fp64/fp32_seq9` bit-for-bit, quantifying the runtime-trip-count codegen delta |
 | `w64_only_seq{,7,9}` | nothing — the FP64 **weights stream alone**, no polynomials | ablation: `t(weight_poly32_seqX) − t(w64_only_seqX)` isolates whether the FP32 half of `weight_poly32_seqX` rides free (ILP co-issue) or serializes. Output is a fixed weight combination, so its checksum is not comparable to anything else |
+| **family G**: `w64_polydfr_seq9`, `w64_polydfr_dfin_seq9` | the candidate polynomials + combine in **double-float (DF)** emulation; weights stay FP64 | the FP64/DF hybrid. `dfin` reads a pre-split real(4) hi/lo copy of the input, moving the per-value split out of the timed kernel at +50% read traffic. Ablations: `poly64_only_seq9` (the FP64 reference, and the denominator for `C`), `polydfr_only_seq9`, `polydfr_dfin_only_seq9`, and `polydf_only_seq9` (**broken — see below**) |
+
+### family G: why the DF hybrid sits at break-even
+
+Full write-up: `../report/rtx4060_weno_df_hybrid.md`.
+
+DF's op multiplier is **not** the obstacle: measured `C = 1404/213 = 6.6`, well
+under A100's ~11.6 break-even. The obstacle is that **DF↔FP64 boundary
+conversions issue on the FP64 pipe** — a split is one DADD plus two F2F, and both
+F2F directions use the FP64 unit. The WENO9 polynomial block crosses ~10 inputs
+and ~10 outputs per face per variable, so it spends more FP64-pipe slots on
+conversion (290) than the FP64 arithmetic it removes (213).
+
+Pre-splitting the input (`dfin`) fixes that — the DF polynomial block then beats
+the FP64 one, 6198 vs 7979 µs — but the block is only 213/1186 = **18%** of the
+FP64-pipe work, so the ceiling is `1186/(1186−213+170) = 1.038×`. There was never
+20% on the table. Measured **1.002×** on the 4060; predicted **1.02×** on A100.
+
+**The hypothesis was tested on the wrong block.** The weights carry 82% of the
+FP64-pipe work behind the *same* boundary — a 4.6× better arithmetic-to-boundary
+ratio. One weight call in DF projects to `1186−162+15 = 1039` → **1.14×**. That is
+the next experiment (`wdfmix1_poly64_dfin_seq9`); it needs DF divisions plus the
+`ratio_cap` clamp, written in the relaxed style.
+
+Both DF hybrids reproduce pure FP64 **bit-for-bit**, where the FP32 splits deviate
+by 3e-10 … 9e-9. DF is the accuracy-preserving Pareto point; it just does not yet
+buy speed on this split.
+
+Two accounting traps to handle before comparing static counts:
+`var_fp64_seq9`/`var_fp32_seq9` **share one kernel** (runtime mode flag), so that
+count is the union of both paths and is not an FP64 baseline — use
+`w64_only_seq9` + `poly64_only_seq9` = 1186. And kernels differ in **loop
+unrolling**: `LDG`=30 means the `do f=1,3` variable loop was unrolled, `LDG`=10
+means it was not and the counts are per-iteration (×3).
 
 The weights carry ~96% of the FP64-pipe work and every division, so `var_*` vs
 `weight_poly32_*` are not close: demoting the weights is worth ~24× on Ada,
@@ -175,6 +211,41 @@ diagnostic, not the cross-warp strategy.
   timings stay comparable. `w32_poly64_{serial,warp}9` sit at exactly 128 with
   **zero spill** (their `p(30)` real(8) polynomial array lives across the
   barrier); re-check ptxinfo after any change that adds live values there.
+
+## Four traps that each cost a debugging session
+
+- **`fltflt` silently degrades to FP32 accuracy inside this module.** `poly9_df_*`
+  (the arm built from the library's `*` / `fltflt_add5` operators) is **not
+  double-float under this benchmark's flags** — 2.1e-08 left / 1.5e-08 right
+  against `poly9_64_*` on a smooth field, with only 14 FP32 ops per candidate in
+  the SASS where the algorithm needs ~65. The lo-word arithmetic is *eliminated*,
+  not reordered. Never quote its timing as a DF datapoint.
+  Bisected: the same source text in a **small standalone module** — same flags,
+  same includes, same `fltflt.f90` object — gives 3.1e-14, and stays correct
+  through five overlapping candidates and the trailing FP64 scale. It degrades
+  only inside the large `weno_micro_kernels` module, identically for a routine
+  and for a textually identical copy beside it, and not from register pressure
+  (it reproduces at 40 registers with zero spill). Consistent mechanism:
+  `fltflt_init` is inlined across the LTO boundary and its exact split
+  `lo = real(a - real(hi,8), 4)` is folded to zero, the compiler treating the
+  `real(8)→real(4)→real(8)` round trip as the identity. `poly9_dfr_*` is immune
+  for the single reason that survived the bisect — it writes that split **inline
+  in the consuming routine** rather than calling into the library. So: **write DF
+  splits inline; do not route them through `fltflt_init` here.**
+  This is a live risk for the **solver** too — every DF twin in
+  `calc_slau_kernel.f90.fypp` opens with a block of `fltflt_init` calls at
+  `-fast` in a large module, and the 1.0e-09 agreement quoted in
+  `../report/rtx4060_weno_division_reduction.md` is the `Q.dat` print floor, which
+  cannot distinguish 1e-13 from 1e-8. Note `report/df_accuracy_test.f90` **passes**
+  at 3.7e-14 with these exact flags and is *not* sensitive to this failure: it
+  exercises `mul_ff_ff`/`add_ff_ff` in a small module.
+  Gate for family G, since `checksum_all` provably cannot see this (the broken arm
+  reproduces the FP64 checksum bit-for-bit on the piecewise-linear input):
+  ```bash
+  bash 1D_solver/microbenchmark/check_df_accuracy.sh --gpu-cc 89
+  ```
+  It builds the probe from the **real module text** so it cannot drift, and gates
+  the relaxed arm at < 1e-12 on **both** biases.
 
 ## Three traps that each cost a debugging session
 

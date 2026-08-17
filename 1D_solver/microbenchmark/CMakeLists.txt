@@ -33,7 +33,13 @@ message(STATUS "weno_micro target architecture: ${_CASE_GPU_CC_FLAG} (CASE_GPU_C
 set(CMAKE_Fortran_FLAGS
     "${CMAKE_Fortran_FLAGS} -cuda -fast -Mfma -Mpreprocess -Mchkptr -Minfo=accel -gpu=ptxinfo,rdc,lto,${_CASE_GPU_CC_FLAG},lineinfo,maxregcount:128")
 
-add_executable(weno_micro weno_micro.f90)
+# ../src/fltflt.f90 is the double-float (DF) emulation module used by the
+# family G modes. Only this one file is compiled -- fltflt_operator.f90,
+# fltflt_subroutines.f90 and their two interface files are textually `include`d
+# by weno_micro.f90 so nvfortran can inline the bodies without crossing a
+# module boundary (see the rationale in src/fltflt.f90). That is why the
+# include directory below is load-bearing rather than vestigial.
+add_executable(weno_micro ../src/fltflt.f90 weno_micro.f90)
 
 target_include_directories(weno_micro PRIVATE ../src)
 set_target_properties(weno_micro PROPERTIES

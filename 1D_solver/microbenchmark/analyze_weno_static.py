@@ -67,6 +67,15 @@ MODE_TO_KERNEL = {
     "poly32_only_seq7": "weno_micro_kernels_weno_poly32_only_seq7_",
     "w64_only_seq9": "weno_micro_kernels_weno_w64_only_seq9_",
     "poly32_only_seq9": "weno_micro_kernels_weno_poly32_only_seq9_",
+    # family G: double-float hybrid. poly64_only_seq9 is the FP64 reference the
+    # DF arms replace, so it is the denominator when reading C off the
+    # fp32_instructions column.
+    "poly64_only_seq9": "weno_micro_kernels_weno_poly64_only_seq9_",
+    "polydf_only_seq9": "weno_micro_kernels_weno_polydf_only_seq9_",
+    "polydfr_only_seq9": "weno_micro_kernels_weno_polydfr_only_seq9_",
+    "w64_polydfr_seq9": "weno_micro_kernels_weno_w64_polydfr_seq9_",
+    "w64_polydfr_dfin_seq9": "weno_micro_kernels_weno_w64_polydfr_dfin_seq9_",
+    "polydfr_dfin_only_seq9": "weno_micro_kernels_weno_polydfr_dfin_only_seq9_",
     "w32_poly64_seq": "weno_micro_kernels_weno_w32_poly64_seq_",
     "w32_poly64_serial": "weno_micro_kernels_weno_w32_poly64_serial_",
     "w32_poly64_warp": "weno_micro_kernels_weno_w32_poly64_warp_",

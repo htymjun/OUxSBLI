@@ -115,6 +115,12 @@ MODES=(
   var5_k1_seq9
   var5_k2_seq9
   var5_k2_warp9
+  poly64_only_seq9
+  polydf_only_seq9
+  polydfr_only_seq9
+  polydfr_dfin_only_seq9
+  w64_polydfr_seq9
+  w64_polydfr_dfin_seq9
 )
 
 usage() {

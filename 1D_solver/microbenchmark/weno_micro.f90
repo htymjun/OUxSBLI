@@ -33,9 +33,44 @@
 !> rather than into the final normalisation the way the solver does it. Folding
 !> it into the weights instead would move FP64 work across the very boundary
 !> being measured.
+!> DOUBLE-FLOAT (DF) ARM -- the fltflt library from 1D_solver/src is included
+!> below, not linked, because it is written to be textually included so
+!> nvfortran's ordinary inliner can reach the bodies without crossing a module
+!> boundary (rationale in src/fltflt.f90). Only src/fltflt.f90 is compiled; the
+!> four include files carry the interfaces and bodies. CMakeLists.txt adds
+!> ../src/fltflt.f90 to the target and ../src was already on the include path.
+!>
+!> Verified 2026-08-17 that the error-free transforms survive this benchmark's
+!> exact `-fast -Mfma ... maxregcount:128` flag set on cc89:
+!> report/df_accuracy_test.f90 reports DF-vs-FP64 3.689e-14 (gate is < 1e-11)
+!> and plain FP32 1.316e-06. Re-run that probe after any flag change -- FMA
+!> contraction silently collapses DF to ~1e-6 and every DF timing below would
+!> then be measuring the wrong arithmetic.
+!>
+!> TWO COSTS THE FP32 MODES ABOVE DO NOT PAY, both measured by the modes in
+!> family G:
+!>   1. op multiplier -- add_ff_ff is 20 flops, mul_ff_ff ~9, fltflt_fma ~30,
+!>      dot4_ff ~38. On A100 (FP32:FP64 = 2:1) the break-even multiplier is
+!>      ~11.6, so the library operators sit on the wrong side of it and the
+!>      hand-written relaxed arm (poly*_dfr_*) exists to get under it.
+!>   2. boundary conversions issue on the FP64 PIPE -- fltflt_init(real(8)) is
+!>      one DADD plus two F2F, and both F2F directions use the FP64 unit. That
+!>      is ~3 FP64-pipe ops per value per crossing, which is why DF over a
+!>      block as small as the candidate polynomials cannot pay for itself.
 module weno_micro_kernels
   use cudafor
+  !> `only:` is required, not stylistic. A bare `use cudadevice` re-exports
+  !> cudadevice's DEVICE-side cudaGetLastError/cudaGetErrorString through this
+  !> module into `program weno_micro`, where they shadow the host generics that
+  !> check_launch() needs -- the build then fails with "Illegal call from host
+  !> code to device subprogram __pgi_get_last_error". These five are everything
+  !> fltflt references (it calls the _rn intrinsics explicitly so that -Mfma
+  !> cannot contract its error-free transforms).
+  use cudadevice, only: __fadd_rn, __fmaf_rn, __shfl_down, __shfl_xor
+  use fltflt
   implicit none
+  include 'fltflt_operator_interfaces.f90'
+  include 'fltflt_subroutines_interfaces.f90'
 
   integer, parameter :: face_threads = 128
   integer, parameter :: block_threads = 2 * face_threads
@@ -46,6 +81,18 @@ module weno_micro_kernels
   integer, parameter :: mode_p64 = 5
 
 contains
+  include 'fltflt_operator.f90'
+  include 'fltflt_subroutines.f90'
+
+  !> Widen a double-float back to real(8). The fltflt library deliberately does
+  !> not provide this; every consumer defines its own. Identical to
+  !> ff_to_r8 in 1D_solver/src/calc_slau_kernel.f90.fypp.
+  pure attributes(device) function ff_to_r8(a) result(r)
+    type(fltflt), intent(in) :: a
+    real(8) :: r
+    r = real(a%hi, 8) + real(a%lo, 8)
+  end function ff_to_r8
+
   attributes(device) subroutine weights5_64_left(v1, v2, v3, v4, v5, w0, w1, w2)
     real(8), intent(in) :: v1, v2, v3, v4, v5
     real(8), intent(out) :: w0, w1, w2
@@ -887,6 +934,215 @@ contains
     p1 = - (1.0_4/20.0_4)*x6 + (9.0_4/20.0_4)*x5 + (47.0_4/60.0_4)*x4 - (13.0_4/60.0_4)*x3 + (1.0_4/30.0_4)*x2
     p0 = (1.0_4/5.0_4)*x5 + (77.0_4/60.0_4)*x4 - (43.0_4/60.0_4)*x3 + (17.0_4/60.0_4)*x2 - (1.0_4/20.0_4)*x1
   end subroutine poly9_32_right
+
+  ! ------------------------------------------------------------------------
+  ! DOUBLE-FLOAT (DF) candidate polynomials -- two arms, family G
+  ! ------------------------------------------------------------------------
+  ! Both arms scale every candidate by 60, the common denominator of the WENO9
+  ! coefficients, so the multipliers become EXACT real(4) integers
+  ! (12,63,137,163,3,17,43,77,2,13,47,27 -- all < 2**24). That is the same trick
+  ! check_weno_order.py --gen-df uses for the solver twins, and it matters twice:
+  ! a coefficient with no lo word needs no cross-term FMA, and the common factor
+  ! is undone once at the end instead of five times.
+  !
+  ! The coefficient rows below are transcribed term-by-term from poly9_64_left /
+  ! poly9_64_right above rather than mirrored by hand. Hand-mirroring the
+  ! right-biased set is exactly what made v+ third order in both weights64 here
+  ! and weno5z_right in the solver, with an identical instruction count and a
+  ! checksum that could not see it -- see check_weno_order.py.
+
+  !> Relaxed-DF 5-term dot: (c1*v1 + ... + c5*v5) with each v given as a hi/lo
+  !> real(4) pair and each c an EXACT real(4) integer. Returns a renormalised
+  !> hi/lo pair, ~2**-48 relative.
+  !>
+  !> 50 FP32 flops: 15 for the five error-free products, 4 to pre-sum the error
+  !> stream, 28 for the four TwoSum accumulations with their errors folded in,
+  !> 3 for the final FastTwoSum. Against 5 FP64 FMAs that is C = 10, versus
+  !> C ~= 13 for the fltflt route (5*mul_ff_r4 + fltflt_add5 = 65 flops), which
+  !> is the whole point of carrying two arms: A100 break-even is C ~= 11.6.
+  !>
+  !> Every add/sub is an explicit __fadd_rn. Plain `+`/`-` would let -Mfma
+  !> contract the TwoSum residuals into FMAs and silently collapse this to FP32
+  !> accuracy -- the same reason fltflt_operator.f90 spells them out. Note
+  !> subtraction is written __fadd_rn(a, -b) because negation is exact and
+  !> __fsub_rn is NOT exposed to CUDA Fortran (fltflt_operator.f90:11-16).
+  attributes(device) subroutine dfr_dot5(c1, c2, c3, c4, c5, &
+                                         h1, l1, h2, l2, h3, l3, h4, l4, h5, l5, rhi, rlo)
+    real(4), intent(in) :: c1, c2, c3, c4, c5
+    real(4), intent(in) :: h1, l1, h2, l2, h3, l3, h4, l4, h5, l5
+    real(4), intent(out) :: rhi, rlo
+    real(4) :: p1, p2, p3, p4, p5, e1, e2, e3, e4, e5
+    real(4) :: s, t, d, v
+    ! error-free products: p + e = c*v exactly, no c-lo term needed
+    p1 = c1*h1; e1 = __fmaf_rn(c1, h1, -p1); e1 = __fmaf_rn(c1, l1, e1)
+    p2 = c2*h2; e2 = __fmaf_rn(c2, h2, -p2); e2 = __fmaf_rn(c2, l2, e2)
+    p3 = c3*h3; e3 = __fmaf_rn(c3, h3, -p3); e3 = __fmaf_rn(c3, l3, e3)
+    p4 = c4*h4; e4 = __fmaf_rn(c4, h4, -p4); e4 = __fmaf_rn(c4, l4, e4)
+    p5 = c5*h5; e5 = __fmaf_rn(c5, h5, -p5); e5 = __fmaf_rn(c5, l5, e5)
+    t = __fadd_rn(__fadd_rn(__fadd_rn(e1, e2), __fadd_rn(e3, e4)), e5)
+    ! TwoSum chain on the hi stream; each residual joins the error stream
+    s = __fadd_rn(p1, p2)
+    v = __fadd_rn(s, -p1)
+    t = __fadd_rn(t, __fadd_rn(__fadd_rn(p1, -__fadd_rn(s, -v)), __fadd_rn(p2, -v)))
+    d = __fadd_rn(s, p3)
+    v = __fadd_rn(d, -s)
+    t = __fadd_rn(t, __fadd_rn(__fadd_rn(s, -__fadd_rn(d, -v)), __fadd_rn(p3, -v)))
+    s = d
+    d = __fadd_rn(s, p4)
+    v = __fadd_rn(d, -s)
+    t = __fadd_rn(t, __fadd_rn(__fadd_rn(s, -__fadd_rn(d, -v)), __fadd_rn(p4, -v)))
+    s = d
+    d = __fadd_rn(s, p5)
+    v = __fadd_rn(d, -s)
+    t = __fadd_rn(t, __fadd_rn(__fadd_rn(s, -__fadd_rn(d, -v)), __fadd_rn(p5, -v)))
+    s = d
+    ! FastTwoSum renormalisation
+    rhi = __fadd_rn(s, t)
+    rlo = __fadd_rn(t, -__fadd_rn(rhi, -s))
+  end subroutine dfr_dot5
+
+  attributes(device) subroutine poly9_dfr_left(v1, v2, v3, v4, v5, v6, v7, v8, v9, p0, p1, p2, p3, p4)
+    real(8), intent(in) :: v1, v2, v3, v4, v5, v6, v7, v8, v9
+    real(8), intent(out) :: p0, p1, p2, p3, p4
+    real(8), parameter :: inv60 = 1.0d0/60.0d0
+    real(4) :: h1, h2, h3, h4, h5, h6, h7, h8, h9
+    real(4) :: l1, l2, l3, l4, l5, l6, l7, l8, l9
+    real(4) :: shi, slo
+    ! the FP64-pipe boundary tax: one DADD + two F2F per value, and per
+    ! 1D_solver/CLAUDE.md both F2F directions issue on the FP64 unit
+    h1 = real(v1,4); l1 = real(v1 - real(h1,8), 4)
+    h2 = real(v2,4); l2 = real(v2 - real(h2,8), 4)
+    h3 = real(v3,4); l3 = real(v3 - real(h3,8), 4)
+    h4 = real(v4,4); l4 = real(v4 - real(h4,8), 4)
+    h5 = real(v5,4); l5 = real(v5 - real(h5,8), 4)
+    h6 = real(v6,4); l6 = real(v6 - real(h6,8), 4)
+    h7 = real(v7,4); l7 = real(v7 - real(h7,8), 4)
+    h8 = real(v8,4); l8 = real(v8 - real(h8,8), 4)
+    h9 = real(v9,4); l9 = real(v9 - real(h9,8), 4)
+    call dfr_dot5(12.0_4, -63.0_4, 137.0_4, -163.0_4, 137.0_4, &
+                  h1,l1, h2,l2, h3,l3, h4,l4, h5,l5, shi, slo)
+    p0 = (real(shi,8) + real(slo,8)) * inv60
+    call dfr_dot5(-3.0_4, 17.0_4, -43.0_4, 77.0_4, 12.0_4, &
+                  h2,l2, h3,l3, h4,l4, h5,l5, h6,l6, shi, slo)
+    p1 = (real(shi,8) + real(slo,8)) * inv60
+    call dfr_dot5(2.0_4, -13.0_4, 47.0_4, 27.0_4, -3.0_4, &
+                  h3,l3, h4,l4, h5,l5, h6,l6, h7,l7, shi, slo)
+    p2 = (real(shi,8) + real(slo,8)) * inv60
+    call dfr_dot5(-3.0_4, 27.0_4, 47.0_4, -13.0_4, 2.0_4, &
+                  h4,l4, h5,l5, h6,l6, h7,l7, h8,l8, shi, slo)
+    p3 = (real(shi,8) + real(slo,8)) * inv60
+    call dfr_dot5(12.0_4, 77.0_4, -43.0_4, 17.0_4, -3.0_4, &
+                  h5,l5, h6,l6, h7,l7, h8,l8, h9,l9, shi, slo)
+    p4 = (real(shi,8) + real(slo,8)) * inv60
+  end subroutine poly9_dfr_left
+
+  attributes(device) subroutine poly9_dfr_right(v1, v2, v3, v4, v5, v6, v7, v8, v9, p0, p1, p2, p3, p4)
+    real(8), intent(in) :: v1, v2, v3, v4, v5, v6, v7, v8, v9
+    real(8), intent(out) :: p0, p1, p2, p3, p4
+    real(8), parameter :: inv60 = 1.0d0/60.0d0
+    real(4) :: h1, h2, h3, h4, h5, h6, h7, h8, h9
+    real(4) :: l1, l2, l3, l4, l5, l6, l7, l8, l9
+    real(4) :: shi, slo
+    h1 = real(v1,4); l1 = real(v1 - real(h1,8), 4)
+    h2 = real(v2,4); l2 = real(v2 - real(h2,8), 4)
+    h3 = real(v3,4); l3 = real(v3 - real(h3,8), 4)
+    h4 = real(v4,4); l4 = real(v4 - real(h4,8), 4)
+    h5 = real(v5,4); l5 = real(v5 - real(h5,8), 4)
+    h6 = real(v6,4); l6 = real(v6 - real(h6,8), 4)
+    h7 = real(v7,4); l7 = real(v7 - real(h7,8), 4)
+    h8 = real(v8,4); l8 = real(v8 - real(h8,8), 4)
+    h9 = real(v9,4); l9 = real(v9 - real(h9,8), 4)
+    ! mirrors poly9_64_right term for term: p4 first, on v9..v5
+    call dfr_dot5(12.0_4, -63.0_4, 137.0_4, -163.0_4, 137.0_4, &
+                  h9,l9, h8,l8, h7,l7, h6,l6, h5,l5, shi, slo)
+    p4 = (real(shi,8) + real(slo,8)) * inv60
+    call dfr_dot5(-3.0_4, 17.0_4, -43.0_4, 77.0_4, 12.0_4, &
+                  h8,l8, h7,l7, h6,l6, h5,l5, h4,l4, shi, slo)
+    p3 = (real(shi,8) + real(slo,8)) * inv60
+    call dfr_dot5(2.0_4, -13.0_4, 47.0_4, 27.0_4, -3.0_4, &
+                  h7,l7, h6,l6, h5,l5, h4,l4, h3,l3, shi, slo)
+    p2 = (real(shi,8) + real(slo,8)) * inv60
+    call dfr_dot5(-3.0_4, 27.0_4, 47.0_4, -13.0_4, 2.0_4, &
+                  h6,l6, h5,l5, h4,l4, h3,l3, h2,l2, shi, slo)
+    p1 = (real(shi,8) + real(slo,8)) * inv60
+    call dfr_dot5(12.0_4, 77.0_4, -43.0_4, 17.0_4, -3.0_4, &
+                  h5,l5, h4,l4, h3,l3, h2,l2, h1,l1, shi, slo)
+    p0 = (real(shi,8) + real(slo,8)) * inv60
+  end subroutine poly9_dfr_right
+
+  !> ***THIS ARM IS NOT DOUBLE-FLOAT UNDER THIS BENCHMARK'S FLAGS.*** Keep it
+  !> only as the diagnostic that demonstrates why, and never quote its timing as
+  !> a DF datapoint -- it is doing FP32 work at FP32 accuracy.
+  !>
+  !> Intended as the faithful arm: the same candidates through the fltflt
+  !> library operators (mul_ff_r4 = 6 flops, fltflt_add5 = 35 => 65 per
+  !> candidate, C ~= 13), so the delta against poly9_dfr_* would measure what
+  !> the abstraction costs. Measured instead, at -fast -Mfma -gpu=...,lto on
+  !> cc89 against poly9_64_left on a smooth non-linear field:
+  !>
+  !>   poly9_df_left  (this)        2.1e-08 left / 1.5e-08 right   <- FP32 class
+  !>   poly9_dfr_left (relaxed)     3.9e-14 left / 3.0e-14 right   <- genuine DF
+  !>
+  !> and the SASS shows only 14 FP32 ops per candidate where the algorithm needs
+  !> ~65: the lo-word arithmetic was eliminated, not merely reordered.
+  !>
+  !> Bisected: the SAME source text placed in a small standalone module (with
+  !> the same flags, the same includes and the same fltflt.f90 object) gives
+  !> 3.1e-14, and stays correct through five overlapping candidates and the
+  !> trailing FP64 scale. It only degrades inside this large module, where
+  !> fltflt_init gets inlined across the LTO boundary and its exact split
+  !>     lo = real(a - real(hi,8), 4)
+  !> is folded to zero -- the compiler treats the real(8)->real(4)->real(8)
+  !> round trip as the identity. poly9_dfr_* is immune because it writes that
+  !> same split inline in the consuming routine rather than calling into the
+  !> library, which is the only difference that survived the bisect.
+  !>
+  !> Consequence beyond this benchmark: every DF twin in the solver
+  !> (weno5z_left_df, weno7z/9z_*_df, delta4_df, delta6_df) opens with a block
+  !> of fltflt_init calls, so the same fold can silently demote them too. That
+  !> is worth checking directly -- report/rtx4060_weno_division_reduction.md
+  !> quotes DF-vs-FP64 agreement of 1.0e-09, but that is the Q.dat print floor
+  !> and cannot distinguish 1e-13 from 1e-8.
+  attributes(device) subroutine poly9_df_left(v1, v2, v3, v4, v5, v6, v7, v8, v9, p0, p1, p2, p3, p4)
+    real(8), intent(in) :: v1, v2, v3, v4, v5, v6, v7, v8, v9
+    real(8), intent(out) :: p0, p1, p2, p3, p4
+    real(8), parameter :: inv60 = 1.0d0/60.0d0
+    type(fltflt) :: x1, x2, x3, x4, x5, x6, x7, x8, x9
+    x1 = fltflt_init(v1); x2 = fltflt_init(v2); x3 = fltflt_init(v3)
+    x4 = fltflt_init(v4); x5 = fltflt_init(v5); x6 = fltflt_init(v6)
+    x7 = fltflt_init(v7); x8 = fltflt_init(v8); x9 = fltflt_init(v9)
+    p0 = ff_to_r8(fltflt_add5(x1 * 12.0_4, x2 * (-63.0_4), x3 * 137.0_4, &
+                              x4 * (-163.0_4), x5 * 137.0_4)) * inv60
+    p1 = ff_to_r8(fltflt_add5(x2 * (-3.0_4), x3 * 17.0_4, x4 * (-43.0_4), &
+                              x5 * 77.0_4, x6 * 12.0_4)) * inv60
+    p2 = ff_to_r8(fltflt_add5(x3 * 2.0_4, x4 * (-13.0_4), x5 * 47.0_4, &
+                              x6 * 27.0_4, x7 * (-3.0_4))) * inv60
+    p3 = ff_to_r8(fltflt_add5(x4 * (-3.0_4), x5 * 27.0_4, x6 * 47.0_4, &
+                              x7 * (-13.0_4), x8 * 2.0_4)) * inv60
+    p4 = ff_to_r8(fltflt_add5(x5 * 12.0_4, x6 * 77.0_4, x7 * (-43.0_4), &
+                              x8 * 17.0_4, x9 * (-3.0_4))) * inv60
+  end subroutine poly9_df_left
+
+  attributes(device) subroutine poly9_df_right(v1, v2, v3, v4, v5, v6, v7, v8, v9, p0, p1, p2, p3, p4)
+    real(8), intent(in) :: v1, v2, v3, v4, v5, v6, v7, v8, v9
+    real(8), intent(out) :: p0, p1, p2, p3, p4
+    real(8), parameter :: inv60 = 1.0d0/60.0d0
+    type(fltflt) :: x1, x2, x3, x4, x5, x6, x7, x8, x9
+    x1 = fltflt_init(v1); x2 = fltflt_init(v2); x3 = fltflt_init(v3)
+    x4 = fltflt_init(v4); x5 = fltflt_init(v5); x6 = fltflt_init(v6)
+    x7 = fltflt_init(v7); x8 = fltflt_init(v8); x9 = fltflt_init(v9)
+    ! mirrors poly9_64_right term for term: p4 first, on v9..v5
+    p4 = ff_to_r8(fltflt_add5(x9 * 12.0_4, x8 * (-63.0_4), x7 * 137.0_4, &
+                              x6 * (-163.0_4), x5 * 137.0_4)) * inv60
+    p3 = ff_to_r8(fltflt_add5(x8 * (-3.0_4), x7 * 17.0_4, x6 * (-43.0_4), &
+                              x5 * 77.0_4, x4 * 12.0_4)) * inv60
+    p2 = ff_to_r8(fltflt_add5(x7 * 2.0_4, x6 * (-13.0_4), x5 * 47.0_4, &
+                              x4 * 27.0_4, x3 * (-3.0_4))) * inv60
+    p1 = ff_to_r8(fltflt_add5(x6 * (-3.0_4), x5 * 27.0_4, x4 * 47.0_4, &
+                              x3 * (-13.0_4), x2 * 2.0_4)) * inv60
+    p0 = ff_to_r8(fltflt_add5(x5 * 12.0_4, x4 * 77.0_4, x3 * (-43.0_4), &
+                              x2 * 17.0_4, x1 * (-3.0_4))) * inv60
+  end subroutine poly9_df_right
 
   attributes(device) subroutine weno9_64_pair(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, ql, qr)
     real(8), intent(in) :: a1, a2, a3, a4, a5, a6, a7, a8, a9, a10
@@ -2425,6 +2681,275 @@ contains
     out(i,3) = q(3); out(i,4) = q(4)
     out(i,5) = q(5); out(i,6) = q(6)
   end subroutine weno_poly32_only_seq9
+
+  ! ------------------------------------------------------------------------
+  ! family G: double-float (DF) hybrid -- ablations first
+  ! ------------------------------------------------------------------------
+  ! These two mirror weno_poly32_only_seq9 exactly, including its weight-free
+  ! integer combine, so that
+  !     C  =  fp32_instructions(polyXX_only_seq9) / (FP64 ops it replaces)
+  ! and the FP64-pipe conversion tax both fall straight out of
+  ! analyze_weno_static.py. The ordering of the sweep matters: nothing about the
+  ! hybrid modes is worth building until C is a measured number, because A100
+  ! break-even sits at C ~= 11.6.
+  !
+  ! As with every *_only_* ablation, the output is a fixed combination rather
+  ! than a real reconstruction, so checksum_all is NOT comparable to any other
+  ! family -- it is a launch/NaN guard here and nothing more. Correctness of the
+  ! DF polynomials is gated by check_weno_order.py, not by this number.
+  !
+  ! Reading the static counts: analyze_weno_static.py classifies MUFU as FP32,
+  ! so an FP64 division's MUFU.RCP64H lands in the fp32 column. These two
+  ! kernels contain no FP64 division, so their fp32 column is clean.
+
+  !> FP64 reference for the polynomial ablation. Needed twice: it is the
+  !> denominator for C (the FP64 work the DF arms replace), and it is the
+  !> correctness reference the DF arms must reproduce to ~1e-13, since
+  !> poly32_only_seq9 is itself only FP32-accurate and cannot serve as one.
+  attributes(global) subroutine weno_poly64_only_seq9(n, nrepeat, x, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: i, k, f
+    real(8) :: q(6), acc
+    real(8) :: p0, p1, p2, p3, p4
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n-9) return
+    acc = 0.d0
+    do k = 1, nrepeat
+      do f = 1, 3
+        call poly9_64_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), p0, p1, p2, p3, p4)
+        q(2*f-1) = p0 + 2.d0*p1 + 3.d0*p2 + 4.d0*p3 + 5.d0*p4
+        call poly9_64_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), p0, p1, p2, p3, p4)
+        q(2*f) = p0 + 2.d0*p1 + 3.d0*p2 + 4.d0*p3 + 5.d0*p4
+      enddo
+      acc = acc + q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+    enddo
+    out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+    out(i,3) = q(3); out(i,4) = q(4)
+    out(i,5) = q(5); out(i,6) = q(6)
+  end subroutine weno_poly64_only_seq9
+
+  attributes(global) subroutine weno_polydf_only_seq9(n, nrepeat, x, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: i, k, f
+    real(8) :: q(6), acc
+    real(8) :: p0, p1, p2, p3, p4
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n-9) return
+    acc = 0.d0
+    do k = 1, nrepeat
+      do f = 1, 3
+        call poly9_df_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), p0, p1, p2, p3, p4)
+        q(2*f-1) = p0 + 2.d0*p1 + 3.d0*p2 + 4.d0*p3 + 5.d0*p4
+        call poly9_df_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), p0, p1, p2, p3, p4)
+        q(2*f) = p0 + 2.d0*p1 + 3.d0*p2 + 4.d0*p3 + 5.d0*p4
+      enddo
+      acc = acc + q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+    enddo
+    out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+    out(i,3) = q(3); out(i,4) = q(4)
+    out(i,5) = q(5); out(i,6) = q(6)
+  end subroutine weno_polydf_only_seq9
+
+  !> The hypothesis mode: FP64 weights, relaxed-DF candidate polynomials and
+  !> combine. Same layout as weno_weight_poly_seq9 (128 threads, no shared
+  !> memory, no barrier) so the only difference from that mode and from
+  !> weno_var_seq9 is which arithmetic the polynomial half uses.
+  !>
+  !> Measured on this GPU with analyze_weno_static.py, per-thread SASS:
+  !>   poly64_only_seq9    213 FP64,    0 FP32,   0 F2F
+  !>   polydfr_only_seq9   140 FP64, 1404 FP32, 150 F2F
+  !> so C = 1404/213 = 6.6, comfortably under A100's 11.6 break-even -- BUT the
+  !> FP64-pipe cost does not fall. 140 DADD + 150 F2F = 290 FP64-pipe ops
+  !> replace 213, because both F2F directions issue on the FP64 unit and the
+  !> per-value split is one DADD. Moving the polynomials to DF therefore ADDS
+  !> ~36% FP64-pipe work to the block it was supposed to unload. The candidate
+  !> polynomials are simply too small a block to amortise a DF boundary; the
+  !> weights (973 FP64 ops behind the same ~10-value boundary) are not.
+  attributes(global) subroutine weno_w64_polydfr_seq9(n, nrepeat, x, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: i, k, f
+    real(8) :: w0, w1, w2, w3, w4, q(6), acc
+    real(8) :: p0, p1, p2, p3, p4
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n-9) return
+    acc = 0.d0
+    do k = 1, nrepeat
+      do f = 1, 3
+        call weights9_64_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), w0, w1, w2, w3, w4)
+        call poly9_dfr_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), p0, p1, p2, p3, p4)
+        q(2*f-1) = w0*p0 + w1*p1 + w2*p2 + w3*p3 + w4*p4
+        call weights9_64_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), w0, w1, w2, w3, w4)
+        call poly9_dfr_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), p0, p1, p2, p3, p4)
+        q(2*f) = w0*p0 + w1*p1 + w2*p2 + w3*p3 + w4*p4
+      enddo
+      acc = acc + q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+    enddo
+    out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+    out(i,3) = q(3); out(i,4) = q(4)
+    out(i,5) = q(5); out(i,6) = q(6)
+  end subroutine weno_w64_polydfr_seq9
+
+  !> Splits an FP64 field into the real(4) hi/lo pair the DF polynomials want.
+  !> Run once outside the timed region, which is the whole point: it moves the
+  !> per-value split OFF the measured kernel's FP64 pipe. Same 8 bytes per value
+  !> as the real(8) array, so this is a layout change, not a precision change.
+  attributes(global) subroutine init_input_df(n, x, xhi, xlo)
+    integer, intent(in), value :: n
+    real(8), intent(in), device :: x(n,3)
+    real(4), intent(out), device :: xhi(n,3), xlo(n,3)
+    integer :: i, f
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n) return
+    do f = 1, 3
+      xhi(i,f) = real(x(i,f),4)
+      xlo(i,f) = real(x(i,f) - real(xhi(i,f),8), 4)
+    enddo
+  end subroutine init_input_df
+
+  !> Relaxed-DF 5-term dot straight from a pre-split hi/lo field: identical
+  !> arithmetic to dfr_dot5, but the caller never pays the FP64-pipe split.
+  attributes(device) subroutine poly9_dfr_pre(h1,l1,h2,l2,h3,l3,h4,l4,h5,l5,h6,l6,h7,l7,h8,l8,h9,l9, &
+                                              p0, p1, p2, p3, p4)
+    real(4), intent(in) :: h1,l1,h2,l2,h3,l3,h4,l4,h5,l5,h6,l6,h7,l7,h8,l8,h9,l9
+    real(8), intent(out) :: p0, p1, p2, p3, p4
+    real(8), parameter :: inv60 = 1.0d0/60.0d0
+    real(4) :: shi, slo
+    call dfr_dot5(12.0_4, -63.0_4, 137.0_4, -163.0_4, 137.0_4, h1,l1, h2,l2, h3,l3, h4,l4, h5,l5, shi, slo)
+    p0 = (real(shi,8) + real(slo,8)) * inv60
+    call dfr_dot5(-3.0_4, 17.0_4, -43.0_4, 77.0_4, 12.0_4, h2,l2, h3,l3, h4,l4, h5,l5, h6,l6, shi, slo)
+    p1 = (real(shi,8) + real(slo,8)) * inv60
+    call dfr_dot5(2.0_4, -13.0_4, 47.0_4, 27.0_4, -3.0_4, h3,l3, h4,l4, h5,l5, h6,l6, h7,l7, shi, slo)
+    p2 = (real(shi,8) + real(slo,8)) * inv60
+    call dfr_dot5(-3.0_4, 27.0_4, 47.0_4, -13.0_4, 2.0_4, h4,l4, h5,l5, h6,l6, h7,l7, h8,l8, shi, slo)
+    p3 = (real(shi,8) + real(slo,8)) * inv60
+    call dfr_dot5(12.0_4, 77.0_4, -43.0_4, 17.0_4, -3.0_4, h5,l5, h6,l6, h7,l7, h8,l8, h9,l9, shi, slo)
+    p4 = (real(shi,8) + real(slo,8)) * inv60
+  end subroutine poly9_dfr_pre
+
+  attributes(device) subroutine poly9_dfr_pre_r(h1,l1,h2,l2,h3,l3,h4,l4,h5,l5,h6,l6,h7,l7,h8,l8,h9,l9, &
+                                                p0, p1, p2, p3, p4)
+    real(4), intent(in) :: h1,l1,h2,l2,h3,l3,h4,l4,h5,l5,h6,l6,h7,l7,h8,l8,h9,l9
+    real(8), intent(out) :: p0, p1, p2, p3, p4
+    real(8), parameter :: inv60 = 1.0d0/60.0d0
+    real(4) :: shi, slo
+    ! mirrors poly9_64_right term for term: p4 first, on v9..v5
+    call dfr_dot5(12.0_4, -63.0_4, 137.0_4, -163.0_4, 137.0_4, h9,l9, h8,l8, h7,l7, h6,l6, h5,l5, shi, slo)
+    p4 = (real(shi,8) + real(slo,8)) * inv60
+    call dfr_dot5(-3.0_4, 17.0_4, -43.0_4, 77.0_4, 12.0_4, h8,l8, h7,l7, h6,l6, h5,l5, h4,l4, shi, slo)
+    p3 = (real(shi,8) + real(slo,8)) * inv60
+    call dfr_dot5(2.0_4, -13.0_4, 47.0_4, 27.0_4, -3.0_4, h7,l7, h6,l6, h5,l5, h4,l4, h3,l3, shi, slo)
+    p2 = (real(shi,8) + real(slo,8)) * inv60
+    call dfr_dot5(-3.0_4, 27.0_4, 47.0_4, -13.0_4, 2.0_4, h6,l6, h5,l5, h4,l4, h3,l3, h2,l2, shi, slo)
+    p1 = (real(shi,8) + real(slo,8)) * inv60
+    call dfr_dot5(12.0_4, 77.0_4, -43.0_4, 17.0_4, -3.0_4, h5,l5, h4,l4, h3,l3, h2,l2, h1,l1, shi, slo)
+    p0 = (real(shi,8) + real(slo,8)) * inv60
+  end subroutine poly9_dfr_pre_r
+
+  !> Step 4 of the DF plan: the same hybrid as weno_w64_polydfr_seq9 with the
+  !> input-split tax removed, isolating whether that tax (rather than the DF op
+  !> multiplier C = 6.6) is what blocks the hypothesis.
+  !>
+  !> Costs +50% read traffic: the FP64 weights half still needs x(n,3) while the
+  !> DF half reads xhi/xlo, so 302 MB -> 453 MB at nx=4194304, nvar=3. That is
+  !> affordable precisely where this experiment matters -- at WENO9 the kernels
+  !> run near 310 GB/s, ~16% of the A100's 1935 GB/s peak, so they are
+  !> arithmetic-bound with bandwidth to spare. It would NOT be affordable at
+  !> WENO5, which sits within 1.6-1.9x of the ~1497 GB/s memory floor.
+  attributes(global) subroutine weno_w64_polydfr_dfin_seq9(n, nrepeat, x, xhi, xlo, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(4), intent(in), device :: xhi(n,3), xlo(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: i, k, f
+    real(8) :: w0, w1, w2, w3, w4, q(6), acc
+    real(8) :: p0, p1, p2, p3, p4
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n-9) return
+    acc = 0.d0
+    do k = 1, nrepeat
+      do f = 1, 3
+        call weights9_64_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), w0, w1, w2, w3, w4)
+        call poly9_dfr_pre(xhi(i,f),xlo(i,f), xhi(i+1,f),xlo(i+1,f), xhi(i+2,f),xlo(i+2,f), &
+                           xhi(i+3,f),xlo(i+3,f), xhi(i+4,f),xlo(i+4,f), xhi(i+5,f),xlo(i+5,f), &
+                           xhi(i+6,f),xlo(i+6,f), xhi(i+7,f),xlo(i+7,f), xhi(i+8,f),xlo(i+8,f), &
+                           p0, p1, p2, p3, p4)
+        q(2*f-1) = w0*p0 + w1*p1 + w2*p2 + w3*p3 + w4*p4
+        call weights9_64_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), w0, w1, w2, w3, w4)
+        call poly9_dfr_pre_r(xhi(i+1,f),xlo(i+1,f), xhi(i+2,f),xlo(i+2,f), xhi(i+3,f),xlo(i+3,f), &
+                             xhi(i+4,f),xlo(i+4,f), xhi(i+5,f),xlo(i+5,f), xhi(i+6,f),xlo(i+6,f), &
+                             xhi(i+7,f),xlo(i+7,f), xhi(i+8,f),xlo(i+8,f), xhi(i+9,f),xlo(i+9,f), &
+                             p0, p1, p2, p3, p4)
+        q(2*f) = w0*p0 + w1*p1 + w2*p2 + w3*p3 + w4*p4
+      enddo
+      acc = acc + q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+    enddo
+    out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+    out(i,3) = q(3); out(i,4) = q(4)
+    out(i,5) = q(5); out(i,6) = q(6)
+  end subroutine weno_w64_polydfr_dfin_seq9
+
+  !> Pre-split twin of weno_polydfr_only_seq9: the polynomial-only ablation with
+  !> no input-split tax, so t(polydfr_only) - t(polydfr_dfin_only) prices the tax
+  !> on its own.
+  attributes(global) subroutine weno_polydfr_dfin_only_seq9(n, nrepeat, xhi, xlo, out)
+    integer, intent(in), value :: n, nrepeat
+    real(4), intent(in), device :: xhi(n,3), xlo(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: i, k, f
+    real(8) :: q(6), acc
+    real(8) :: p0, p1, p2, p3, p4
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n-9) return
+    acc = 0.d0
+    do k = 1, nrepeat
+      do f = 1, 3
+        call poly9_dfr_pre(xhi(i,f),xlo(i,f), xhi(i+1,f),xlo(i+1,f), xhi(i+2,f),xlo(i+2,f), &
+                           xhi(i+3,f),xlo(i+3,f), xhi(i+4,f),xlo(i+4,f), xhi(i+5,f),xlo(i+5,f), &
+                           xhi(i+6,f),xlo(i+6,f), xhi(i+7,f),xlo(i+7,f), xhi(i+8,f),xlo(i+8,f), &
+                           p0, p1, p2, p3, p4)
+        q(2*f-1) = p0 + 2.d0*p1 + 3.d0*p2 + 4.d0*p3 + 5.d0*p4
+        call poly9_dfr_pre_r(xhi(i+1,f),xlo(i+1,f), xhi(i+2,f),xlo(i+2,f), xhi(i+3,f),xlo(i+3,f), &
+                             xhi(i+4,f),xlo(i+4,f), xhi(i+5,f),xlo(i+5,f), xhi(i+6,f),xlo(i+6,f), &
+                             xhi(i+7,f),xlo(i+7,f), xhi(i+8,f),xlo(i+8,f), xhi(i+9,f),xlo(i+9,f), &
+                             p0, p1, p2, p3, p4)
+        q(2*f) = p0 + 2.d0*p1 + 3.d0*p2 + 4.d0*p3 + 5.d0*p4
+      enddo
+      acc = acc + q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+    enddo
+    out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+    out(i,3) = q(3); out(i,4) = q(4)
+    out(i,5) = q(5); out(i,6) = q(6)
+  end subroutine weno_polydfr_dfin_only_seq9
+
+  attributes(global) subroutine weno_polydfr_only_seq9(n, nrepeat, x, out)
+    integer, intent(in), value :: n, nrepeat
+    real(8), intent(in), device :: x(n,3)
+    real(8), intent(out), device :: out(n,6)
+    integer :: i, k, f
+    real(8) :: q(6), acc
+    real(8) :: p0, p1, p2, p3, p4
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n-9) return
+    acc = 0.d0
+    do k = 1, nrepeat
+      do f = 1, 3
+        call poly9_dfr_left(x(i,f), x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), p0, p1, p2, p3, p4)
+        q(2*f-1) = p0 + 2.d0*p1 + 3.d0*p2 + 4.d0*p3 + 5.d0*p4
+        call poly9_dfr_right(x(i+1,f), x(i+2,f), x(i+3,f), x(i+4,f), x(i+5,f), x(i+6,f), x(i+7,f), x(i+8,f), x(i+9,f), p0, p1, p2, p3, p4)
+        q(2*f) = p0 + 2.d0*p1 + 3.d0*p2 + 4.d0*p3 + 5.d0*p4
+      enddo
+      acc = acc + q(1) + q(2) + q(3) + q(4) + q(5) + q(6)
+    enddo
+    out(i,1) = q(1) + 1.d-30*acc; out(i,2) = q(2)
+    out(i,3) = q(3); out(i,4) = q(4)
+    out(i,5) = q(5); out(i,6) = q(6)
+  end subroutine weno_polydfr_only_seq9
 end module weno_micro_kernels
 
 program weno_micro
@@ -2434,6 +2959,11 @@ program weno_micro
   integer :: n, nrepeat, mode, argn, ierr, nlaunch, nvar
   character(len=128) :: mode_name, arg
   real(8), allocatable, device :: x(:,:), out(:,:)
+  ! Pre-split DF-format copy of the input, allocated only for the *dfin* modes
+  ! so every other mode keeps its original memory footprint and stays
+  ! bit-identical and time-comparable to earlier runs.
+  real(4), allocatable, device :: xhi(:,:), xlo(:,:)
+  logical :: want_dfin
   real(8), allocatable :: h(:,:)
   type(dim3) :: b128, b256, g128, gface, gface2, ghalf
 
@@ -2484,6 +3014,16 @@ program weno_micro
     call init_input_nv<<<g128,b128>>>(n, nvar, x)
   endif
   call check_launch('init_input')
+
+  ! The DF-format copy is built ONCE here, outside the timed region: that is
+  ! exactly what the *dfin* modes are testing, since it moves the per-value
+  ! real(8)->hi/lo split off the measured kernel's FP64 pipe.
+  want_dfin = index(mode_name, 'dfin') > 0
+  if (want_dfin) then
+    allocate(xhi(n,3), xlo(n,3))
+    call init_input_df<<<g128,b128>>>(n, x, xhi, xlo)
+    call check_launch('init_input_df')
+  endif
 
   ! Warm-up launch (JIT, caches, clock ramp), then timed launches. The harness
   ! times itself with CUDA events rather than relying on ncu/nsys: both
@@ -2689,6 +3229,20 @@ contains
       call weno_varsplit_seq9<<<g128,b128>>>(n, nrepeat, 5, 2, x, out)
     case ('var5_k2_warp9')
       call weno_varsplit_warp9<<<gface,b256>>>(n, nrepeat, 5, 2, x, out)
+    ! family G: double-float hybrid. Ablations pair with w64_only_seq9 the same
+    ! way poly32_only_seq9 does; see the family header in the module.
+    case ('poly64_only_seq9')
+      call weno_poly64_only_seq9<<<g128,b128>>>(n, nrepeat, x, out)
+    case ('polydf_only_seq9')
+      call weno_polydf_only_seq9<<<g128,b128>>>(n, nrepeat, x, out)
+    case ('polydfr_only_seq9')
+      call weno_polydfr_only_seq9<<<g128,b128>>>(n, nrepeat, x, out)
+    case ('w64_polydfr_seq9')
+      call weno_w64_polydfr_seq9<<<g128,b128>>>(n, nrepeat, x, out)
+    case ('w64_polydfr_dfin_seq9')
+      call weno_w64_polydfr_dfin_seq9<<<g128,b128>>>(n, nrepeat, x, xhi, xlo, out)
+    case ('polydfr_dfin_only_seq9')
+      call weno_polydfr_dfin_only_seq9<<<g128,b128>>>(n, nrepeat, xhi, xlo, out)
     case default
       print *, 'bad mode: ', trim(mode_name)
       error stop 2
