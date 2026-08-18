@@ -37,7 +37,7 @@ SRC  := w32ptx.cu
 DEPS := weno_w32.cuh kernels.cuh modes.inc
 BIN  := w32ptx
 
-.PHONY: all ptx sass regs accuracy clean
+.PHONY: all ptx sass sassmix regs accuracy clean
 
 all: $(BIN)
 
@@ -66,6 +66,9 @@ ptx: $(SRC) $(DEPS)
 sass: $(BIN)
 	cuobjdump -sass $(BIN) > w32ptx.sass
 	@echo "wrote w32ptx.sass"
+
+sassmix: sass
+	python3 sass_mix_w32ptx.py --sass w32ptx.sass
 
 # The gate that catches -use_fast_math contamination and non-inlined helpers.
 # _ref must retain its division CALLs; _rcp must have none.
