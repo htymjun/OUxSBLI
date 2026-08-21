@@ -1,0 +1,217 @@
+name: Create CUDA C follow-up for CUDA Fortran performance PRs
+
+# NOTE: `pull_request_target` always runs the workflow file from the BASE branch
+# of the pull request. This file therefore has no effect until it is merged into
+# `stable`; a copy living only on a feature branch never fires. The script never
+# checks out pull-request code, so the elevated `issues: write` permission is not
+# exposed to untrusted contributions.
+
+on:
+  pull_request_target:
+    types: [closed]
+    branches: ["stable"]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Merged stable PR number to inspect"
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: cuda-c-followup-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  create-followup:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create CUDA C follow-up issue
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            // Milestone titles are compared case-insensitively so that a
+            // renamed or re-cased milestone does not silently detach follow-ups.
+            const MILESTONE_TITLE = "porting to cuda c";
+
+            let pr;
+            if (context.eventName === "workflow_dispatch") {
+              // `core.getInput` reads *action* inputs, not workflow_dispatch
+              // inputs; the dispatch value must come through the step env.
+              const prNumber = Number(process.env.PR_NUMBER);
+              if (!Number.isInteger(prNumber) || prNumber <= 0) {
+                core.setFailed(`Invalid pr_number input: ${process.env.PR_NUMBER}`);
+                return;
+              }
+              const response = await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: prNumber,
+              });
+              pr = response.data;
+            } else {
+              pr = context.payload.pull_request;
+            }
+
+            if (!pr?.merged) {
+              core.info("PR is not merged; no follow-up needed.");
+              return;
+            }
+
+            if (pr.base.ref !== "stable") {
+              core.info(`PR base is ${pr.base.ref}, not stable; no follow-up needed.`);
+              return;
+            }
+
+            const commits = await github.paginate(github.rest.pulls.listCommits, {
+              owner,
+              repo,
+              pull_number: pr.number,
+              per_page: 100,
+            });
+
+            // Detection signals, in the order they are reported below. OUxSBLI
+            // does not use conventional commits consistently, and CONTRIBUTING
+            // asks for `perf/<name>` branches, so commit messages alone are not
+            // a reliable signal.
+            const perfPrefix = /^perf(\([^)]+\))?!?:/i;
+
+            const labelNames = (pr.labels || []).map((label) =>
+              typeof label === "string" ? label : label.name
+            );
+            const hasPerformanceLabel = labelNames.some((name) =>
+              /^(perf|performance|optimization)$/i.test(name)
+            );
+            const hasPerfCommit = commits.some((commit) =>
+              perfPrefix.test(commit.commit.message.trim())
+            );
+            const hasPerfTitle = perfPrefix.test((pr.title || "").trim());
+            const hasPerfBranch = /^perf\//i.test(pr.head?.ref || "");
+
+            const signals = [
+              hasPerformanceLabel && "performance label",
+              hasPerfCommit && "`perf:` commit",
+              hasPerfTitle && "`perf:` PR title",
+              hasPerfBranch && "`perf/*` branch",
+            ].filter(Boolean);
+
+            if (signals.length === 0) {
+              core.info("No performance signal (label, perf: commit, perf: title, perf/* branch); no follow-up needed.");
+              return;
+            }
+
+            const marker = `CUDA C follow-up for PR #${pr.number}`;
+            const title = `[CUDA C] Evaluate performance carry-over from PR #${pr.number}`;
+
+            // Deterministic duplicate guard. The search API is avoided here: its
+            // index lags issue creation by up to a minute, which is exactly the
+            // window in which a re-dispatch would double-create.
+            const existingIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: "all",
+              labels: "cuda-c",
+              per_page: 100,
+            });
+            const duplicate = existingIssues.find(
+              (issue) =>
+                !issue.pull_request &&
+                (issue.title === title || (issue.body || "").includes(marker))
+            );
+            if (duplicate) {
+              core.info(`Follow-up issue already exists: ${duplicate.html_url}`);
+              return;
+            }
+
+            const milestones = await github.paginate(github.rest.issues.listMilestones, {
+              owner,
+              repo,
+              state: "open",
+              per_page: 100,
+            });
+            const portingMilestone = milestones.find(
+              (milestone) => milestone.title.trim().toLowerCase() === MILESTONE_TITLE
+            );
+            if (!portingMilestone) {
+              core.warning(
+                `No open milestone matching "${MILESTONE_TITLE}"; the follow-up issue will be created without a milestone.`
+              );
+            }
+
+            const body = [
+              `<!-- ${marker} -->`,
+              "",
+              "A CUDA Fortran performance PR was merged into `stable`. Evaluate whether the idea should be carried into `cuda-c-stable`.",
+              "",
+              "## Source PR",
+              "",
+              `- PR: #${pr.number}`,
+              `- Title: ${pr.title}`,
+              `- Head branch: \`${pr.head?.ref || "_unknown_"}\``,
+              `- Merge commit: ${pr.merge_commit_sha || "_unknown_"}`,
+              `- Detection: ${signals.join(" + ")}`,
+              "",
+              "## CUDA C follow-up policy",
+              "",
+              "- Branch name: `cuda-c-<name>`",
+              "- PR base branch: `cuda-c-stable`",
+              "- Preserve the existing CUDA Fortran path while evaluating or porting the change",
+              "- This issue is for evaluation first; porting requires human approval",
+              "",
+              "## Evaluation checklist",
+              "",
+              "- [ ] Summarize the CUDA Fortran optimization and affected kernels/cases",
+              "- [ ] Decide whether the optimization is relevant to the CUDA C migration architecture",
+              "- [ ] Identify the CUDA C target files or kernel family, if applicable",
+              "- [ ] Define CUDA Fortran baseline validation evidence",
+              "- [ ] Define CUDA C validation evidence",
+              "- [ ] Define performance benchmark configuration",
+              "- [ ] Human approves whether to port, defer, or reject",
+              "",
+              "## Validation section",
+              "",
+              "Commands:",
+              "",
+              "CUDA Fortran baseline:",
+              "",
+              "CUDA C path:",
+              "",
+              "Acceptance metric:",
+              "",
+              "Human-readable output:",
+              "",
+              "Hardware / compiler (GPU model, HPC SDK version, ranks):",
+              "",
+              "Known limitations:",
+            ].join("\n");
+
+            const labels = ["cuda-c", "performance", "ai-assisted", "triage"];
+            const request = {
+              owner,
+              repo,
+              title,
+              body,
+              milestone: portingMilestone?.number,
+            };
+
+            let issue;
+            try {
+              issue = await github.rest.issues.create({ ...request, labels });
+            } catch (error) {
+              // Never lose the follow-up because a label is missing or renamed.
+              core.warning(`Creating the issue with labels failed (${error.message}); retrying without labels.`);
+              issue = await github.rest.issues.create(request);
+              core.warning(`Apply the labels manually: ${labels.join(", ")}`);
+            }
+
+            core.info(`Created follow-up issue: ${issue.data.html_url}`);

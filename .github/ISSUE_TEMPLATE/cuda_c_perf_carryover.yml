@@ -1,0 +1,101 @@
+name: CUDA C Performance Carry-over
+description: Evaluate whether a CUDA Fortran performance PR should be carried into CUDA C.
+title: "[CUDA C] Evaluate performance carry-over from "
+labels:
+  - cuda-c
+  - performance
+  - needs-spec
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when a CUDA Fortran optimization may be useful for the CUDA C
+        migration branch. This issue decides whether to port, defer, or reject
+        the idea; it should not assume automatic porting.
+
+        Attach the issue to the `Porting to CUDA C` milestone. The carry-over
+        workflow normally opens this issue automatically; open it by hand when
+        the change reached `stable` without a performance signal, or before the
+        automation has been merged into `stable`.
+
+  - type: input
+    id: source_pr
+    attributes:
+      label: Source CUDA Fortran PR
+      description: Link the merged PR on `stable`.
+      placeholder: "#"
+    validations:
+      required: true
+
+  - type: textarea
+    id: optimization_summary
+    attributes:
+      label: Optimization summary
+      description: Summarize what improved on the CUDA Fortran side.
+      placeholder: |
+        Affected kernels/cases:
+        Main idea:
+        Evidence from source PR:
+    validations:
+      required: true
+
+  - type: textarea
+    id: relevance
+    attributes:
+      label: Relevance to CUDA C migration
+      description: Explain why this should or should not be considered for `cuda-c-stable`.
+      placeholder: |
+        Relevant because:
+        Possibly not relevant because:
+        Migration risk:
+    validations:
+      required: true
+
+  - type: textarea
+    id: branch_policy
+    attributes:
+      label: Branch / merge policy
+      value: |
+        Branch name: cuda-c-
+        PR base branch: cuda-c-stable
+        CUDA Fortran preservation: existing CUDA Fortran path remains available
+    validations:
+      required: true
+
+  - type: textarea
+    id: human_decision
+    attributes:
+      label: Human decision
+      description: Decide whether this optimization should be ported now, deferred, or rejected.
+      placeholder: |
+        Decision:
+        Rationale:
+        Required follow-up issue or PR:
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation_section
+    attributes:
+      label: Validation section
+      description: Define visible evidence for both CUDA Fortran and CUDA C paths.
+      placeholder: |
+        Commands:
+        CUDA Fortran baseline:
+        CUDA C path:
+        Acceptance metric:
+        Human-readable output:
+        Hardware / compiler (GPU model, HPC SDK version, ranks):
+        Known limitations:
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: gates
+    attributes:
+      label: Human review gates
+      options:
+        - label: Human decided whether the optimization should be ported.
+        - label: Branch is named cuda-c-* and PR target is cuda-c-stable if implementation proceeds.
+        - label: Existing CUDA Fortran path remains available.
+        - label: CUDA Fortran and CUDA C validation evidence are both documented where applicable.

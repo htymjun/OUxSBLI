@@ -1,0 +1,114 @@
+name: AI Implementation Specification
+description: Define a human-reviewed specification for AI-assisted implementation.
+title: "[AI Spec] "
+labels:
+  - ai-assisted
+  - needs-spec
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template when an AI assistant will implement most of the work.
+        The issue should record the human-owned scientific and numerical choices
+        before coding begins.
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should be true when this issue is complete?
+    validations:
+      required: true
+
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: What should the AI explicitly avoid changing?
+
+  - type: checkboxes
+    id: affected_area
+    attributes:
+      label: Affected area
+      options:
+        - label: 2D solver
+        - label: 3D Cartesian solver
+        - label: Curvilinear solver
+        - label: Shared Fortran source
+        - label: fypp templates / generated Fortran
+        - label: Python API
+        - label: Tests / validation
+        - label: Documentation
+        - label: Build system
+        - label: Performance / profiling
+
+  - type: textarea
+    id: human_decisions
+    attributes:
+      label: Human-owned decisions
+      description: Record decisions the AI must treat as fixed constraints.
+      placeholder: |
+        Examples:
+        - Solver/case:
+        - VISC / SCHEME / ORDER / TVD / RK:
+        - Boundary-condition policy:
+        - Validation target:
+        - Tolerance or benchmark acceptance:
+    validations:
+      required: true
+
+  - type: textarea
+    id: open_questions
+    attributes:
+      label: Open questions for the human
+      description: List choices that must be resolved before implementation.
+
+  - type: textarea
+    id: implementation_notes
+    attributes:
+      label: Notes for AI implementation
+      description: Point to similar files, known pitfalls, relevant plans, or required CLAUDE.md sections.
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and downstream work
+      description: Link parent/foundation issues, blocked-by issues, and follow-up issues this work enables.
+      placeholder: |
+        Parent / foundation issue:
+        Blocked by:
+        Unblocks:
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation section
+      description: State the minimum build, tests, solver runs, analytical comparisons, benchmarks, and human-readable evidence.
+      placeholder: |
+        Commands:
+        Case/configuration:
+        Baseline or reference data:
+        Acceptance metric:
+        Human-readable output:
+        Hardware / compiler assumptions:
+        Known limitations:
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How will the human decide this issue is done?
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: gates
+    attributes:
+      label: Human review gates
+      options:
+        - label: Human has approved the implementation plan before coding.
+        - label: Human will review validation evidence before accepting the PR.
+        - label: Human will approve the final diff before commit.
+        - label: AI must pause if a new numerical or physical decision appears.

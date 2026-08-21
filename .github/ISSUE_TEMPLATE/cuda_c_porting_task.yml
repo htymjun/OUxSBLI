@@ -1,0 +1,158 @@
+name: CUDA C Porting Task
+description: Define a focused issue for the CUDA C porting milestone.
+title: "[CUDA C] "
+labels:
+  - ai-assisted
+  - cuda-c
+  - needs-spec
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for the `Porting to CUDA C` milestone. Keep the issue
+        small enough for AI-assisted implementation and human review. Large
+        migration work should be split into a foundation issue plus child issues.
+        Branches for this milestone must be named `cuda-c-*`, and PRs must
+        target `cuda-c-stable` rather than `stable`. The existing CUDA Fortran
+        implementation should remain available while CUDA C paths are added.
+
+        The milestone starts from the current CUDA Fortran `stable` baseline.
+        The historical `CUDA_C_JAX_Python` branch is out of scope; reusing
+        anything from it requires an explicit decision recorded below.
+
+        See `docs/ai_development_workflow.md` for the full policy.
+
+  - type: dropdown
+    id: issue_role
+    attributes:
+      label: Issue role
+      description: Choose the role this issue plays in the milestone.
+      options:
+        - Foundation issue
+        - Implementation issue
+        - Fused-kernel issue
+        - Build-system issue
+        - Validation issue
+        - Performance issue
+        - Documentation issue
+    validations:
+      required: true
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should be true when this issue is complete?
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Name the exact files, kernel family, build path, case, or report this issue owns.
+      placeholder: |
+        In scope:
+        - 
+
+        Out of scope:
+        - 
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependency_graph
+    attributes:
+      label: Dependencies and unblocked work
+      description: Link the foundation issue, blocked-by issues, and downstream issues this will unblock.
+      placeholder: |
+        Foundation issue:
+        Blocked by:
+        Unblocks:
+
+  - type: textarea
+    id: branch_policy
+    attributes:
+      label: Branch / merge policy
+      description: Confirm the branch name and PR target for this task.
+      value: |
+        Branch name: cuda-c-
+        PR base branch: cuda-c-stable
+        CUDA Fortran preservation: existing CUDA Fortran path remains available
+      placeholder: |
+        Branch name: cuda-c-<name>
+        PR base branch: cuda-c-stable
+        CUDA Fortran preservation:
+    validations:
+      required: true
+
+  - type: textarea
+    id: human_decisions
+    attributes:
+      label: Human-owned decisions
+      description: Record choices the AI must not decide silently.
+      placeholder: |
+        Examples:
+        - CUDA C migration boundary:
+        - CUDA Fortran preservation policy:
+        - Fused-kernel target:
+        - Interoperability policy:
+        - Equivalence standard (bitwise or tolerance, vs. which baseline commit):
+        - Validation case and tolerance:
+        - Performance benchmark configuration:
+        - Reuse from CUDA_C_JAX_Python (default: none):
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation_plan_request
+    attributes:
+      label: Plan requested from AI
+      description: What should the AI inspect and propose before coding?
+      placeholder: |
+        The AI should read:
+        - 
+
+        The AI should propose:
+        - 
+
+  - type: textarea
+    id: validation_section
+    attributes:
+      label: Validation section
+      description: Define the human-readable evidence required for this issue.
+      placeholder: |
+        Commands:
+        Case/configuration:
+        CUDA Fortran baseline:
+        CUDA C path:
+        Acceptance metric:
+        Human-readable output:
+        Hardware / compiler (GPU model, HPC SDK version, ranks):
+        Known limitations:
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Use testable criteria. Avoid "works" without evidence.
+      placeholder: |
+        - [ ] 
+        - [ ] 
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: gates
+    attributes:
+      label: Human review gates
+      options:
+        - label: Human approved the issue scope before AI implementation.
+        - label: Branch is named cuda-c-* and PR target is cuda-c-stable.
+        - label: Existing CUDA Fortran path remains available.
+        - label: Human selected any fused-kernel target before implementation.
+        - label: Human approved validation tolerance / benchmark metric.
+        - label: Human reviewed validation evidence before PR acceptance.
+        - label: Human approved the final diff before commit.

@@ -58,5 +58,6 @@ nav:
   - Quick Start: quickstart.md
   - Installation: installation.md
   - Configuration: configuration.md
+  - AI Workflow: ai_development_workflow.md
   - Theory: theory.md
   - Python API: api.md
