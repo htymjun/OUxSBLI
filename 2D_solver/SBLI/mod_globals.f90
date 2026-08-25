@@ -7,15 +7,15 @@ module mod_globals
   real(8), parameter  :: blt         = 1.d-3
 
   ! mesh
-  real(8), parameter :: Lx = 176.d0 * blt !20
-  real(8), parameter :: Ly = 80.d0 * blt !5
+  real(8), parameter :: Lx = 165.d0 * blt !176!20
+  real(8), parameter :: Ly = 60.d0 * blt !80!5
   ! DNS
-  integer, parameter :: nx = 257
-  integer, parameter :: ny = 257
+  integer, parameter :: nx = 1025 !257!257
+  integer, parameter :: ny = 513 !129!257
 
   ! flat-plate geometry
-  real(8), parameter :: x_in = -16.d0 * blt ! x(1); the inlet-shock threshold (Xsh - x_in)*tan(beta) depends on this
-  real(8), parameter :: Xsh  = 80.d0 * blt  ! inviscid shock impingement point on the wall
+  real(8), parameter :: x_in = -15.d0 * blt !-16.d0 * blt ! x(1); the inlet-shock threshold (Xsh - x_in)*tan(beta) depends on this
+  real(8), parameter :: Xsh  = 100.d0 * blt !80.d0 * blt  ! inviscid shock impingement point on the wall
   integer, parameter :: i_LE = nint(-x_in * dble(nx-1) / Lx) + 1 ! first no-slip wall point; leading edge stays at x ~ 0 for any nx
 
   ! RTX 4090
@@ -28,12 +28,12 @@ module mod_globals
 
   ! time
   integer, parameter :: step_offset = 0
-  real(8), parameter :: endT  = 1.d-2
-  integer, parameter :: np    = 100
+  real(8), parameter :: endT  = 2.d-2 !1.d-2
+  integer, parameter :: np    = 200 !100
   real(8), parameter :: R     = 287.15d0
   real(8), parameter :: gamma = 1.4d0
   real(8), parameter :: M0    = 2.15d0
-  real(8), parameter :: p_tot = 25.d3
+  real(8), parameter :: p_tot = 100.d3 !25.d3 Re_x = 1.25 * 10**5 (Xsh = 100.d0 * blt)
   real(8), parameter :: p0    = p_tot / ((1.d0 + 0.5d0 * (gamma - 1.d0) * M0**2)**(gamma/(gamma-1.d0)))
   real(8), parameter :: T0    = 288.15d0
   real(8), parameter :: rho0  = p0 / (R * T0)
@@ -48,7 +48,7 @@ module mod_globals
   real(8), parameter :: rf    = dsqrt(Pr) !0.89d0
   real(8), parameter :: Taw   = T0 * (1.d0 + rf * 0.5d0 * (gamma - 1.d0) * M0**2)
   ! oblique shock
-  real(8), parameter :: beta  = dacos(-1.d0) * 30.8d0 / 180.d0 !theta4, 30.96 !30.8_baseline
+  real(8), parameter :: beta  = dacos(-1.d0) * 32.72d0 / 180.d0 !M2.15, theta5, 31.83 !M2.15, theta4, 30.96 !M2.15, 30.8_baseline
   real(8), parameter :: Ms    = M0 * dsin(beta)
   real(8), parameter :: Ms2   = Ms**2
   real(8), parameter :: theta = datan(2.d0 * (1.d0 / dtan(beta)) * (Ms2 - 1.d0) / (M0**2 * (gamma + dcos(2.d0 * beta)) + 2.d0))
