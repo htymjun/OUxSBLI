@@ -1,6 +1,6 @@
 module set
   use cudafor
-  use mod_globals, only : gamma, rho0, u0, p0, rho2, p2, ux, uy, beta, x_in, Xsh, i_LE
+  use mod_globals, only : gamma, rho0, u0, p0, rho2, p2, ux, uy, beta, Lx, Ly, x_in, Xsh, i_LE, nx
   use mod_constant, only : gamma_1, over_gamma_1
   use set_bc_common
   implicit none
@@ -12,7 +12,7 @@ contains
     integer i, j, k
     real(8) dx1, dz1
     real(8) tanh_s, yi
-    real(8), parameter :: s = 1.6d0 ! tanh wall-clustering stretch
+    real(8), parameter :: s = 2.4d0 !1.6 ! tanh wall-clustering stretch
     dx1 = Lx / dble(nx-1)
     dz1 = Lz / dble(nz-1)
 
@@ -59,12 +59,22 @@ contains
         ! no inlet BC in set_bc), so it stays frozen at these values: below the
         ! incident-shock trace it holds the freestream, above it the post-shock
         ! state, acting as the oblique-shock generator.
-        if (ys(j) > (Xsh - x_in) * dtan(beta)) then
-          Q(1,j,k,1) = rho2
-          Q(1,j,k,2) = rho2 * ux
-          Q(1,j,k,3) = rho2 * uy
-          Q(1,j,k,4) = 0.d0
-          Q(1,j,k,5) = p2 * over_gamma_1 + 0.5d0 * rho2 * (ux**2 + uy**2)
+        ! if (ys(j) > (Xsh - x_in) * dtan(beta)) then
+        !   Q(1,j,k,1) = rho2
+        !   Q(1,j,k,2) = rho2 * ux
+        !   Q(1,j,k,3) = rho2 * uy
+        !   Q(1,j,k,4) = 0.d0
+        !   Q(1,j,k,5) = p2 * over_gamma_1 + 0.5d0 * rho2 * (ux**2 + uy**2)
+        ! endif
+    enddo;enddo
+    do k = 1, nz
+      do i = 1, nx    
+        if (Ly / dtan(beta) + Lx / dble(nx-1) * dble(i-1) + x_in >= Xsh .and. Lx / dble(nx-1) * dble(i-1) + x_in < 0.09d0) then
+          Q(i,ny,k,1) = rho2
+          Q(i,ny,k,2) = rho2 * ux
+          Q(i,ny,k,3) = rho2 * uy
+          Q(i,ny,k,4) = 0.d0
+          Q(i,ny,k,5) = p2 * over_gamma_1 + 0.5d0 * rho2 * (ux**2 + uy**2)
         endif
     enddo;enddo
     do k = 1, nz
@@ -89,6 +99,7 @@ contains
     real(8) :: Rp, Rm, vb, cb, sb, ub, rhob, pb
     ! exterior (post-shock) sound speed for the top Riemann state
     real(8), parameter :: c_ext = sqrt(gamma * p2 / rho2)
+    real(8), parameter :: c0    = sqrt(gamma * p0 / rho0)
 
     !$cuf kernel do(2)<<<*,*>>>
     do k = 1, nz
@@ -101,37 +112,54 @@ contains
     !$cuf kernel do(2)<<<*,*>>>
     do k = 1, nz
       do i = 1, nx
-        ! ---- interior state (j = ny-1) ----
-        rhoin = QJ_1(i,ny-1,k) * Jacobian(i,ny-1)
-        uin   = QJ_2(i,ny-1,k) / QJ_1(i,ny-1,k)
-        vin   = QJ_3(i,ny-1,k) / QJ_1(i,ny-1,k)
-        pin   = gamma_1 * ( QJ_5(i,ny-1,k) * Jacobian(i,ny-1) &
-              - 0.5d0 * rhoin * (uin**2 + vin**2) )
-        cin   = sqrt(gamma * pin / rhoin)
+        if (Ly / dtan(beta) + Lx / dble(nx-1) * dble(i-1) + x_in < Xsh) then
+          ! ---- pre-shock state (j = ny) ----
+          ! ---- interior state (j = ny-1) ----
+          rhoin = QJ_1(i,ny-1,k) * Jacobian(i,ny-1)
+          uin   = QJ_2(i,ny-1,k) / QJ_1(i,ny-1,k)
+          vin   = QJ_3(i,ny-1,k) / QJ_1(i,ny-1,k)
+          pin   = gamma_1 * ( QJ_5(i,ny-1,k) * Jacobian(i,ny-1) &
+                - 0.5d0 * rhoin * (uin**2 + vin**2) )
+          cin   = sqrt(gamma * pin / rhoin)
 
-        ! ---- Riemann invariant (normal = y direction) ----
-        Rp = vin + 2.d0 * cin * over_gamma_1
-        Rm = uy - 2.d0 * c_ext * over_gamma_1
-        vb = 0.5d0 * (Rp + Rm)
-        cb = 0.25d0 * gamma_1 * (Rp - Rm)
+          ! ---- Riemann invariant (normal = y direction) ----
+          Rp = vin + 2.d0 * cin * over_gamma_1
+          Rm = -2.d0 * c0 * over_gamma_1 !uy - 2.d0 * c_ext * over_gamma_1
+          vb = 0.5d0 * (Rp + Rm)
+          cb = 0.25d0 * gamma_1 * (Rp - Rm)
 
-        if (vb >= 0.d0) then
-          sb = pin / rhoin**gamma
-          ub = uin
+          if (vb >= 0.d0) then
+            sb = pin / rhoin**gamma
+            ub = uin
+          else
+            sb = p0 / rho0**gamma !sb = p2 / rho2**gamma
+            ub = u0 !ub = ux
+          endif
+
+          rhob = (cb**2 / (gamma * sb)) ** over_gamma_1
+          pb   = sb * rhob**gamma
+
+          Jacobian_tmp = 1.d0 / Jacobian(i,ny)
+          QJ_1(i,ny,k) = rhob * Jacobian_tmp
+          QJ_2(i,ny,k) = rhob * ub * Jacobian_tmp
+          QJ_3(i,ny,k) = rhob * vb * Jacobian_tmp
+          QJ_4(i,ny,k) = 0.d0
+          QJ_5(i,ny,k) = (pb * over_gamma_1 + 0.5d0 * rhob * (ub**2 + vb**2)) * Jacobian_tmp
+        
+        else if (Ly / dtan(beta) + Lx / dble(nx-1) * dble(i-1) + x_in >= Xsh .and. Lx / dble(nx-1) * dble(i-1) + x_in < 0.09d0) then
+          ! ---- post-shock state (j = ny) ----
+          Jacobian_tmp = 1.d0 / Jacobian(i,ny)
+          QJ_1(i,ny,k) = rho2 * Jacobian_tmp
+          QJ_2(i,ny,k) = rho2 * ux * Jacobian_tmp
+          QJ_3(i,ny,k) = rho2 * uy * Jacobian_tmp
+          QJ_4(i,ny,k) = 0.d0
+          QJ_5(i,ny,k) = (p2 * over_gamma_1 + 0.5d0 * rho2 * (ux**2 + uy**2)) * Jacobian_tmp
+        
         else
-          sb = p2 / rho2**gamma
-          ub = ux
+          ! ---- Neumann ----
+          QJ_1(i,ny,k) = QJ_1(i,ny-1,k); QJ_2(i,ny,k) = QJ_2(i,ny-1,k); QJ_3(i,ny,k) = QJ_3(i,ny-1,k)
+          QJ_4(i,ny,k) = QJ_4(i,ny-1,k); QJ_5(i,ny,k) = QJ_5(i,ny-1,k)
         endif
-
-        rhob = (cb**2 / (gamma * sb)) ** over_gamma_1
-        pb   = sb * rhob**gamma
-
-        Jacobian_tmp = 1.d0 / Jacobian(i,ny)
-        QJ_1(i,ny,k) = rhob * Jacobian_tmp
-        QJ_2(i,ny,k) = rhob * ub * Jacobian_tmp
-        QJ_3(i,ny,k) = rhob * vb * Jacobian_tmp
-        QJ_4(i,ny,k) = 0.d0
-        QJ_5(i,ny,k) = (pb * over_gamma_1 + 0.5d0 * rhob * (ub**2 + vb**2)) * Jacobian_tmp
     enddo;enddo
 
     !$cuf kernel do(2)<<<*,*>>>
@@ -150,10 +178,12 @@ contains
           QJ_2(i,1,k) = 0.d0
           QJ_3(i,1,k) = 0.d0
           QJ_4(i,1,k) = 0.d0
-          p_wall = gamma_1 * (QJ_5(i,2,k) - 0.5d0 * (QJ_2(i,2,k)**2 + QJ_3(i,2,k)**2 + QJ_4(i,2,k)) / QJ_1(i,2,k))
+          p_wall = gamma_1 * (QJ_5(i,2,k) - 0.5d0 * (QJ_2(i,2,k)**2 + QJ_3(i,2,k)**2 + QJ_4(i,2,k)**2) / QJ_1(i,2,k))
           QJ_5(i,1,k) = p_wall * over_gamma_1
         endif
     enddo;enddo
+
+    
 
     call set_bc_cyclic_z(nx, ny, nz, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
   end subroutine set_bc
