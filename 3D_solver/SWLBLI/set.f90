@@ -1,6 +1,6 @@
 module set
   use cudafor
-  use mod_globals, only : gamma, rho0, u0, p0, rho2, p2, ux, uy, beta, Lx, Ly, x_in, Xsh, i_LE, nx
+  use mod_globals, only : gamma, rho0, u0, p0, rho2, p2, ux, uy, beta, Lx, Ly, Lz, x_in, Xsh, i_LE, nx, dt
   use mod_constant, only : gamma_1, over_gamma_1
   use set_bc_common
   implicit none
@@ -88,8 +88,9 @@ contains
   end subroutine set_init
 
 
-  subroutine set_bc(myrank, nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
+  subroutine set_bc(myrank, nx, ny, nz, xs, zs, t_now, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     integer, intent(in), value     :: myrank, nx, ny, nz
+    real(8), intent(in)  :: xs(nx), zs(nz)
     real(8), intent(in), device    :: Jacobian(nx,ny)
     real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8) Jacobian_tmp
@@ -100,6 +101,21 @@ contains
     ! exterior (post-shock) sound speed for the top Riemann state
     real(8), parameter :: c_ext = sqrt(gamma * p2 / rho2)
     real(8), parameter :: c0    = sqrt(gamma * p0 / rho0)
+    ! region of blowing (laminar-to-turbulent transition)
+    real(8), parameter :: A = 0.02d0
+    real(8) :: f_x, g_z, h_t
+    real(8), parameter :: x_a = 0.01d0 !beginning of the blowing and suction zone
+    real(8), parameter :: x_b = 0.02d0 !end of the blowing and suction zone
+    integer :: l = 1, l_max = 10, m = 1, m_max = 10
+    real(8), parameter :: beta_force = 75000 !(Hz)
+    real(8) :: Z_l(l_max), T_m(m_max)
+    real(8) :: phi_l(l_max), phi_m(m_max)
+    real(8), device ::phi_l_gpu(l_max), phi_m_gpu(m_max)
+    real(8), device :: Z_l_gpu(l_max), T_m_gpu(m_max)
+    real(8), device :: xs_gpu(nx), zs_gpu(nz)
+    real(8) r, theta, t_now, t_now_local
+    real(8), parameter :: pi = 4.0d0 * atan(1.0d0)
+    real(8), parameter :: ratio = 1.25d0
 
     !$cuf kernel do(2)<<<*,*>>>
     do k = 1, nz
@@ -161,6 +177,29 @@ contains
           QJ_4(i,ny,k) = QJ_4(i,ny-1,k); QJ_5(i,ny,k) = QJ_5(i,ny-1,k)
         endif
     enddo;enddo
+    
+    !prepareing for the region of blowing (laminar-to-turbulent transition)
+    call random_number(phi_l)
+    call random_number(phi_m)
+
+    r = 1.d0 / ratio ! r = 0.8
+    Z_l(1) = (1.0d0 - r) / (1.0d0 - r**dble(l_max))
+    do l = 2, l_max
+      Z_l(l) = Z_l(l-1) * r
+    enddo
+    T_m(1) = (1.0d0 - r) / (1.0d0 - r**dble(m_max))
+    do m = 2, m_max
+      T_m(m) = T_m(m-1) * r
+    enddo
+    t_now_local = dt * dble(t_now)
+
+    phi_l_gpu = phi_l
+    phi_m_gpu = phi_m
+    Z_l_gpu   = Z_l
+    T_m_gpu   = T_m
+    xs_gpu    = xs
+    zs_gpu    = zs
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
     !$cuf kernel do(2)<<<*,*>>>
     do k = 1, nz
@@ -180,6 +219,23 @@ contains
           QJ_4(i,1,k) = 0.d0
           p_wall = gamma_1 * (QJ_5(i,2,k) - 0.5d0 * (QJ_2(i,2,k)**2 + QJ_3(i,2,k)**2 + QJ_4(i,2,k)**2) / QJ_1(i,2,k))
           QJ_5(i,1,k) = p_wall * over_gamma_1
+        endif
+
+        ! region of blowing (laminar-to-turbulent transition)
+        if(xs_gpu(i) >= x_a .and. xs_gpu(i) <= x_b) then
+          g_z = 0.d0; h_t = 0.d0
+          do l = 1, l_max
+            g_z = g_z + Z_l_gpu(l) * sin(2.d0 * pi * dble(l) * (zs_gpu(k) / Lz + phi_l_gpu(l)))
+          enddo
+          
+          do m = 1, m_max
+            h_t = h_t + T_m_gpu(m) * sin(beta_force * t_now_local + 2.d0 * pi * phi_m_gpu(m))
+          enddo
+
+          theta = 2.d0 * pi * (xs_gpu(i) - x_a) / (x_b - x_a)
+          f_x = 4.d0 * sin(theta) * (1.d0 -cos(theta)) / sqrt(27.d0)
+
+          QJ_3(i,1,k) = QJ_1(i,1,k) * A * u0 * f_x * g_z * h_t
         endif
     enddo;enddo
 
