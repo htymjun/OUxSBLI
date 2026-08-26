@@ -20,7 +20,7 @@ module mod_globals
   integer, parameter :: rerank = 0
 
   ! flat-plate geometry
-  real(8), parameter :: x_in = -15.d0 * blt !-16.d0 * blt ! x(1); the inlet-shock threshold (Xsh - x_in)*tan(beta) depends on this
+  real(8), parameter :: x_in = -5.d0 * blt !-16.d0 * blt ! x(1); the inlet-shock threshold (Xsh - x_in)*tan(beta) depends on this
   real(8), parameter :: Xsh  = 100.d0 * blt !80.d0 * blt  ! inviscid shock impingement point on the wall
   integer, parameter :: i_LE = nint(-x_in * dble(nx-1) / Lx) + 1 ! first no-slip wall point; leading edge stays at x ~ 0 for any nx
 
@@ -56,7 +56,7 @@ module mod_globals
   real(8), parameter :: rf    = dsqrt(Pr) !0.89d0
   real(8), parameter :: Taw   = T0 * (1.d0 + rf * 0.5d0 * (gamma - 1.d0) * M0**2)
   ! oblique shock
-  real(8), parameter :: beta  = dacos(-1.d0) * 32.72d0 / 180.d0 !theta5, 31.83 !theta4, 30.96 !30.8_baseline
+  real(8), parameter :: beta  = dacos(-1.d0) * 32.72d0 / 180.d0 !theta6, 32.72!theta5, 31.83 !theta4, 30.96 !30.8_baseline
   real(8), parameter :: Ms    = M0 * dsin(beta)
   real(8), parameter :: Ms2   = Ms**2
   real(8), parameter :: theta = datan(2.d0 * (1.d0 / dtan(beta)) * (Ms2 - 1.d0) / (M0**2 * (gamma + dcos(2.d0 * beta)) + 2.d0))
