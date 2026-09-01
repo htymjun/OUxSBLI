@@ -12,7 +12,7 @@ contains
     integer i, j, k
     real(8) dx1, dz1
     real(8) tanh_s, yi
-    real(8), parameter :: s = 2.4d0 !1.6 ! tanh wall-clustering stretch
+    real(8), parameter :: s = 2.8d0 !2.4!1.6 ! tanh wall-clustering stretch
     dx1 = Lx / dble(nx-1)
     dz1 = Lz / dble(nz-1)
 
@@ -88,7 +88,7 @@ contains
   end subroutine set_init
 
 
-  subroutine set_bc(myrank, nx, ny, nz, xs, zs, t_now, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
+  subroutine set_bc(myrank, nx, ny, nz, xs, zs, phi_l_gpu, phi_m_gpu, t_now, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     integer, intent(in), value     :: myrank, nx, ny, nz
     real(8), intent(in)  :: xs(nx), zs(nz)
     real(8), intent(in), device    :: Jacobian(nx,ny)
@@ -102,18 +102,20 @@ contains
     real(8), parameter :: c_ext = sqrt(gamma * p2 / rho2)
     real(8), parameter :: c0    = sqrt(gamma * p0 / rho0)
     ! region of blowing (laminar-to-turbulent transition)
-    real(8), parameter :: A = 0.02d0
+    real(8), parameter :: A = 0.05d0
     real(8) :: f_x, g_z, h_t
     real(8), parameter :: x_a = 0.01d0 !beginning of the blowing and suction zone
-    real(8), parameter :: x_b = 0.02d0 !end of the blowing and suction zone
-    integer :: l = 1, l_max = 10, m = 1, m_max = 10
+    real(8), parameter :: x_b = 0.02d0 ! end of the blowing and suction zone
+    integer, parameter :: l_min = 12, m_min = 12
+    integer, parameter :: l_max = 24, m_max = 24
+    integer :: l, m
     real(8), parameter :: beta_force = 75000 !(Hz)
     real(8) :: Z_l(l_max), T_m(m_max)
-    real(8) :: phi_l(l_max), phi_m(m_max)
-    real(8), device ::phi_l_gpu(l_max), phi_m_gpu(m_max)
+    real(8), intent(in), device ::phi_l_gpu(l_max), phi_m_gpu(m_max)
     real(8), device :: Z_l_gpu(l_max), T_m_gpu(m_max)
     real(8), device :: xs_gpu(nx), zs_gpu(nz)
-    real(8) r, theta, t_now, t_now_local
+    integer t_now
+    real(8) r, theta, t_now_local
     real(8), parameter :: pi = 4.0d0 * atan(1.0d0)
     real(8), parameter :: ratio = 1.25d0
 
@@ -179,22 +181,17 @@ contains
     enddo;enddo
     
     !prepareing for the region of blowing (laminar-to-turbulent transition)
-    call random_number(phi_l)
-    call random_number(phi_m)
-
     r = 1.d0 / ratio ! r = 0.8
-    Z_l(1) = (1.0d0 - r) / (1.0d0 - r**dble(l_max))
-    do l = 2, l_max
+    Z_l(l_min) = (1.0d0 - r) / (1.0d0 - r**dble(l_max - l_min + 1))
+    do l = l_min + 1, l_max
       Z_l(l) = Z_l(l-1) * r
     enddo
-    T_m(1) = (1.0d0 - r) / (1.0d0 - r**dble(m_max))
-    do m = 2, m_max
+    T_m(m_min) = (1.0d0 - r) / (1.0d0 - r**dble(m_max - m_min + 1))
+    do m = m_min + 1, m_max
       T_m(m) = T_m(m-1) * r
     enddo
     t_now_local = dt * dble(t_now)
 
-    phi_l_gpu = phi_l
-    phi_m_gpu = phi_m
     Z_l_gpu   = Z_l
     T_m_gpu   = T_m
     xs_gpu    = xs
@@ -224,11 +221,11 @@ contains
         ! region of blowing (laminar-to-turbulent transition)
         if(xs_gpu(i) >= x_a .and. xs_gpu(i) <= x_b) then
           g_z = 0.d0; h_t = 0.d0
-          do l = 1, l_max
+          do l = l_min, l_max
             g_z = g_z + Z_l_gpu(l) * sin(2.d0 * pi * dble(l) * (zs_gpu(k) / Lz + phi_l_gpu(l)))
           enddo
           
-          do m = 1, m_max
+          do m = m_min, m_max
             h_t = h_t + T_m_gpu(m) * sin(beta_force * t_now_local + 2.d0 * pi * phi_m_gpu(m))
           enddo
 
