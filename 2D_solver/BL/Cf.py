@@ -75,8 +75,8 @@ if __name__ == "__main__":
 
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.plot(x_mm_plot, cf_dns_plot, color="tab:blue", lw=2.0, label="Present Study")
-    ax.plot(x_mm_plot, cf_loc[mask], color="tab:green", ls=":", lw=2.0,
-            label="Present Study (edge-norm.)")
+    #ax.plot(x_mm_plot, cf_loc[mask], color="tab:green", ls=":", lw=2.0,
+            #label="Present Study (edge-norm.)")
     ax.plot(x_mm_plot, cf_theory, color="tab:red", ls="--", lw=2.0, label="Blasius")
 
     ax.set_xlim(0, X_MAX_MM)
