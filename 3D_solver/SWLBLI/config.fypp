@@ -12,3 +12,4 @@
 #:set COMMZ         = False
 #:set ORDER_IO = ORDER // 2 - 1
 #:set OUTPUT_PRECISION = 4
+#:set MPI = 'GPU'

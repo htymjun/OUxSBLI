@@ -483,6 +483,7 @@ contains
     real(8), intent(in)    :: x(nx), dx_cpu(nx-1), y(ny), dy_cpu(ny-1)
     real(8), intent(in)    :: z(nz), dz_cpu(nz-1), Jacobian_cpu(nx,ny)
     real(8), intent(inout) :: Q(nx,ny,nz,5)
+    integer t_now
     integer overlap, ierr, nranks, ndevices, stat, t1, t2
     integer req_z(4)
     integer istat(MPI_STATUS_SIZE)
@@ -496,8 +497,19 @@ contains
     real(8), allocatable, device :: xix(:), etay(:), zetaz(:), Jacobian(:,:)
     real(8), allocatable, device :: dtdxdy(:,:), dtdydz(:,:), dtdzdx(:,:)
     real(8), allocatable, device :: Qs1d_lo(:), Qs1d_hi(:), Qr1d_lo(:), Qr1d_hi(:)
-    real(8), allocatable, pinned :: send_lo(:), send_hi(:), recv_lo(:), recv_hi(:)
+    real(8), allocatable, pinned :: send_lo(:), send_hi(:)
+    #:if MPI == 'CPU'
+    real(8), allocatable, pinned :: recv_lo(:), recv_hi(:)
+    #:else
+    real(8), allocatable, device :: recv_lo(:), recv_hi(:)
+    #:endif
     real(4) :: ke0 = 1.e0, entropy0 = 1.e0
+
+    ! random number for the region of blowing and suction
+    real(8) :: phi_l(500), phi_m(500)
+    real(8), device :: phi_l_gpu(500), phi_m_gpu(500)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
     #:if ORDER == 6
     overlap = 3
     #:elif ORDER == 4
@@ -523,6 +535,17 @@ contains
                     Jacobian_cpu, Q, dtdxdy, dtdydz, dtdzdx, xix, etay, zetaz, &
                     Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, ke0, entropy0)
       QJ2_1 = QJ_1; QJ2_2 = QJ_2; QJ2_3 = QJ_3; QJ2_4 = QJ_4; QJ2_5 = QJ_5 ! initialize QJ2
+
+      ! random number for the region of blowing and suction
+      call random_number(phi_l)
+      call random_number(phi_m)
+      call MPI_BCAST(phi_l, size(phi_l), MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
+      call MPI_BCAST(phi_m, size(phi_m), MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
+
+      phi_l_gpu = phi_l
+      phi_m_gpu = phi_m
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
       allocate(Qs1d_lo(nx*ny*overlap*5), Qs1d_hi(nx*ny*overlap*5), &
                Qr1d_lo(nx*ny*overlap*5), Qr1d_hi(nx*ny*overlap*5), stat=ierr)
       allocate(send_lo(nx*ny*overlap*5), send_hi(nx*ny*overlap*5), &
@@ -531,6 +554,7 @@ contains
       print *, "myrank is ", myrank, " start Runge-Kutta (z-decomp)"
       do t2 = 1, np
         do t1 = 1, nt
+          t_now = nt * (t2 - 1) + t1
           call start_exchange_z(myrank, nranks, overlap, nx, ny, nz, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, &
                                      Qs1d_lo, Qs1d_hi, Qr1d_lo, Qr1d_hi, &
                                      send_lo, send_hi, recv_lo, recv_hi, req_z)
@@ -540,7 +564,7 @@ contains
           call calc_EFG_halo(nx, ny, nz, xix, etay, zetaz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, &
                                 Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, E, F, G)
           call calc_step1<<<blocks,threads>>>(nx, ny, nz, 1.d0, dtdxdy, dtdydz, dtdzdx, E, F, G, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
-          call set_bc(myrank, nx, ny, nz, Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
+          call set_bc(myrank, nx, ny, nz, x, z, phi_l_gpu, phi_m_gpu, t_now, Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
 
           call start_exchange_z(myrank, nranks, overlap, nx, ny, nz, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, &
                                      Qs1d_lo, Qs1d_hi, Qr1d_lo, Qr1d_hi, &
@@ -552,7 +576,7 @@ contains
                                 Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, E, F, G)
           call calc_step2_3<<<blocks,threads>>>(nx, ny, nz, 0.75d0, 0.25d0, 0.25d0, 1.d0, &
                                                 dtdxdy, dtdydz, dtdzdx, E, F, G, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
-          call set_bc(myrank, nx, ny, nz, Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
+          call set_bc(myrank, nx, ny, nz, x, z, phi_l_gpu, phi_m_gpu, t_now, Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
 
           call start_exchange_z(myrank, nranks, overlap, nx, ny, nz, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, &
                                      Qs1d_lo, Qs1d_hi, Qr1d_lo, Qr1d_hi, &
@@ -564,7 +588,7 @@ contains
                                 Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, E, F, G)
           call calc_step2_3<<<blocks,threads>>>(nx, ny, nz, 2.d0, 1.d0, 2.d0, one_third, &
                                                 dtdxdy, dtdydz, dtdzdx, E, F, G, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
-          call set_bc(myrank, nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
+          call set_bc(myrank, nx, ny, nz, x, z, phi_l_gpu, phi_m_gpu, t_now, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
         enddo
         call send_recv_for_print_even(myrank, nranks, t2, nx, ny, nz, x, y, z, Jacobian_cpu, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q, ke0, entropy0)
       enddo
