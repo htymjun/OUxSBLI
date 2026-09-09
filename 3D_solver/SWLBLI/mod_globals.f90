@@ -36,8 +36,8 @@ module mod_globals
 
   ! time
   integer, parameter :: step_offset = 0
-  real(8), parameter :: endT  = 2.d-2 !1.d-3
-  integer, parameter :: np    = 200 !100
+  real(8), parameter :: endT  = 1.8d-2 !1.d-3
+  integer, parameter :: np    = 180 !100
   real(8), parameter :: R     = 287.15d0
   real(8), parameter :: gamma = 1.4d0
   real(8), parameter :: M0    = 2.15d0
