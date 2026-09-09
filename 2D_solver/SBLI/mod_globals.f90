@@ -8,13 +8,13 @@ module mod_globals
 
   ! mesh
   real(8), parameter :: Lx = 165.d0 * blt !176!20
-  real(8), parameter :: Ly = 60.d0 * blt !80!5
+  real(8), parameter :: Ly = 56.d0 * blt !80!5
   ! DNS
   integer, parameter :: nx = 1025 !257!257
-  integer, parameter :: ny = 513 !129!257
+  integer, parameter :: ny = 480 !129!257
 
   ! flat-plate geometry
-  real(8), parameter :: x_in = -15.d0 * blt !-16.d0 * blt ! x(1); the inlet-shock threshold (Xsh - x_in)*tan(beta) depends on this
+  real(8), parameter :: x_in = -5.d0 * blt !-16.d0 * blt ! x(1); the inlet-shock threshold (Xsh - x_in)*tan(beta) depends on this
   real(8), parameter :: Xsh  = 100.d0 * blt !80.d0 * blt  ! inviscid shock impingement point on the wall
   integer, parameter :: i_LE = nint(-x_in * dble(nx-1) / Lx) + 1 ! first no-slip wall point; leading edge stays at x ~ 0 for any nx
 
@@ -28,8 +28,8 @@ module mod_globals
 
   ! time
   integer, parameter :: step_offset = 0
-  real(8), parameter :: endT  = 2.d-2 !1.d-2
-  integer, parameter :: np    = 200 !100
+  real(8), parameter :: endT  = 1.8d-2 !1.d-2
+  integer, parameter :: np    = 180 !100
   real(8), parameter :: R     = 287.15d0
   real(8), parameter :: gamma = 1.4d0
   real(8), parameter :: M0    = 2.15d0
