@@ -21,6 +21,10 @@ from ouxsbli.tests.utils.vtk_reader import latest_vtr
 
 plot_style.apply()
 
+plt.rcParams["font.family"] = "serif"
+plt.rcParams["font.serif"] = ["Times New Roman", "Liberation Serif"]
+plt.rcParams["mathtext.fontset"] = "stix"
+
 # must match 2D_solver/SBLI/mod_globals.f90
 R = 287.15
 gamma = 1.4
@@ -39,9 +43,9 @@ Y_ZOOM_RANGE = (0.0, 0.20)
 
 # font sizes: adjust these to resize the axis numbers (tick labels) and the
 # axis titles (Cp, X/Xsh) independently
-TICK_LABEL_FONTSIZE = 25
-AXIS_LABEL_FONTSIZE = 25
-LEGEND_FONTSIZE = 16.5
+TICK_LABEL_FONTSIZE = 28
+AXIS_LABEL_FONTSIZE = 28
+LEGEND_FONTSIZE = 24
 
 p0 = p_tot / (1.0 + 0.5 * (gamma - 1.0) * M0**2) ** (gamma / (gamma - 1.0))
 rho0 = p0 / (R * T0)
@@ -59,7 +63,7 @@ REFERENCE_DATA = [
     },
     {
         "path": REF_DIR / "data_Degrez_Cp.dat",
-        "label": "Degrez et al. (numerical)",
+        "label": "Degrez et al.\n(numerical)",
         "style": dict(marker="o", ls="none", mfc="none", color="k", ms=6, mew=2.0),
         "x_scale": 1.25,
     },
@@ -116,7 +120,7 @@ if __name__ == "__main__":
 
     ax.axhline(0.0, color="k", ls="--", lw=0.6)   # undisturbed-freestream reference level Cp=0
     ax.set_xlim(0, 2.0)
-    ax.set_xlabel(r"$X / X_{sh}$", fontsize=AXIS_LABEL_FONTSIZE)
+    ax.set_xlabel(r"$x / x_{sh}$", fontsize=AXIS_LABEL_FONTSIZE)
     ax.set_ylabel(r"$C_p$", fontsize=AXIS_LABEL_FONTSIZE)
     ax.tick_params(axis="both", which="major", labelsize=TICK_LABEL_FONTSIZE)
 
@@ -132,7 +136,8 @@ if __name__ == "__main__":
     ax.yaxis.set_major_formatter(FuncFormatter(lambda y, pos: "" if abs(y) < 1e-12 else f"{y:g}"))
 
     ax.legend(frameon=False, fontsize=LEGEND_FONTSIZE, loc="upper left",
-              bbox_to_anchor=(0.0, 1.0), borderaxespad=0.3)
+              bbox_to_anchor=(-0.02, 1.0), borderaxespad=0.3)
     fig.tight_layout()
+    ax.set_box_aspect(0.75)  # height/width ratio
     fig.savefig(REF_DIR / "cp_BL2_all.png", dpi=200)
     print("Saved: cp_BL2_all.png")
