@@ -11,7 +11,7 @@ contains
     integer i, j
     real(8) dx1
     real(8) tanh_s, yi
-    real(8), parameter :: s = 2.4d0 !1.6d0 ! tanh wall-clustering stretch
+    real(8), parameter :: s = 2.8d0 !1.6d0 ! tanh wall-clustering stretch
     dx1 = Lx / dble(nx-1)
 
     x(1) = x_in
