@@ -24,6 +24,10 @@ from ouxsbli.tests.utils.vtk_reader import getGrid, getQ, latest_vtr
 
 plot_style.apply()
 
+plt.rcParams["font.family"] = "serif"
+plt.rcParams["font.serif"] = ["Times New Roman", "Liberation Serif"]
+plt.rcParams["mathtext.fontset"] = "stix"
+
 # must match 2D_solver/BL/mod_globals.f90
 R = 287.15
 gamma = 1.4
@@ -42,6 +46,7 @@ mu0 = sutherland_mu(T0)
 # The upper limit stays clear of the 0th-order-extrapolated outlet at x = 100.3 mm.
 X_MIN_MM = 5.0
 X_MAX_MM = 95.0
+Y_MAJOR_INTERVAL = 2.5e-3
 
 if __name__ == "__main__":
     path = sys.argv[1] if len(sys.argv) > 1 else latest_vtr(CASE_DIR / "data")
@@ -81,9 +86,9 @@ if __name__ == "__main__":
 
     ax.set_xlim(0, X_MAX_MM)
     ax.set_ylim(bottom=0)
-    ax.set_xlabel(r"$x$ [mm]", fontsize=25)
-    ax.set_ylabel(r"$C_f$", fontsize=25)
-    ax.tick_params(axis="both", which="major", labelsize=25)
+    ax.set_xlabel(r"$x$ [mm]", fontsize=28)
+    ax.set_ylabel(r"$C_f$", fontsize=28)
+    ax.tick_params(axis="both", which="major", labelsize=28)
 
     ax.xaxis.set_major_locator(MultipleLocator(20))
     ax.xaxis.set_major_formatter(FuncFormatter(lambda val, pos: f"{val:g}"))
@@ -103,9 +108,12 @@ if __name__ == "__main__":
     y_formatter.set_scientific(True)
     y_formatter.set_powerlimits((-3, -3))
     ax.yaxis.set_major_formatter(y_formatter)
-    ax.yaxis.get_offset_text().set_fontsize(25)
+    ax.yaxis.get_offset_text().set_fontsize(28)
 
-    ax.legend(frameon=False, fontsize=18, loc="upper right")
+    if Y_MAJOR_INTERVAL is not None:
+        ax.yaxis.set_major_locator(MultipleLocator(Y_MAJOR_INTERVAL))
+
+    ax.legend(frameon=False, fontsize=24, loc="upper right")
     fig.tight_layout()
     fig.savefig(CASE_DIR / "cf_BL_theory_compare.png", dpi=200)
     print("Saved: cf_BL_theory_compare.png")
