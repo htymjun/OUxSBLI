@@ -504,6 +504,7 @@ contains
     real(8), allocatable, device :: recv_lo(:), recv_hi(:)
     #:endif
     real(4) :: ke0 = 1.e0, entropy0 = 1.e0
+    integer :: comm_calc, color, key
 
     ! random number for the region of blowing and suction
     real(8) :: phi_l(500), phi_m(500)
@@ -518,6 +519,11 @@ contains
     overlap = 1
     #:endif
     call MPI_COMM_SIZE(MPI_COMM_WORLD, nranks, ierr)
+
+    color = mod(myrank, 2)
+    key   = myrank
+    call MPI_COMM_SPLIT(MPI_COMM_WORLD, color, key, comm_calc, ierr)
+
     if (mod(myrank,2) == 0) then
       stat = cudaGetDeviceCount(ndevices)
       if (myrank == 0) print '(2x, i2, a)', ndevices, " GPU devices are found"
@@ -539,8 +545,8 @@ contains
       ! random number for the region of blowing and suction
       call random_number(phi_l)
       call random_number(phi_m)
-      call MPI_BCAST(phi_l, size(phi_l), MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
-      call MPI_BCAST(phi_m, size(phi_m), MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
+      call MPI_BCAST(phi_l, size(phi_l), MPI_REAL8, 0, comm_calc, ierr)
+      call MPI_BCAST(phi_m, size(phi_m), MPI_REAL8, 0, comm_calc, ierr)
 
       phi_l_gpu = phi_l
       phi_m_gpu = phi_m
@@ -562,7 +568,7 @@ contains
                         Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G, 2*overlap, nz-2*overlap)
           call finish_exchange_z(overlap, nx, ny, nz, recv_lo, recv_hi, Qr1d_lo, Qr1d_hi, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, req_z)
           call calc_EFG_halo(nx, ny, nz, xix, etay, zetaz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, &
-                                Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, E, F, G)
+                                Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
           call calc_step1<<<blocks,threads>>>(nx, ny, nz, 1.d0, dtdxdy, dtdydz, dtdzdx, E, F, G, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
           call set_bc(myrank, nx, ny, nz, x, z, phi_l_gpu, phi_m_gpu, t_now, Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
 
@@ -573,7 +579,7 @@ contains
                         Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G, 2*overlap, nz-2*overlap)
           call finish_exchange_z(overlap, nx, ny, nz, recv_lo, recv_hi, Qr1d_lo, Qr1d_hi, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, req_z)
           call calc_EFG_halo(nx, ny, nz, xix, etay, zetaz, Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, &
-                                Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, E, F, G)
+                                Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
           call calc_step2_3<<<blocks,threads>>>(nx, ny, nz, 0.75d0, 0.25d0, 0.25d0, 1.d0, &
                                                 dtdxdy, dtdydz, dtdzdx, E, F, G, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
           call set_bc(myrank, nx, ny, nz, x, z, phi_l_gpu, phi_m_gpu, t_now, Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
@@ -585,7 +591,7 @@ contains
                         Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G, 2*overlap, nz-2*overlap)
           call finish_exchange_z(overlap, nx, ny, nz, recv_lo, recv_hi, Qr1d_lo, Qr1d_hi, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, req_z)
           call calc_EFG_halo(nx, ny, nz, xix, etay, zetaz, Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, &
-                                Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, E, F, G)
+                                Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
           call calc_step2_3<<<blocks,threads>>>(nx, ny, nz, 2.d0, 1.d0, 2.d0, one_third, &
                                                 dtdxdy, dtdydz, dtdzdx, E, F, G, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
           call set_bc(myrank, nx, ny, nz, x, z, phi_l_gpu, phi_m_gpu, t_now, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)

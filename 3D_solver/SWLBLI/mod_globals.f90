@@ -9,11 +9,11 @@ module mod_globals
   ! mesh
   real(8), parameter :: Lx = 165.d0 * blt !176!20
   real(8), parameter :: Ly = 56.d0 * blt !60!80!5
-  real(8), parameter :: Lz = 4.d0 * blt !2
+  real(8), parameter :: Lz = 0.5d0 * blt !4!2
   ! DNS
-  integer, parameter :: nx = 1025 !2900 !257!257
-  integer, parameter :: ny = 480 !513 !129!257
-  integer, parameter :: nz = 54 !140 !33 !9
+  integer, parameter :: nx = 257!2700 !1025!2900!257!257
+  integer, parameter :: ny = 257!480 !480!513!129!257
+  integer, parameter :: nz = 10!140 !54!140!33!9
   
   integer, parameter :: nre1 = 1
   integer, parameter :: nre2 = nx

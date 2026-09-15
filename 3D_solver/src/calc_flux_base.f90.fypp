@@ -238,8 +238,9 @@ contains
 
       #:for d in dirs
       #:set in_sfx = '_in' if (not d['is_bc'] and ORDER == 6) else ''
-      call calc_${d['dir']}$v${VISC_ORDER}$_koff${in_sfx}$<<<blocks${d['dir']}$v,threads${d['dir']}$v>>>&           ! exchange "${in_sfx}$" and " _koff "
-           &(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, T, mu${les_args}$,  ${d['ov']}$, nz-overlap_fb-1, ${d['dir']}$) ! moved "${d['dir']}$"
+      #:set grad_args = ', ' + d['grad'] if VISC_ORDER > 2 else ''
+      call calc_${d['dir']}$v${VISC_ORDER}$${in_sfx}$_koff<<<blocks${d['dir']}$v,threads${d['dir']}$v>>>&           ! exchange "${in_sfx}$" and " _koff "
+           &(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, T, mu${les_args}$${grad_args}$,  ${d['ov']}$, nz-overlap_fb-1, ${d['dir']}$) ! moved "${d['dir']}$"
       #:endfor
     #:endif
   #:endif
@@ -248,7 +249,7 @@ contains
 
 #:if COMMZ
   subroutine calc_EFG_halo(nx, ny, nz, inv_dx, inv_dy, inv_dz, &
-                             Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, E, F, G)
+                             Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
     integer, intent(in), value                 :: nx, ny, nz
     real(8), intent(in), device, contiguous    :: inv_dx(nx-1), inv_dy(ny-1), inv_dz(nz-1)
     real(8), intent(in), device, contiguous    :: Jacobian(nx,ny)
@@ -258,11 +259,14 @@ contains
     real(8), intent(inout), device, contiguous :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     #:if VISC == 'Euler'
     real(8), intent(inout), device, contiguous :: mu(1,1,1), mut(1,1,1), qc2(1,1,1)
+    real(8), intent(inout), device, contiguous :: ux(1,1,1), vy(1,1,1), wz(1,1,1)
     #:elif VISC == 'NS'
     real(8), intent(inout), device, contiguous :: mu(nx,ny,nz)
     real(8), intent(inout), device, contiguous :: mut(1,1,1), qc2(1,1,1)
+    real(8), intent(inout), device, contiguous :: ux(nx,ny,nz), vy(nx,ny,nz), wz(nx,ny,nz)
     #:elif VISC == 'LES'
     real(8), intent(inout), device, contiguous :: mu(nx,ny,nz), mut(nx,ny,nz), qc2(nx,ny,nz)
+    real(8), intent(inout), device, contiguous :: ux(nx,ny,nz), vy(nx,ny,nz), wz(nx,ny,nz)
     #:endif
     real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
     real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
@@ -289,9 +293,9 @@ contains
     ! axis
     ! ===================================================================
     #:set dirs = [ &
-      {'dir': 'E', 'is_bc': BC_X, 'has_in': True,  'b_lo': ('2', 'overlap_fb+1'), 'b_hi': ('nz-overlap_fb', 'nz-1')}, &
-      {'dir': 'F', 'is_bc': BC_Y, 'has_in': True,  'b_lo': ('2', 'overlap_fb+1'), 'b_hi': ('nz-overlap_fb', 'nz-1')}, &
-      {'dir': 'G', 'is_bc': BC_Z, 'has_in': False, 'b_lo': ('overlap_fb', '2*overlap_fb-1') &
+      {'dir': 'E', 'is_bc': BC_X, 'has_in': True, 'grad': 'vy, wz', 'b_lo': ('2', 'overlap_fb+1'), 'b_hi': ('nz-overlap_fb', 'nz-1')}, &
+      {'dir': 'F', 'is_bc': BC_Y, 'has_in': True, 'grad': 'ux, wz', 'b_lo': ('2', 'overlap_fb+1'), 'b_hi': ('nz-overlap_fb', 'nz-1')}, &
+      {'dir': 'G', 'is_bc': BC_Z, 'has_in': False, 'grad': 'ux, vy', 'b_lo': ('overlap_fb', '2*overlap_fb-1') &
       if (is_les and ORDER < 4) else ('1', 'overlap_fb'), 'b_hi': ('nz-overlap_fb', 'nz-1')} &
     ]
     call calc_quantities_T_3D(nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, 1, overlap_fb)
@@ -305,12 +309,13 @@ contains
 
     #:for d in dirs
     #:set in_sfx = '_in' if (d['has_in'] and not d['is_bc'] and ORDER == 6) else ''
+    #:set grad_args = ', ' + d['grad'] if VISC_ORDER > 2 else ''
     ! Low-index side
-    call calc_${d['dir']}$v${VISC_ORDER}$_koff${in_sfx}$<<<blocks${d['dir']}$v,threads${d['dir']}$v>>>&          ! exchange ${in_sfx}$ and _koff
-           &(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, T, mu${les_args}$,  ${d['b_lo'][0]}$, ${d['b_lo'][1]}$ , ${d['dir']}$) ! moved "${d['dir']}$"
+    call calc_${d['dir']}$v${VISC_ORDER}$${in_sfx}$_koff<<<blocks${d['dir']}$v,threads${d['dir']}$v>>>&          ! exchange ${in_sfx}$ and _koff
+           &(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, T, mu${les_args}$${grad_args}$,  ${d['b_lo'][0]}$, ${d['b_lo'][1]}$ , ${d['dir']}$) ! moved "${d['dir']}$"
     ! High-index side
-    call calc_${d['dir']}$v${VISC_ORDER}$_koff${in_sfx}$<<<blocks${d['dir']}$v,threads${d['dir']}$v>>>&           ! exchange ${in_sfx}$ and _koff
-           &(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, T, mu${les_args}$, ${d['b_hi'][0]}$, ${d['b_hi'][1]}$ , ${d['dir']}$)  ! moved "${d['dir']}$"
+    call calc_${d['dir']}$v${VISC_ORDER}$${in_sfx}$_koff<<<blocks${d['dir']}$v,threads${d['dir']}$v>>>&           ! exchange ${in_sfx}$ and _koff
+           &(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, T, mu${les_args}$${grad_args}$, ${d['b_hi'][0]}$, ${d['b_hi'][1]}$ , ${d['dir']}$)  ! moved "${d['dir']}$"
     #:endfor
   #:endif
   end subroutine calc_EFG_halo

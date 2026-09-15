@@ -181,21 +181,21 @@ contains
     enddo;enddo
     
     !prepareing for the region of blowing (laminar-to-turbulent transition)
-    r = 1.d0 / ratio ! r = 0.8
-    Z_l(l_min) = (1.0d0 - r) / (1.0d0 - r**dble(l_max - l_min + 1))
-    do l = l_min + 1, l_max
-      Z_l(l) = Z_l(l-1) * r
-    enddo
-    T_m(m_min) = (1.0d0 - r) / (1.0d0 - r**dble(m_max - m_min + 1))
-    do m = m_min + 1, m_max
-      T_m(m) = T_m(m-1) * r
-    enddo
-    t_now_local = dt * dble(t_now)
+    ! r = 1.d0 / ratio ! r = 0.8
+    ! Z_l(l_min) = (1.0d0 - r) / (1.0d0 - r**dble(l_max - l_min + 1))
+    ! do l = l_min + 1, l_max
+    !   Z_l(l) = Z_l(l-1) * r
+    ! enddo
+    ! T_m(m_min) = (1.0d0 - r) / (1.0d0 - r**dble(m_max - m_min + 1))
+    ! do m = m_min + 1, m_max
+    !   T_m(m) = T_m(m-1) * r
+    ! enddo
+    ! t_now_local = dt * dble(t_now)
 
-    Z_l_gpu   = Z_l
-    T_m_gpu   = T_m
-    xs_gpu    = xs
-    zs_gpu    = zs
+    ! Z_l_gpu   = Z_l
+    ! T_m_gpu   = T_m
+    ! xs_gpu    = xs
+    ! zs_gpu    = zs
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
     !$cuf kernel do(2)<<<*,*>>>
@@ -219,21 +219,21 @@ contains
         endif
 
         ! region of blowing (laminar-to-turbulent transition)
-        if(xs_gpu(i) >= x_a .and. xs_gpu(i) <= x_b) then
-          g_z = 0.d0; h_t = 0.d0
-          do l = l_min, l_max
-            g_z = g_z + Z_l_gpu(l) * sin(2.d0 * pi * dble(l) * (zs_gpu(k) / Lz + phi_l_gpu(l)))
-          enddo
+        ! if(xs_gpu(i) >= x_a .and. xs_gpu(i) <= x_b) then
+        !   g_z = 0.d0; h_t = 0.d0
+        !   do l = l_min, l_max
+        !     g_z = g_z + Z_l_gpu(l) * sin(2.d0 * pi * dble(l) * (zs_gpu(k) / Lz + phi_l_gpu(l)))
+        !   enddo
           
-          do m = m_min, m_max
-            h_t = h_t + T_m_gpu(m) * sin(beta_force * t_now_local + 2.d0 * pi * phi_m_gpu(m))
-          enddo
+        !   do m = m_min, m_max
+        !     h_t = h_t + T_m_gpu(m) * sin(beta_force * t_now_local + 2.d0 * pi * phi_m_gpu(m))
+        !   enddo
 
-          theta = 2.d0 * pi * (xs_gpu(i) - x_a) / (x_b - x_a)
-          f_x = 4.d0 * sin(theta) * (1.d0 -cos(theta)) / sqrt(27.d0)
+        !   theta = 2.d0 * pi * (xs_gpu(i) - x_a) / (x_b - x_a)
+        !   f_x = 4.d0 * sin(theta) * (1.d0 -cos(theta)) / sqrt(27.d0)
 
-          QJ_3(i,1,k) = QJ_1(i,1,k) * A * u0 * f_x * g_z * h_t
-        endif
+        !   QJ_3(i,1,k) = QJ_1(i,1,k) * A * u0 * f_x * g_z * h_t
+        ! endif
     enddo;enddo
 
     
