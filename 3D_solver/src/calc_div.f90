@@ -46,17 +46,25 @@ contains
   ! Only the swept direction's own margin matters (see calc_div_2's docstring
   ! for why: the other two array dimensions are read at whatever index the
   ! thread already owns, never validity-checked).
+  !
+  ! Every kernel sweeps only the z planes [k_lo, k_hi]. The non-COMMZ path
+  ! passes the whole range (1..nz for ux/vy, io_v+2..nz-io_v-1 for wz); the
+  ! COMMZ path computes the planes whose stencil is complete before the
+  ! z-halo exchange and the remaining planes afterwards (calc_flux_base).
+  ! The caller keeps wz's range inside the stencil-safe interior; an empty
+  ! range is a no-op.
 
   !> du/dx at cell-center (4th-order, interior stencil)
-  subroutine calc_div_ux_4_in(nx, ny, nz, xix, Q_2, ux)
-    integer, intent(in), value                        :: nx, ny, nz
+  subroutine calc_div_ux_4_in(nx, ny, nz, xix, Q_2, ux, k_lo, k_hi)
+    integer, intent(in), value                        :: nx, ny, nz, k_lo, k_hi
     real(8), intent(in), dimension(nx-1), device      :: xix   ! 1 / dx
     real(8), intent(in), dimension(nx,ny,nz), device  :: Q_2
     real(8), intent(out), dimension(nx,ny,nz), device :: ux
     integer, parameter :: io_v = 1
     integer i, j, k
+    if (k_hi < k_lo) return
     !$cuf kernel do(3) <<<*,(32,4,2)>>>
-    do k = 1, nz
+    do k = k_lo, k_hi
       do j = 1, ny
         do i = io_v+2, nx-io_v-1
           ux(i,j,k) = (one_third * (-Q_2(i-1,j,k) + Q_2(i+1,j,k)) &
@@ -67,15 +75,16 @@ contains
   end subroutine calc_div_ux_4_in
 
   !> dv/dy at cell-center (4th-order, interior stencil)
-  subroutine calc_div_vy_4_in(nx, ny, nz, etay, Q_3, vy)
-    integer, intent(in), value                        :: nx, ny, nz
+  subroutine calc_div_vy_4_in(nx, ny, nz, etay, Q_3, vy, k_lo, k_hi)
+    integer, intent(in), value                        :: nx, ny, nz, k_lo, k_hi
     real(8), intent(in), dimension(ny-1), device      :: etay  ! 1 / dy
     real(8), intent(in), dimension(nx,ny,nz), device  :: Q_3
     real(8), intent(out), dimension(nx,ny,nz), device :: vy
     integer, parameter :: io_v = 1
     integer i, j, k
+    if (k_hi < k_lo) return
     !$cuf kernel do(3) <<<*,(32,4,2)>>>
-    do k = 1, nz
+    do k = k_lo, k_hi
       do j = io_v+2, ny-io_v-1
         do i = 1, nx
           vy(i,j,k) = (one_third * (-Q_3(i,j-1,k) + Q_3(i,j+1,k)) &
@@ -85,16 +94,17 @@ contains
     enddo
   end subroutine calc_div_vy_4_in
 
-  !> dw/dz at cell-center (4th-order, interior stencil)
-  subroutine calc_div_wz_4_in(nx, ny, nz, zetaz, Q_4, wz)
-    integer, intent(in), value                        :: nx, ny, nz
+  !> dw/dz at cell-center (4th-order, interior stencil); caller keeps
+  !> [k_lo, k_hi] inside [io_v+2, nz-io_v-1] = [3, nz-2]
+  subroutine calc_div_wz_4_in(nx, ny, nz, zetaz, Q_4, wz, k_lo, k_hi)
+    integer, intent(in), value                        :: nx, ny, nz, k_lo, k_hi
     real(8), intent(in), dimension(nz-1), device      :: zetaz ! 1 / dz
     real(8), intent(in), dimension(nx,ny,nz), device  :: Q_4
     real(8), intent(out), dimension(nx,ny,nz), device :: wz
-    integer, parameter :: io_v = 1
     integer i, j, k
+    if (k_hi < k_lo) return
     !$cuf kernel do(3) <<<*,(32,4,2)>>>
-    do k = io_v+2, nz-io_v-1
+    do k = k_lo, k_hi
       do j = 1, ny
         do i = 1, nx
           wz(i,j,k) = (one_third * (-Q_4(i,j,k-1) + Q_4(i,j,k+1)) &
@@ -105,15 +115,16 @@ contains
   end subroutine calc_div_wz_4_in
 
   !> du/dx at cell-center (6th-order, interior stencil)
-  subroutine calc_div_ux_6_in(nx, ny, nz, xix, Q_2, ux)
-    integer, intent(in), value                        :: nx, ny, nz
+  subroutine calc_div_ux_6_in(nx, ny, nz, xix, Q_2, ux, k_lo, k_hi)
+    integer, intent(in), value                        :: nx, ny, nz, k_lo, k_hi
     real(8), intent(in), dimension(nx-1), device      :: xix   ! 1 / dx
     real(8), intent(in), dimension(nx,ny,nz), device  :: Q_2
     real(8), intent(out), dimension(nx,ny,nz), device :: ux
     integer, parameter :: io_v = 2
     integer i, j, k
+    if (k_hi < k_lo) return
     !$cuf kernel do(3) <<<*,(32,4,2)>>>
-    do k = 1, nz
+    do k = k_lo, k_hi
       do j = 1, ny
         do i = io_v+2, nx-io_v-1
           ux(i,j,k) = (one_120 * (-Q_2(i-3,j,k) + Q_2(i+3,j,k)) &
@@ -125,15 +136,16 @@ contains
   end subroutine calc_div_ux_6_in
 
   !> dv/dy at cell-center (6th-order, interior stencil)
-  subroutine calc_div_vy_6_in(nx, ny, nz, etay, Q_3, vy)
-    integer, intent(in), value                        :: nx, ny, nz
+  subroutine calc_div_vy_6_in(nx, ny, nz, etay, Q_3, vy, k_lo, k_hi)
+    integer, intent(in), value                        :: nx, ny, nz, k_lo, k_hi
     real(8), intent(in), dimension(ny-1), device      :: etay  ! 1 / dy
     real(8), intent(in), dimension(nx,ny,nz), device  :: Q_3
     real(8), intent(out), dimension(nx,ny,nz), device :: vy
     integer, parameter :: io_v = 2
     integer i, j, k
+    if (k_hi < k_lo) return
     !$cuf kernel do(3) <<<*,(32,4,2)>>>
-    do k = 1, nz
+    do k = k_lo, k_hi
       do j = io_v+2, ny-io_v-1
         do i = 1, nx
           vy(i,j,k) = (one_120 * (-Q_3(i,j-3,k) + Q_3(i,j+3,k)) &
@@ -144,16 +156,17 @@ contains
     enddo
   end subroutine calc_div_vy_6_in
 
-  !> dw/dz at cell-center (6th-order, interior stencil)
-  subroutine calc_div_wz_6_in(nx, ny, nz, zetaz, Q_4, wz)
-    integer, intent(in), value                        :: nx, ny, nz
+  !> dw/dz at cell-center (6th-order, interior stencil); caller keeps
+  !> [k_lo, k_hi] inside [io_v+2, nz-io_v-1] = [4, nz-3]
+  subroutine calc_div_wz_6_in(nx, ny, nz, zetaz, Q_4, wz, k_lo, k_hi)
+    integer, intent(in), value                        :: nx, ny, nz, k_lo, k_hi
     real(8), intent(in), dimension(nz-1), device      :: zetaz ! 1 / dz
     real(8), intent(in), dimension(nx,ny,nz), device  :: Q_4
     real(8), intent(out), dimension(nx,ny,nz), device :: wz
-    integer, parameter :: io_v = 2
     integer i, j, k
+    if (k_hi < k_lo) return
     !$cuf kernel do(3) <<<*,(32,4,2)>>>
-    do k = io_v+2, nz-io_v-1
+    do k = k_lo, k_hi
       do j = 1, ny
         do i = 1, nx
           wz(i,j,k) = (one_120 * (-Q_4(i,j,k-3) + Q_4(i,j,k+3)) &
