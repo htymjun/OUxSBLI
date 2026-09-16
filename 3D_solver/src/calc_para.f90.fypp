@@ -1,6 +1,9 @@
 !> Module for parallel MPI communication and domain decomposition
 !> Handles halo exchange, data flattening, and ghost cell synchronization
 #:include 'config.fypp'
+#:if not defined('MPI')
+  #:set MPI = 'CPU'
+#:endif
 module calc_para
   use mpi
   use cudafor
@@ -428,8 +431,13 @@ contains
     msglen  = nx * ny * overlap * 5
     call flatten_z_lo(nx, ny, nz, overlap, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Qs1d_lo)
     call flatten_z_hi(nx, ny, nz, overlap, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Qs1d_hi)
-    !stat = cudaMemcpy(send_lo, Qs1d_lo, msglen, cudaMemcpyDeviceToHost)
-    !stat = cudaMemcpy(send_hi, Qs1d_hi, msglen, cudaMemcpyDeviceToHost)
+    ! REQUIRED: the send buffers are handed to MPI as device pointers, and a
+    ! CUDA-aware MPI reads them on its own stream / via IPC / RDMA, i.e. NOT
+    ! ordered after the flatten kernels queued above on the default stream.
+    ! Without this sync MPI can ship a partially written buffer. The same sync
+    ! also orders the MPI_Irecv below after the previous stage's
+    ! reconstruct_z_lo/hi kernels, which read recv_lo/hi (WAR hazard).
+    ! The CPU variant does not need it because cudaMemcpy is synchronous.
     stat = cudaDeviceSynchronize()
     call MPI_Isend(Qs1d_lo, msglen, MPI_REAL8, rank_lo, 20, MPI_COMM_WORLD, req(1), ierr)
     call MPI_Isend(Qs1d_hi, msglen, MPI_REAL8, rank_hi, 21, MPI_COMM_WORLD, req(2), ierr)
@@ -437,6 +445,131 @@ contains
     call MPI_Irecv(recv_hi, msglen, MPI_REAL8, rank_hi, 20, MPI_COMM_WORLD, req(4), ierr)
   end subroutine start_exchange_z
   #:endif  
+
+
+  !> One-time self-test of the z-halo transport, to be called once before the
+  !> time loop. It fills the send buffers with a rank-identifying pattern,
+  !> runs exactly the exchange the time loop uses, and aborts if a ghost
+  !> buffer does not come back holding the neighbour's pattern.
+  !>
+  !> This exists because the failure it catches is silent. With MPI='GPU' the
+  !> buffers handed to MPI are device pointers, and an MPI stack that selects
+  !> a device-memory transport it cannot actually perform delivers wrong bytes
+  !> without returning an error -- measured on a host where UCX picks cuda_ipc
+  !> but CUDA IPC does not work: every received element came back as zero, and
+  !> the only symptom was NaN a few hundred steps later. The same can happen
+  !> on a cluster (UCX_TLS misconfigured, nvidia_peermem not loaded, ranks in
+  !> containers without IPC access), so check rather than assume. Workarounds
+  !> once it trips: set MPI='CPU' in config.fypp, or force a transport that
+  !> works, e.g. UCX_TLS=self,sm,cuda_copy.
+  !>
+  !> With a single compute rank the exchange is a self-send and this can only
+  !> confirm self-consistency, which is all there is to check in that case.
+  #:if MPI == 'CPU'
+  subroutine check_exchange_z(myrank, nranks, overlap, nx, ny, nz, &
+                               Qs1d_lo, Qs1d_hi, send_lo, send_hi, recv_lo, recv_hi)
+    integer, intent(in)            :: myrank, nranks, overlap, nx, ny, nz
+    real(8), intent(inout), device :: Qs1d_lo(nx*ny*overlap*5), Qs1d_hi(nx*ny*overlap*5)
+    real(8), intent(inout)         :: send_lo(nx*ny*overlap*5), send_hi(nx*ny*overlap*5)
+    real(8), intent(inout)         :: recv_lo(nx*ny*overlap*5), recv_hi(nx*ny*overlap*5)
+    integer rank_lo, rank_hi, msglen, stat, ierr, i, nbad, req(4)
+    integer istat4(MPI_STATUS_SIZE,4)
+    real(8) pat_lo, pat_hi, want_lo, want_hi
+    rank_lo = mod(myrank - 2 + nranks, nranks)
+    rank_hi = mod(myrank + 2, nranks)
+    msglen  = nx * ny * overlap * 5
+    pat_lo  = dble(myrank) + 0.25d0   ! payload I send downward
+    pat_hi  = dble(myrank) + 0.75d0   ! payload I send upward
+    want_lo = dble(rank_lo) + 0.75d0  ! low ghost must hold rank_lo's upward payload
+    want_hi = dble(rank_hi) + 0.25d0  ! high ghost must hold rank_hi's downward payload
+    !$cuf kernel do(1)<<<*,*>>>
+    do i = 1, msglen
+      Qs1d_lo(i) = pat_lo
+      Qs1d_hi(i) = pat_hi
+    enddo
+    recv_lo(:) = -1.d0
+    recv_hi(:) = -1.d0
+    stat = cudaMemcpy(send_lo, Qs1d_lo, msglen, cudaMemcpyDeviceToHost)
+    stat = cudaMemcpy(send_hi, Qs1d_hi, msglen, cudaMemcpyDeviceToHost)
+    call MPI_Isend(send_lo, msglen, MPI_REAL8, rank_lo, 20, MPI_COMM_WORLD, req(1), ierr)
+    call MPI_Isend(send_hi, msglen, MPI_REAL8, rank_hi, 21, MPI_COMM_WORLD, req(2), ierr)
+    call MPI_Irecv(recv_lo, msglen, MPI_REAL8, rank_lo, 21, MPI_COMM_WORLD, req(3), ierr)
+    call MPI_Irecv(recv_hi, msglen, MPI_REAL8, rank_hi, 20, MPI_COMM_WORLD, req(4), ierr)
+    call MPI_Waitall(4, req, istat4, ierr)
+    nbad = 0
+    do i = 1, msglen
+      if (recv_lo(i) /= want_lo) nbad = nbad + 1
+      if (recv_hi(i) /= want_hi) nbad = nbad + 1
+    enddo
+    call report_exchange_z_check(myrank, rank_lo, rank_hi, nbad, 2*msglen, recv_lo(1), recv_hi(1), want_lo, want_hi)
+  end subroutine check_exchange_z
+  #:endif
+
+  #:if MPI == 'GPU'
+  subroutine check_exchange_z(myrank, nranks, overlap, nx, ny, nz, &
+                               Qs1d_lo, Qs1d_hi, send_lo, send_hi, recv_lo, recv_hi)
+    integer, intent(in)            :: myrank, nranks, overlap, nx, ny, nz
+    real(8), intent(inout), device :: Qs1d_lo(nx*ny*overlap*5), Qs1d_hi(nx*ny*overlap*5)
+    real(8), intent(inout)         :: send_lo(nx*ny*overlap*5), send_hi(nx*ny*overlap*5)
+    real(8), intent(inout), device :: recv_lo(nx*ny*overlap*5), recv_hi(nx*ny*overlap*5)
+    integer rank_lo, rank_hi, msglen, stat, ierr, i, nbad, req(4)
+    integer istat4(MPI_STATUS_SIZE,4)
+    real(8) pat_lo, pat_hi, want_lo, want_hi, got_lo, got_hi
+    rank_lo = mod(myrank - 2 + nranks, nranks)
+    rank_hi = mod(myrank + 2, nranks)
+    msglen  = nx * ny * overlap * 5
+    pat_lo  = dble(myrank) + 0.25d0   ! payload I send downward
+    pat_hi  = dble(myrank) + 0.75d0   ! payload I send upward
+    want_lo = dble(rank_lo) + 0.75d0  ! low ghost must hold rank_lo's upward payload
+    want_hi = dble(rank_hi) + 0.25d0  ! high ghost must hold rank_hi's downward payload
+    !$cuf kernel do(1)<<<*,*>>>
+    do i = 1, msglen
+      Qs1d_lo(i) = pat_lo
+      Qs1d_hi(i) = pat_hi
+      recv_lo(i) = -1.d0
+      recv_hi(i) = -1.d0
+    enddo
+    stat = cudaDeviceSynchronize()
+    call MPI_Isend(Qs1d_lo, msglen, MPI_REAL8, rank_lo, 20, MPI_COMM_WORLD, req(1), ierr)
+    call MPI_Isend(Qs1d_hi, msglen, MPI_REAL8, rank_hi, 21, MPI_COMM_WORLD, req(2), ierr)
+    call MPI_Irecv(recv_lo, msglen, MPI_REAL8, rank_lo, 21, MPI_COMM_WORLD, req(3), ierr)
+    call MPI_Irecv(recv_hi, msglen, MPI_REAL8, rank_hi, 20, MPI_COMM_WORLD, req(4), ierr)
+    call MPI_Waitall(4, req, istat4, ierr)
+    nbad = 0
+    !$cuf kernel do(1)<<<*,*>>>
+    do i = 1, msglen
+      if (recv_lo(i) /= want_lo) nbad = nbad + 1
+      if (recv_hi(i) /= want_hi) nbad = nbad + 1
+    enddo
+    stat = cudaDeviceSynchronize()
+    got_lo = recv_lo(1)
+    got_hi = recv_hi(1)
+    call report_exchange_z_check(myrank, rank_lo, rank_hi, nbad, 2*msglen, got_lo, got_hi, want_lo, want_hi)
+  end subroutine check_exchange_z
+  #:endif
+
+
+  !> Shared verdict/abort for check_exchange_z above.
+  subroutine report_exchange_z_check(myrank, rank_lo, rank_hi, nbad, ntot, got_lo, got_hi, want_lo, want_hi)
+    integer, intent(in) :: myrank, rank_lo, rank_hi, nbad, ntot
+    real(8), intent(in) :: got_lo, got_hi, want_lo, want_hi
+    integer ierr
+    if (nbad == 0) then
+      if (myrank == 0) print '(1x,a,a,a)', "z-halo self-test passed (MPI='", "${MPI}$", "')"
+      return
+    endif
+    print '(1x,a,i0,a)',        "z-halo SELF-TEST FAILED on rank ", myrank, ":"
+    print '(1x,a,i0,a,i0,a)',   "  ", nbad, " of ", ntot, " received elements are wrong"
+    print '(1x,a,i0,a,f8.2,a,f8.2)', "  from rank_lo=", rank_lo, " got ", got_lo, " expected ", want_lo
+    print '(1x,a,i0,a,f8.2,a,f8.2)', "  from rank_hi=", rank_hi, " got ", got_hi, " expected ", want_hi
+    print '(1x,a)',             "  The MPI layer is not delivering this buffer correctly."
+    #:if MPI == 'GPU'
+    print '(1x,a)',             "  MPI='GPU' passes device pointers straight to MPI: the MPI stack"
+    print '(1x,a)',             "  must really support device memory. Set MPI='CPU' in config.fypp,"
+    print '(1x,a)',             "  or force a working transport (e.g. UCX_TLS=self,sm,cuda_copy)."
+    #:endif
+    call MPI_ABORT(MPI_COMM_WORLD, 1, ierr)
+  end subroutine report_exchange_z_check
 
 
   !> Complete z-halo exchange: MPI_Waitall, H2D copy, unpack ghost cells into QJ

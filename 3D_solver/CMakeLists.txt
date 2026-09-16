@@ -44,7 +44,7 @@ macro(add_ouxsbli_case)
       "calc_hybrid_kernel_internal"
       "calc_flux_base"
       "calc_time_dev"
-      "calc_para"!!!!!
+      "calc_para"
       "preprocess")
 
   # calc_scheme_math.f90.fypp is include'd as raw text (no `module` wrapper) by
