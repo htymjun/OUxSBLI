@@ -6,15 +6,25 @@ module set
   implicit none
 contains
   subroutine set_grid(myrank, nx, ny, nz, Lx, Ly, Lz, x, y, z, dx, dy, dz)
+    use mpi
     integer, intent(in)  :: myrank, nx, ny, nz
     real(8), intent(in)  :: Lx, Ly, Lz
     real(8), intent(out) :: x(nx), y(ny), z(nz), dx(nx-1), dy(ny-1), dz(nz-1)
     integer i, j, k
+    integer nranks, ierr, nz_int, iz_offset
     real(8) dx1, dz1
     real(8) tanh_s, yi
     real(8), parameter :: s = 2.8d0 !2.4!1.6 ! tanh wall-clustering stretch
+    ! z is decomposed across the compute (even) ranks when COMMZ=True; the odd
+    ! I/O rank shares its partner's slab. Lz is the GLOBAL periodic span; each
+    ! local slab holds nz-6 unique planes plus 3 ghost planes on either side
+    ! (6th-order stencil, see set_bc_cyclic_z). With one compute rank this
+    ! reduces to a single slab of period Lz.
+    call MPI_COMM_SIZE(MPI_COMM_WORLD, nranks, ierr)
+    nz_int    = nz - 6
+    iz_offset = (myrank/2) * nz_int
     dx1 = Lx / dble(nx-1)
-    dz1 = Lz / dble(nz-1)
+    dz1 = Lz / dble((nranks/2) * nz_int)
 
     x(1) = x_in
     do i = 1, nx-1
@@ -31,12 +41,14 @@ contains
       dy(j) = y(j+1) - y(j)
     enddo
 
-    z(1) = 0.d0
     do k = 1, nz-1
       dz(k) = dz1
-      z(k+1) = z(k) + dz(k)
     enddo
-    z(:) = z(:) - 0.5d0 * Lz
+    ! interior plane k=4 of the first slab sits at z=-Lz/2; the last slab's
+    ! plane nz-2 is its periodic image at +Lz/2
+    do k = 1, nz
+      z(k) = dble(iz_offset + k - 4) * dz1 - 0.5d0 * Lz
+    enddo
   end subroutine set_grid
 
 
@@ -238,6 +250,12 @@ contains
 
     
 
+    ! Periodic z ghost planes. With COMMZ=False this IS the spanwise BC. With
+    ! COMMZ=True it is only a placeholder that keeps the ghost planes finite
+    ! between stages: finish_exchange_z overwrites them with the neighbours'
+    ! data before any ghost-dependent flux is evaluated (see the range table
+    ! in calc_flux_base.f90.fypp), and the exchange is repeated right before
+    ! output.
     call set_bc_cyclic_z(nx, ny, nz, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
   end subroutine set_bc
 

@@ -9,11 +9,11 @@ module mod_globals
   ! mesh
   real(8), parameter :: Lx = 165.d0 * blt !176!20
   real(8), parameter :: Ly = 56.d0 * blt !60!80!5
-  real(8), parameter :: Lz = 0.5d0 * blt !4!2
+  real(8), parameter :: Lz = 0.5d0 * blt !4!2  ! GLOBAL spanwise periodic span (see set_grid)
   ! DNS
   integer, parameter :: nx = 257!2700 !1025!2900!257!257
   integer, parameter :: ny = 257!480 !480!513!129!257
-  integer, parameter :: nz = 10!140 !54!140!33!9
+  integer, parameter :: nz = 10!140 !54!140!33!9  ! planes per compute rank incl. 3+3 z ghosts -> nz-6 unique planes
   
   integer, parameter :: nre1 = 1
   integer, parameter :: nre2 = nx
