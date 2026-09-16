@@ -1,4 +1,11 @@
 #:include 'config.fypp'
+#:if not defined('COMMZ')
+  #:set COMMZ = False
+#:endif
+#! With COMMZ the x/y kernels also get a "_koff" twin that sweeps only the z
+#! planes [k_lo, k_hi], so calc_flux_base can evaluate the planes whose stencil
+#! reaches a z ghost plane after the halo exchange has landed.
+#:set KOFF_VARIANTS = [False, True] if COMMZ else [False]
 module calc_keep_kernel_internal
   use mod_globals, only : gamma, threadsE, threadsF, threadsG
   use mod_constant, only : R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
@@ -6,6 +13,9 @@ module calc_keep_kernel_internal
   implicit none
   private
   public calc_keep_x_in, calc_keep_y_in, calc_keep_z_in, calc_keep_z_in_koff
+  #:if COMMZ
+  public calc_keep_x_in_koff, calc_keep_y_in_koff
+  #:endif
   real(8), parameter :: one_24        = 1.d0 / 24.d0
   real(8), parameter :: one_48        = 1.d0 / 48.d0
   real(8), parameter :: one_60        = 1.d0 / 60.d0
@@ -28,11 +38,14 @@ module calc_keep_kernel_internal
 contains
   include 'calc_scheme_math.f90'
 
-  attributes(global) subroutine calc_keep_x_in(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, E)
+#:for is_koff in KOFF_VARIANTS
+#:set sfx  = '_koff' if is_koff else ''
+#:set karg = ', k_lo, k_hi' if is_koff else ''
+  attributes(global) subroutine calc_keep_x_in${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, E${karg}$)
     use mod_constant, only : Normal_x
-    integer, intent(in), value                :: nx, ny, nz
+    integer, intent(in), value                :: nx, ny, nz${karg}$
     real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
+    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
     integer i, j, k, it, jt, kt
     integer :: ii, i_base, idx, offset_yz
     logical :: jk_in_range
@@ -44,7 +57,7 @@ contains
     jt = threadIdx%y
     kt = threadIdx%z
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
-    k  = (blockIdx%z-1)*blockDim%z + kt + 1
+    k  = (blockIdx%z-1)*blockDim%z + kt + ${'k_lo - 1' if is_koff else '1'}$
     i_base = (blockIdx%x-1)*blockDim%x
     offset_yz = (jt-1) * sx + (kt-1) * sx * sy
     jk_in_range = (j >= 1 .and. j <= ny .and. k >= 1 .and. k <= nz)
@@ -59,7 +72,7 @@ contains
     enddo
     call syncthreads()
     i = (blockIdx%x-1)*blockDim%x + it
-    if (io+1 <= i .and. i <= nx-(io+1) .and. j <= ny-1 .and. k <= nz-1) then
+    if (io+1 <= i .and. i <= nx-(io+1) .and. j <= ny-1 .and. k <= ${'k_hi' if is_koff else 'nz-1'}$) then
       associate(uu => u)
       idx = it + offset_yz
       E(i,j-1,k-1,:) = KEEP(id_acc, &
@@ -69,14 +82,18 @@ contains
                             tmp(idx-io:idx+io+1), Normal_x)
       end associate
     endif
-  end subroutine calc_keep_x_in
+  end subroutine calc_keep_x_in${sfx}$
+#:endfor
 
 
-  attributes(global) subroutine calc_keep_y_in(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, F)
+#:for is_koff in KOFF_VARIANTS
+#:set sfx  = '_koff' if is_koff else ''
+#:set karg = ', k_lo, k_hi' if is_koff else ''
+  attributes(global) subroutine calc_keep_y_in${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, F${karg}$)
     use mod_constant, only : Normal_y
-    integer, intent(in), value                :: nx, ny, nz
+    integer, intent(in), value                :: nx, ny, nz${karg}$
     real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
+    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
     integer i, j, k, it, jt, kt
     integer :: jj, j_base, idx, offset_xz
     logical :: ik_in_range
@@ -88,7 +105,7 @@ contains
     jt = threadIdx%y
     kt = threadIdx%z
     i  = (blockIdx%x-1)*blockDim%x + it + 1
-    k  = (blockIdx%z-1)*blockDim%z + kt + 1
+    k  = (blockIdx%z-1)*blockDim%z + kt + ${'k_lo - 1' if is_koff else '1'}$
     j_base = (blockIdx%y-1)*blockDim%y
     offset_xz = (it-1) * sy + (kt-1) * sy * sx
     ik_in_range = (i >= 1 .and. i <= nx .and. k >= 1 .and. k <= nz)
@@ -103,7 +120,7 @@ contains
     enddo
     call syncthreads()
     j = (blockIdx%y-1)*blockDim%y + jt
-    if (io+1 <= j .and. j <= ny-(io+1) .and. i <= nx-1 .and. k <= nz-1) then
+    if (io+1 <= j .and. j <= ny-(io+1) .and. i <= nx-1 .and. k <= ${'k_hi' if is_koff else 'nz-1'}$) then
       associate(vv => v)
       idx = jt + offset_xz
       F(i-1,j,k-1,:) = KEEP(id_acc, &
@@ -113,7 +130,8 @@ contains
                             tmp(idx-io:idx+io+1), Normal_y)
       end associate
     endif
-  end subroutine calc_keep_y_in
+  end subroutine calc_keep_y_in${sfx}$
+#:endfor
 
 
   attributes(global) subroutine calc_keep_z_in(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, G)

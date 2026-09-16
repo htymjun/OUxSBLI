@@ -1,4 +1,11 @@
 #:include 'config.fypp'
+#:if not defined('COMMZ')
+  #:set COMMZ = False
+#:endif
+#! With COMMZ the x/y kernels also get a "_koff" twin that sweeps only the z
+#! planes [k_lo, k_hi], so calc_flux_base can evaluate the planes whose stencil
+#! reaches a z ghost plane after the halo exchange has landed.
+#:set KOFF_VARIANTS = [False, True] if COMMZ else [False]
 module calc_hybrid_kernel
   use mod_globals, only : gamma, threshold, threadsE, threadsF, threadsG
   use mod_constant, only : id_slau, over_gamma_1, R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
@@ -8,6 +15,9 @@ module calc_hybrid_kernel
   implicit none
   private
   public calc_hybrid_x, calc_hybrid_y, calc_hybrid_z
+  #:if COMMZ
+  public calc_hybrid_x_koff, calc_hybrid_y_koff
+  #:endif
   real(8), parameter :: one_24        = 1.d0 / 24.d0
   real(8), parameter :: one_48        = 1.d0 / 48.d0
   real(8), parameter :: one_60        = 1.d0 / 60.d0
@@ -37,12 +47,15 @@ module calc_hybrid_kernel
 contains
   include 'calc_scheme_math.f90'
 
-  attributes(global) subroutine calc_hybrid_x(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, E)
+#:for is_koff in KOFF_VARIANTS
+#:set sfx  = '_koff' if is_koff else ''
+#:set karg = ', k_lo, k_hi' if is_koff else ''
+  attributes(global) subroutine calc_hybrid_x${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, E${karg}$)
     use mod_constant, only : Normal_x
-    integer, intent(in), value                :: nx, ny, nz
+    integer, intent(in), value                :: nx, ny, nz${karg}$
     real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
+    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
     integer i, j, k, it, jt, kt, ii, i_base
     integer :: idx, offset_yz
     integer, parameter :: sx = threadsE%x + 2*io + 1
@@ -58,7 +71,7 @@ contains
     jt = threadIdx%y
     kt = threadIdx%z
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
-    k  = (blockIdx%z-1)*blockDim%z + kt + 1
+    k  = (blockIdx%z-1)*blockDim%z + kt + ${'k_lo - 1' if is_koff else '1'}$
     i_base = (blockIdx%x-1)*blockDim%x
     offset_yz = (jt-1) * sx + (kt-1) * sx * sy
     jk_in_range = (j >= 1 .and. j <= ny .and. k >= 1 .and. k <= nz)
@@ -73,7 +86,7 @@ contains
     call syncthreads()
     
     i = (blockIdx%x-1)*blockDim%x + it
-    if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
+    if (nx-1 < i .or. ny-1 < j .or. ${'k_hi' if is_koff else 'nz-1'}$ < k) return
     
     fdx = 0.5_sp * (sensor(i,j,k) + sensor(i+1,j,k))
     idx = it + offset_yz
@@ -199,15 +212,19 @@ contains
                   E(i,j-1,k-1,1), E(i,j-1,k-1,2), E(i,j-1,k-1,3), E(i,j-1,k-1,4), E(i,j-1,k-1,5))
       end associate
     endif
-  end subroutine calc_hybrid_x
+  end subroutine calc_hybrid_x${sfx}$
+#:endfor
 
 
-  attributes(global) subroutine calc_hybrid_y(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, F)
+#:for is_koff in KOFF_VARIANTS
+#:set sfx  = '_koff' if is_koff else ''
+#:set karg = ', k_lo, k_hi' if is_koff else ''
+  attributes(global) subroutine calc_hybrid_y${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, F${karg}$)
     use mod_constant, only : Normal_y
-    integer, intent(in), value                :: nx, ny, nz
+    integer, intent(in), value                :: nx, ny, nz${karg}$
     real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
+    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
     integer i, j, k, it, jt, kt, jj, j_base
     integer :: idx, offset_xz
     integer, parameter :: sx = threadsF%x
@@ -223,7 +240,7 @@ contains
     jt = threadIdx%y
     kt = threadIdx%z
     i  = (blockIdx%x-1)*blockDim%x + it + 1
-    k  = (blockIdx%z-1)*blockDim%z + kt + 1
+    k  = (blockIdx%z-1)*blockDim%z + kt + ${'k_lo - 1' if is_koff else '1'}$
     j_base = (blockIdx%y-1)*blockDim%y
     offset_xz = (it-1) * sy + (kt-1) * sy * sx
     ik_in_range = (i >= 1 .and. i <= nx .and. k >= 1 .and. k <= nz)
@@ -238,7 +255,7 @@ contains
     call syncthreads()
     
     j = (blockIdx%y-1)*blockDim%y + jt
-    if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
+    if (nx-1 < i .or. ny-1 < j .or. ${'k_hi' if is_koff else 'nz-1'}$ < k) return
     
     fdy = 0.5_sp * (sensor(i,j,k) + sensor(i,j+1,k))
     idx = jt + offset_xz
@@ -364,7 +381,8 @@ contains
                   F(i-1,j,k-1,1), F(i-1,j,k-1,2), F(i-1,j,k-1,3), F(i-1,j,k-1,4), F(i-1,j,k-1,5))
       end associate
     endif
-  end subroutine calc_hybrid_y
+  end subroutine calc_hybrid_y${sfx}$
+#:endfor
 
 
   attributes(global) subroutine calc_hybrid_z(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, G)

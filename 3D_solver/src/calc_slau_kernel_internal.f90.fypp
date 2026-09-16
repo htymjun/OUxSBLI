@@ -1,4 +1,11 @@
 #:include 'config.fypp'
+#:if not defined('COMMZ')
+  #:set COMMZ = False
+#:endif
+#! With COMMZ the x/y kernels also get a "_koff" twin that sweeps only the z
+#! planes [k_lo, k_hi], so calc_flux_base can evaluate the planes whose stencil
+#! reaches a z ghost plane after the halo exchange has landed.
+#:set KOFF_VARIANTS = [False, True] if COMMZ else [False]
 module calc_slau_kernel_internal
   use mod_globals, only : gamma, threadsE, threadsF, threadsG
   use mod_constant, only : id_slau, over_gamma_1, R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
@@ -8,6 +15,9 @@ module calc_slau_kernel_internal
   implicit none
   private
   public calc_slau_x_in, calc_slau_y_in, calc_slau_z_in, calc_slau_z_in_koff
+  #:if COMMZ
+  public calc_slau_x_in_koff, calc_slau_y_in_koff
+  #:endif
   integer, parameter :: io = ${ORDER_IO}$
   ! KEEP2/4/6 are compiled here too (calc_scheme_math.f90 include below covers
   ! both schemes) even though this module never calls them -- these constants
@@ -91,12 +101,15 @@ contains
   end subroutine interp2
 
 
-  attributes(global) subroutine calc_slau_x_in(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, sensor, E)
+#:for is_koff in KOFF_VARIANTS
+#:set sfx  = '_koff' if is_koff else ''
+#:set karg = ', k_lo, k_hi' if is_koff else ''
+  attributes(global) subroutine calc_slau_x_in${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, sensor, E${karg}$)
     use mod_constant, only : Normal_x
-    integer, intent(in), value                :: nx, ny, nz
+    integer, intent(in), value                :: nx, ny, nz${karg}$
     real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
+    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
     integer i, j, k, it, jt, kt
     integer ii, i_base, idx, idx_r, offset_yz, offset_yzr, i1, i2
     logical :: jk_in_range
@@ -112,7 +125,7 @@ contains
     jt = threadIdx%y
     kt = threadIdx%z
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
-    k  = (blockIdx%z-1)*blockDim%z + kt + 1
+    k  = (blockIdx%z-1)*blockDim%z + kt + ${'k_lo - 1' if is_koff else '1'}$
     i_base     = (blockIdx%x-1)*blockDim%x
     offset_yz  = (jt-1) * sx  + (kt-1) * sx  * sy
     offset_yzr = (jt-1) * sxr + (kt-1) * sxr * sy
@@ -127,7 +140,7 @@ contains
     enddo
     call syncthreads()
     i = (blockIdx%x-1)*blockDim%x + it
-    if (io+1 <= i .and. i <= nx-(io+1) .and. j <= ny-1 .and. k <= nz-1) then
+    if (io+1 <= i .and. i <= nx-(io+1) .and. j <= ny-1 .and. k <= ${'k_hi' if is_koff else 'nz-1'}$) then
       idx   = it + offset_yz
       idx_r = it + offset_yzr
       i1    = idx - io
@@ -139,7 +152,7 @@ contains
                   rhor(idx_r), ur(idx_r), vr(idx_r), wr(idx_r), pr(idx_r), fdx)
     endif
     call syncthreads()
-    if (io+1 <= i .and. i <= nx-(io+1) .and. j <= ny-1 .and. k <= nz-1) then
+    if (io+1 <= i .and. i <= nx-(io+1) .and. j <= ny-1 .and. k <= ${'k_hi' if is_koff else 'nz-1'}$) then
       rho(idx) = rhol; u(idx) = ul; v(idx) = vl; w(idx) = wl; p(idx) = pl
       associate(un1 => u(idx), un2 => ur(idx_r))
         call SLAU(id_slau, rho(idx), rhor(idx_r), u(idx), ur(idx_r), v(idx), vr(idx_r), &
@@ -147,15 +160,19 @@ contains
                   E(i,j-1,k-1,1), E(i,j-1,k-1,2), E(i,j-1,k-1,3), E(i,j-1,k-1,4), E(i,j-1,k-1,5))
       end associate
     endif
-  end subroutine calc_slau_x_in
+  end subroutine calc_slau_x_in${sfx}$
+#:endfor
 
 
-  attributes(global) subroutine calc_slau_y_in(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, sensor, F)
+#:for is_koff in KOFF_VARIANTS
+#:set sfx  = '_koff' if is_koff else ''
+#:set karg = ', k_lo, k_hi' if is_koff else ''
+  attributes(global) subroutine calc_slau_y_in${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, sensor, F${karg}$)
     use mod_constant, only : Normal_y
-    integer, intent(in), value                :: nx, ny, nz
+    integer, intent(in), value                :: nx, ny, nz${karg}$
     real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
+    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
     integer i, j, k, it, jt, kt
     integer jj, j_base, idx, idx_r, offset_xz, offset_xzr, i1, i2
     logical :: ik_in_range
@@ -171,7 +188,7 @@ contains
     jt = threadIdx%y
     kt = threadIdx%z
     i  = (blockIdx%x-1)*blockDim%x + it + 1
-    k  = (blockIdx%z-1)*blockDim%z + kt + 1
+    k  = (blockIdx%z-1)*blockDim%z + kt + ${'k_lo - 1' if is_koff else '1'}$
     j_base     = (blockIdx%y-1)*blockDim%y
     offset_xz  = (it-1) * sy  + (kt-1) * sy  * sx
     offset_xzr = (it-1) * syr + (kt-1) * syr * sx
@@ -186,7 +203,7 @@ contains
     enddo
     call syncthreads()
     j = (blockIdx%y-1)*blockDim%y + jt
-    if (io+1 <= j .and. j <= ny-(io+1) .and. k <= nz-1 .and. i <= nx-1) then
+    if (io+1 <= j .and. j <= ny-(io+1) .and. k <= ${'k_hi' if is_koff else 'nz-1'}$ .and. i <= nx-1) then
       idx   = jt + offset_xz
       idx_r = jt + offset_xzr
       i1    = idx - io
@@ -198,7 +215,7 @@ contains
                   rhor(idx_r), ur(idx_r), vr(idx_r), wr(idx_r), pr(idx_r), fdy)
     endif
     call syncthreads()
-    if (io+1 <= j .and. j <= ny-(io+1) .and. k <= nz-1 .and. i <= nx-1) then
+    if (io+1 <= j .and. j <= ny-(io+1) .and. k <= ${'k_hi' if is_koff else 'nz-1'}$ .and. i <= nx-1) then
       rho(idx) = rhol; u(idx) = ul; v(idx) = vl; w(idx) = wl; p(idx) = pl
       associate(un1 => v(idx), un2 => vr(idx_r))
         call SLAU(id_slau, rho(idx), rhor(idx_r), u(idx), ur(idx_r), v(idx), vr(idx_r), &
@@ -206,7 +223,8 @@ contains
                   F(i-1,j,k-1,1), F(i-1,j,k-1,2), F(i-1,j,k-1,3), F(i-1,j,k-1,4), F(i-1,j,k-1,5))
       end associate
     endif
-  end subroutine calc_slau_y_in
+  end subroutine calc_slau_y_in${sfx}$
+#:endfor
 
 
   attributes(global) subroutine calc_slau_z_in(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, sensor, G)
