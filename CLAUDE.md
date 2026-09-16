@@ -116,6 +116,8 @@ All compile-time scheme/method choices live in `<CASE>/config.fypp`. The fypp pr
 | `BC_X` | `True`, `False` | Wall/inflow BCs in x (False → periodic) |
 | `BC_Y` | `True`, `False` | Same for y |
 | `BC_Z` | `True`, `False` | Same for z |
+| `MPI` | `'CPU'`, `'GPU'` | COMMZ z-halo transport: stage through pinned host buffers (`'CPU'`, default, verified) or hand device buffers straight to a CUDA-aware MPI (`'GPU'` — only where a real multi-rank device-pointer exchange has been checked; see the COMMZ section of `3D_solver/CLAUDE.md`) |
+| `BC_FORCING` | `True`, `False` | `set_bc` takes extra `(x, z, phi_l_gpu, phi_m_gpu, t_now)` arguments for a time-dependent blowing/suction strip (SWLBLI only; default `False`; RK=3 and RK=4, with or without COMMZ; `RESCALE=True` unsupported) |
 
 ### mod_globals.f90 (grid, physical parameters, thread blocks)
 
@@ -146,9 +148,9 @@ The **value** of these parameters is always 0; only the **type kind** matters fo
 
 ## MPI Decomposition
 
-**x-direction (default):** 1D decomposition via `calc_para.f90`. Default is 2 MPI ranks (`mpirun -n 2 a.out`), with `mygpu = myrank / 2` (2 ranks per GPU). GPU-aware MPI is optional via `id_gpumpi`.
+**x-direction (default):** 1D decomposition via `3D_solver/src/calc_para.f90.fypp`. Default is 2 MPI ranks (`mpirun -n 2 a.out`), with `mygpu = myrank / 2` (2 ranks per GPU). GPU-aware MPI is optional via `id_gpumpi`.
 
-**z-direction (COMMZ=True):** Enabled for cases like STZ. Overlapped communication: non-blocking z-halo exchange is posted, interior fluxes are computed while MPI is in flight, then halo fluxes are completed. The `overlap` depth equals `ORDER // 2` (1/2/3 for 2nd/4th/6th order). `COMMZ=True` and `RESCALE=True` cannot be combined.
+**z-direction (COMMZ=True):** Enabled for cases like STZ and SWLBLI. Overlapped communication: non-blocking z-halo exchange is posted, the stencil-safe interior fluxes are computed while MPI is in flight, then the ghost-dependent fluxes are completed (`calc_EFG_halo`; the exact plane/face ranges are documented at the top of `3D_solver/src/calc_flux_base.f90.fypp` and in `3D_solver/CLAUDE.md`). The `overlap` depth equals `ORDER // 2` (1/2/3 for 2nd/4th/6th order). `MPI='GPU'` passes device buffers to MPI directly and needs the `cudaDeviceSynchronize` in `start_exchange_z`. `COMMZ=True` and `RESCALE=True` cannot be combined. With 2 MPI ranks (one compute rank) the exchange is a self-copy identical to `set_bc_cyclic_z`, so COMMZ=True must reproduce COMMZ=False bit for bit.
 
 ## Python Test Suite
 
