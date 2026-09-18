@@ -118,6 +118,7 @@ All compile-time scheme/method choices live in `<CASE>/config.fypp`. The fypp pr
 | `BC_Z` | `True`, `False` | Same for z |
 | `MPI` | `'CPU'`, `'GPU'` | COMMZ z-halo transport: stage through pinned host buffers (`'CPU'`, default, verified) or hand device buffers straight to a CUDA-aware MPI (`'GPU'` — only where a real multi-rank device-pointer exchange has been checked; see the COMMZ section of `3D_solver/CLAUDE.md`) |
 | `BC_FORCING` | `True`, `False` | `set_bc` takes extra `(x, z, phi_l_gpu, phi_m_gpu, t_now)` arguments for a time-dependent blowing/suction strip (SWLBLI only; default `False`; RK=3 and RK=4, with or without COMMZ; `RESCALE=True` unsupported) |
+| `KEEP_TVD` | `True`, `False` | `SCHEME='KEEP'` only (default `False`). KEEP is a central flux with no dissipation and its kernels never read `id_tvd`, so `TVD` is otherwise silently ignored for it. `True` adds `-½|λ|(U_R-U_L)` (Rusanov) to the KEEP flux, with `U_L`/`U_R` from the same MUSCL chain SLAU uses, so `TVD` selects the limiter. Needed to run KEEP across a shock. `TVD='hybrid'` is rejected (needs the Ducros sensor). See the KEEP_TVD section of `3D_solver/CLAUDE.md` |
 
 ### mod_globals.f90 (grid, physical parameters, thread blocks)
 
@@ -174,6 +175,8 @@ requires **two** MPI ranks (the even rank computes, the odd rank writes VTK), so
 See `3D_solver/CLAUDE.md` for adding a 3D Cartesian case, or `2D_solver/CLAUDE.md` for adding a 2D case.
 
 ## Notice
+* `SCHEME='KEEP'` ignores `TVD` unless the case also sets `KEEP_TVD = True`; see the
+  config table above and `3D_solver/src/calc_keep_tvd.f90.fypp`.
 * `id_accuracy` controls ghost-cell count for both convective and viscous stencils.
 * Do not add `contiguous` and `shared` attributes when passing shared memory as an argument.
 * `cpu_gpu_mpi.f90` will be modified in the future.

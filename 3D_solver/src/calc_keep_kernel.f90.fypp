@@ -6,10 +6,23 @@
 #! planes [k_lo, k_hi], so calc_flux_base can evaluate the planes whose stencil
 #! reaches a z ghost plane after the halo exchange has landed.
 #:set KOFF_VARIANTS = [False, True] if COMMZ else [False]
+#:if not defined('KEEP_TVD')
+  #:set KEEP_TVD = False
+#:endif
+#! KEEP_TVD=True adds a MUSCL-limited Rusanov dissipation term to the KEEP
+#! central flux, so that `TVD` actually reaches this scheme instead of being
+#! silently ignored. See calc_keep_tvd.f90.fypp for the formula and for what
+#! it costs (KEEP stops being exactly entropy/kinetic-energy preserving).
+#:set MD = ' - D' if KEEP_TVD else ''
 module calc_keep_kernel
   use mod_globals, only : gamma, threadsE, threadsF, threadsG
   use mod_constant, only : R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
   use libm
+  #:if KEEP_TVD
+  use mod_globals, only : sp
+  use mod_constant, only : over_gamma_1
+  use calc_muscl
+  #:endif
   implicit none
   private
   public calc_keep_x, calc_keep_y, calc_keep_z
@@ -37,8 +50,20 @@ module calc_keep_kernel
   interface KEEP
     module procedure KEEP2, KEEP4, KEEP6
   end interface KEEP
+  #:if KEEP_TVD
+  interface delta_r
+    module procedure delta_r2, delta_r4, delta_r6
+  end interface delta_r
+
+  interface keep_diss
+    module procedure keep_diss2, keep_diss4, keep_diss6
+  end interface keep_diss
+  #:endif
 contains
   include 'calc_scheme_math.f90'
+#:if KEEP_TVD
+#:include 'calc_keep_tvd.f90.fypp'
+#:endif
 
 #:for is_koff in KOFF_VARIANTS
 #:set sfx  = '_koff' if is_koff else ''
@@ -49,6 +74,9 @@ contains
     real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
     integer i, j, k, it, jt, kt
+#:if KEEP_TVD
+    real(8) :: D(5)   ! limited Rusanov dissipation (calc_keep_tvd.f90.fypp)
+#:endif
     integer :: ii, i_base, idx, offset_yz
     logical :: jk_in_range
     integer, parameter :: sx = threadsE%x + 2*io + 1
@@ -79,26 +107,50 @@ contains
     associate(uu => u)
     #:if ORDER == 6
     if (3 <= i .and. i <= nx-3) then
+#:if KEEP_TVD
+      call keep_diss(id_acc, rho(idx-2:idx+3), u(idx-2:idx+3), v(idx-2:idx+3), &
+                     w(idx-2:idx+3), p(idx-2:idx+3), Normal_x, D)
+#:endif
       E(i,j-1,k-1,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3),   v(idx-2:idx+3), &
-                            w(idx-2:idx+3), uu(idx-2:idx+3), p(idx-2:idx+3), tmp(idx-2:idx+3), Normal_x)
+                            w(idx-2:idx+3), uu(idx-2:idx+3), p(idx-2:idx+3), tmp(idx-2:idx+3), Normal_x)${MD}$
     elseif (2 <= i .and. i <= nx-2) then
+#:if KEEP_TVD
+      call keep_diss(id_acc4, rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
+                     w(idx-1:idx+2), p(idx-1:idx+2), Normal_x, D)
+#:endif
       E(i,j-1,k-1,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
-                            w(idx-1:idx+2), uu(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_x)
+                            w(idx-1:idx+2), uu(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_x)${MD}$
     else
+#:if KEEP_TVD
+      call keep_diss(id_acc2, rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+                     w(idx:idx+1), p(idx:idx+1), Normal_x, D)
+#:endif
       E(i,j-1,k-1,:) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1), &
-                            w(idx:idx+1),   uu(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_x)
+                            w(idx:idx+1),   uu(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_x)${MD}$
     endif
     #:elif ORDER == 4
     if (2 <= i .and. i <= nx-2) then
+#:if KEEP_TVD
+      call keep_diss(id_acc, rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
+                     w(idx-1:idx+2), p(idx-1:idx+2), Normal_x, D)
+#:endif
       E(i,j-1,k-1,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
-                            w(idx-1:idx+2), uu(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_x)
+                            w(idx-1:idx+2), uu(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_x)${MD}$
     else
+#:if KEEP_TVD
+      call keep_diss(id_acc2, rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+                     w(idx:idx+1), p(idx:idx+1), Normal_x, D)
+#:endif
       E(i,j-1,k-1,:) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1), &
-                            w(idx:idx+1),   uu(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_x)
+                            w(idx:idx+1),   uu(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_x)${MD}$
     endif
     #:else
+#:if KEEP_TVD
+      call keep_diss(id_acc, rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+                     w(idx:idx+1), p(idx:idx+1), Normal_x, D)
+#:endif
       E(i,j-1,k-1,:) = KEEP(id_acc,        rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1), &
-                            w(idx:idx+1),   uu(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_x)
+                            w(idx:idx+1),   uu(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_x)${MD}$
     #:endif
     end associate
   end subroutine calc_keep_x${sfx}$
@@ -114,6 +166,9 @@ contains
     real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
     integer i, j, k, it, jt, kt
+#:if KEEP_TVD
+    real(8) :: D(5)   ! limited Rusanov dissipation (calc_keep_tvd.f90.fypp)
+#:endif
     integer :: jj, j_base, idx, offset_xz
     logical :: ik_in_range
 
@@ -150,26 +205,50 @@ contains
     
     #:if ORDER == 6
     if (3 <= j .and. j <= ny-3) then
+#:if KEEP_TVD
+      call keep_diss(id_acc, rho(idx-2:idx+3), u(idx-2:idx+3), v(idx-2:idx+3), &
+                     w(idx-2:idx+3), p(idx-2:idx+3), Normal_y, D)
+#:endif
       F(i-1,j,k-1,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3),   v(idx-2:idx+3), &
-                            w(idx-2:idx+3), vv(idx-2:idx+3), p(idx-2:idx+3), tmp(idx-2:idx+3), Normal_y)
+                            w(idx-2:idx+3), vv(idx-2:idx+3), p(idx-2:idx+3), tmp(idx-2:idx+3), Normal_y)${MD}$
     elseif (2 <= j .and. j <= ny-2) then
+#:if KEEP_TVD
+      call keep_diss(id_acc4, rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
+                     w(idx-1:idx+2), p(idx-1:idx+2), Normal_y, D)
+#:endif
       F(i-1,j,k-1,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
-                            w(idx-1:idx+2), vv(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_y)
+                            w(idx-1:idx+2), vv(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_y)${MD}$
     else
+#:if KEEP_TVD
+      call keep_diss(id_acc2, rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+                     w(idx:idx+1), p(idx:idx+1), Normal_y, D)
+#:endif
       F(i-1,j,k-1,:) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1),   &
-                            w(idx:idx+1),   vv(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_y)
+                            w(idx:idx+1),   vv(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_y)${MD}$
     endif
     #:elif ORDER == 4
     if (2 <= j .and. j <= ny-2) then
+#:if KEEP_TVD
+      call keep_diss(id_acc, rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
+                     w(idx-1:idx+2), p(idx-1:idx+2), Normal_y, D)
+#:endif
       F(i-1,j,k-1,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
-                            w(idx-1:idx+2), vv(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_y)
+                            w(idx-1:idx+2), vv(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_y)${MD}$
     else
+#:if KEEP_TVD
+      call keep_diss(id_acc2, rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+                     w(idx:idx+1), p(idx:idx+1), Normal_y, D)
+#:endif
       F(i-1,j,k-1,:) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1),   &
-                            w(idx:idx+1),   vv(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_y)
+                            w(idx:idx+1),   vv(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_y)${MD}$
     endif
     #:else
+#:if KEEP_TVD
+      call keep_diss(id_acc, rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+                     w(idx:idx+1), p(idx:idx+1), Normal_y, D)
+#:endif
       F(i-1,j,k-1,:) = KEEP(id_acc,        rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1),   &
-                            w(idx:idx+1),   vv(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_y)
+                            w(idx:idx+1),   vv(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_y)${MD}$
     #:endif
     end associate
   end subroutine calc_keep_y${sfx}$
@@ -182,6 +261,9 @@ contains
     real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     real(8), intent(out), device, contiguous  :: G(nx-2,ny-2,nz-1,5)
     integer i, j, k, it, jt, kt
+#:if KEEP_TVD
+    real(8) :: D(5)   ! limited Rusanov dissipation (calc_keep_tvd.f90.fypp)
+#:endif
     integer :: kk, k_base, idx, offset_xy
     logical :: ij_in_range
 
@@ -218,26 +300,50 @@ contains
     
     #:if ORDER == 6
     if (3 <= k .and. k <= nz-3) then
+#:if KEEP_TVD
+      call keep_diss(id_acc, rho(idx-2:idx+3), u(idx-2:idx+3), v(idx-2:idx+3), &
+                     w(idx-2:idx+3), p(idx-2:idx+3), Normal_z, D)
+#:endif
       G(i-1,j-1,k,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3),   v(idx-2:idx+3), &
-                            w(idx-2:idx+3), ww(idx-2:idx+3), p(idx-2:idx+3), tmp(idx-2:idx+3), Normal_z)
+                            w(idx-2:idx+3), ww(idx-2:idx+3), p(idx-2:idx+3), tmp(idx-2:idx+3), Normal_z)${MD}$
     elseif (2 <= k .and. k <= nz-2) then
+#:if KEEP_TVD
+      call keep_diss(id_acc4, rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
+                     w(idx-1:idx+2), p(idx-1:idx+2), Normal_z, D)
+#:endif
       G(i-1,j-1,k,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
-                            w(idx-1:idx+2), ww(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_z)
+                            w(idx-1:idx+2), ww(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_z)${MD}$
     else
+#:if KEEP_TVD
+      call keep_diss(id_acc2, rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+                     w(idx:idx+1), p(idx:idx+1), Normal_z, D)
+#:endif
       G(i-1,j-1,k,:) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1),   &
-                            w(idx:idx+1),   ww(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_z)
+                            w(idx:idx+1),   ww(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_z)${MD}$
     endif
     #:elif ORDER == 4
     if (2 <= k .and. k <= nz-2) then
+#:if KEEP_TVD
+      call keep_diss(id_acc, rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
+                     w(idx-1:idx+2), p(idx-1:idx+2), Normal_z, D)
+#:endif
       G(i-1,j-1,k,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
-                            w(idx-1:idx+2), ww(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_z)
+                            w(idx-1:idx+2), ww(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_z)${MD}$
     else
+#:if KEEP_TVD
+      call keep_diss(id_acc2, rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+                     w(idx:idx+1), p(idx:idx+1), Normal_z, D)
+#:endif
       G(i-1,j-1,k,:) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1),   &
-                            w(idx:idx+1),   ww(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_z)
+                            w(idx:idx+1),   ww(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_z)${MD}$
     endif
     #:else
+#:if KEEP_TVD
+      call keep_diss(id_acc, rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+                     w(idx:idx+1), p(idx:idx+1), Normal_z, D)
+#:endif
       G(i-1,j-1,k,:) = KEEP(id_acc,        rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1),   &
-                            w(idx:idx+1),   ww(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_z)
+                            w(idx:idx+1),   ww(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_z)${MD}$
     #:endif
     end associate
   end subroutine calc_keep_z

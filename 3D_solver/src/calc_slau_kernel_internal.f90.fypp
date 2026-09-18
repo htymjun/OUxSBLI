@@ -322,7 +322,7 @@ contains
     enddo
     call syncthreads()
     k = k_base + kt
-    if (k_lo <= k .and. k <= k_hi .and. i <= nx-1 .and. j <= ny-1) then
+    if (max(k_lo, io+1) <= k .and. k <= min(k_hi, nz-(io+1)) .and. i <= nx-1 .and. j <= ny-1) then
       idx   = kt + offset_xy
       idx_r = kt + offset_xyr
       i1    = idx - io
@@ -334,7 +334,7 @@ contains
                   rhor(idx_r), ur(idx_r), vr(idx_r), wr(idx_r), pr(idx_r), fdz)
     endif
     call syncthreads()
-    if (k_lo <= k .and. k <= k_hi .and. i <= nx-1 .and. j <= ny-1) then
+    if (max(k_lo, io+1) <= k .and. k <= min(k_hi, nz-(io+1)) .and. i <= nx-1 .and. j <= ny-1) then
       rho(idx) = rhol; u(idx) = ul; v(idx) = vl; w(idx) = wl; p(idx) = pl
       associate(un1 => w(idx), un2 => wr(idx_r))
         call SLAU(id_slau, rho(idx), rhor(idx_r), u(idx), ur(idx_r), v(idx), vr(idx_r), &

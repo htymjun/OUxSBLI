@@ -28,6 +28,21 @@
 #:if COMMZ and VISC in ('NS', 'LES') and VISC_ORDER == 2
   $:error('COMMZ with VISC_ORDER=2 is not implemented (calc_visc2 has no k-range kernels)')
 #:endif
+#! ---------------------------------------------------------------------------
+#! KEEP_TVD: give the KEEP central flux a MUSCL-limited Rusanov dissipation
+#! term, so `TVD` reaches KEEP instead of being silently ignored. Default off,
+#! so every existing case generates byte-identical code. See
+#! calc_keep_tvd.f90.fypp.
+#! ---------------------------------------------------------------------------
+#:if not defined('KEEP_TVD')
+  #:set KEEP_TVD = False
+#:endif
+#:if KEEP_TVD and SCHEME != 'KEEP'
+  #:stop 'KEEP_TVD only applies to SCHEME=KEEP (SLAU/Roe/Hybrid already read id_tvd)'
+#:endif
+#:if KEEP_TVD and TVD == 'hybrid'
+  #:stop "KEEP_TVD with TVD='hybrid' is not implemented: the threshold limiter needs the Ducros sensor, which is not passed to the KEEP kernels. Use TVD='tvd', or SCHEME='Hybrid' which already switches KEEP<->SLAU on that sensor."
+#:endif
 module calc_flux_base
   use mod_globals, only : sp, &
   & blocks, threads, blocksE, blocksF, blocksG, threadsE, threadsF, threadsG, &
@@ -45,7 +60,7 @@ module calc_flux_base
   use calc_visc_high
   use calc_visc_high_internal
   #:endif
-  #:set fused_conv_visc = (SCHEME in ('KEEP', 'SLAU') and VISC == 'NS' and ORDER == 6 and VISC_ORDER == 6 and not BC_X and not BC_Y and not BC_Z and not COMMZ)
+  #:set fused_conv_visc = (SCHEME in ('KEEP', 'SLAU') and VISC == 'NS' and ORDER == 6 and VISC_ORDER == 6 and not BC_X and not BC_Y and not BC_Z and not COMMZ and not KEEP_TVD)
   #:if fused_conv_visc and SCHEME == 'KEEP'
   use calc_keep_visc_kernel_internal
   #:elif fused_conv_visc and SCHEME == 'SLAU'

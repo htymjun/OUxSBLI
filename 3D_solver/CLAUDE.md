@@ -134,6 +134,56 @@ python -m ouxsbli.analysis.tbl_stats report tbl_acc.npz
 
 Viscous discretization: `calc_visc2.f90.fypp` (Gaitonde & Visbal 2nd-order, `VISC_ORDER=2`) or `calc_visc_high.f90.fypp` + `calc_visc_high_internal.f90.fypp` (4th/6th-order, `VISC_ORDER=4` or `6`).
 
+## KEEP_TVD: giving the KEEP flux a limiter
+
+`SCHEME='KEEP'` is a central, kinetic-energy- and entropy-preserving flux with no
+numerical dissipation, and `calc_keep_kernel[_internal].f90.fypp` never reference
+`id_tvd` — so `TVD` in `config.fypp` reaches SLAU/Roe/Hybrid only and is **silently
+inert for KEEP**. On a flow with a discontinuity nothing damps the 2-cell mode and the
+solution rings; that is what "KEEP oscillates on STZ's Sod tube but SLAU does not"
+means, and it is the scheme behaving as designed, not a bug.
+
+`KEEP_TVD = True` (default `False`) makes the face flux
+
+```
+F = F_KEEP  -  1/2 |lambda| (U_R - U_L),     lambda = max(|u_n| + c)_{L,R}
+```
+
+with `U_L`/`U_R` reconstructed by the **same** `delta4`/`delta6` MUSCL chain SLAU and
+Hybrid already use, so `TVD` picks the limiter for KEEP exactly as it does for them.
+The algebra lives in `3D_solver/src/calc_keep_tvd.f90.fypp`, which is `#:include`d into
+both KEEP kernel modules (raw text, like `calc_visc_cent.f90.fypp` — so it is **not** in
+CMake's `_SHARED_FYPP` and CMake does not track it as a dependency; touch a kernel
+template or wipe `build/` after editing it).
+
+Measured on the host with the real limiter chain (`ORDER=6`, `TVD='tvd'`):
+
+| field at the face | `\|D(1)\|` |
+|---|---|
+| smooth `rho = 1 + 0.1 sin(2*pi*z)`, dz = 5.0e-2 | 6.0e-4 |
+| same, dz = 1.25e-2 | 3.6e-9 |
+| same, dz = 3.1e-3 | 3.3e-12 |
+| Sod jump (1 -> 0.125, p 1 -> 0.1) | 5.2e-1 |
+
+i.e. once the wave is resolved the added dissipation converges at ~O(dz^5) — below the
+6th-order convective truncation error — while a genuine discontinuity gets the full
+O(1) upwind term. KEEP is still no longer *exactly* entropy preserving, so do not switch
+this on for TGV/DHIT-class runs that depend on that property; `ouxsbli/tests/test_etgv.py`
+is the check that would catch it.
+
+Constraints, enforced by `$:error` in `calc_flux_base.f90.fypp`:
+
+* `KEEP_TVD` requires `SCHEME='KEEP'`.
+* `TVD='hybrid'` is rejected: the threshold limiter needs the Ducros sensor, which is not
+  passed to the KEEP kernels. Use `TVD='tvd'`, or `SCHEME='Hybrid'`, which already
+  switches KEEP<->SLAU on that sensor and leaves KEEP untouched where it is quiet.
+* `KEEP_TVD=True` disables the fused convective+viscous kernel (`fused_conv_visc`), so
+  `calc_keep_visc_kernel.f90.fypp` did not need a second copy of the dissipation. Costs
+  one extra launch per direction on the no-BC/no-COMMZ cases that would have fused.
+
+With `KEEP_TVD` unset or `False` every existing case generates **byte-identical**
+Fortran — verified across all 12 `3D_solver` cases.
+
 ## Cell-Center Velocity Gradients (`ux`, `vy`, `wz`)
 
 For `VISC_ORDER > 2` (NS/LES), `calc_div.f90` precomputes the three diagonal velocity
@@ -191,6 +241,15 @@ Rules that make this correct, and that any edit must preserve:
   max|w| ≈ 0.24 m/s and Δp ≈ 150 Pa between z planes of a nominally 2D SBLI, while
   `COMMZ=False` stays 2D to the last bit. That was the "COMMZ=True transitions,
   COMMZ=False does not" report.
+* **The `_z_in_koff` convective kernels clamp to `[io+1, nz-io-1]` like their non-koff
+  twins.** `calc_conv_G_koff` is called with `k_lo=1` and `k_hi=nz-1`, i.e. over faces
+  whose `k-io .. k+io+1` stencil is not inside the slab. The koff kernels used to test
+  only `k_lo <= k <= k_hi`, so those faces were written from shared-memory slots the
+  loader never filled (and, for SLAU/Hybrid, from out-of-bounds `T(i,j,k-io:k+io+1)`
+  reads). Only ghost planes consume those faces and `set_bc_cyclic_z` overwrites them
+  every stage, so it never corrupted the solution -- but it made the ghost planes
+  run-to-run nondeterministic, which is exactly what the `COMMZ=True` vs `COMMZ=False`
+  bit-comparison relies on being clean.
 * **The high-z range of every pair starts at `max(..., low_end+1)`** so thin slabs
   (nz-2·OV small) never double-count; empty ranges are skipped (`if (hi >= lo)`, and
   the `calc_div` kernels return early).
@@ -249,9 +308,27 @@ Rules that make this correct, and that any edit must preserve:
   both `MPI='CPU'` and `MPI='GPU'`, never run), `BC_FORCING` + `RESCALE`.
 * SWLBLI's `set_grid` follows STZ: `dz = Lz / (N_compute·(nz-6))`, plane `k=4` of the
   first slab at `z=-Lz/2`, so `Lz` is the global periodic span and `nz` counts the 3+3
-  ghost planes. Observation on STZ (not changed): it sets `BC_Z=True` yet
-  `start_exchange_z` wraps the outer ranks periodically and `calc_conv_G_koff` always
-  uses the `_in` z kernel.
+  ghost planes.
+* **`BC_Z=True` is inoperative under `COMMZ`, and STZ relies on it.** `start_exchange_z`
+  wraps unconditionally (`rank_lo = mod(myrank-2+nranks, nranks)`), so the first and
+  last compute ranks exchange with each other; `calc_conv_G_koff` likewise always uses
+  the `_in` z kernel. STZ's `set_bc` does write zero-gradient z ghost planes, but only
+  *after* `calc_step`, and the next stage's `finish_exchange_z` overwrites them before
+  any ghost-dependent flux is evaluated — so those values are never read and the run is
+  effectively z-periodic. For STZ's Sod tube (`set_init`: left state on `myrank < 2`,
+  right state otherwise) that adds a **second** discontinuity at the periodic seam, and
+  the shock/contact/expansion it launches travel inward from both domain ends. Any
+  `COMMZ` case that needs a real physical z boundary must gate the wrap on `BC_Z` and
+  move the BC to just after `finish_exchange_z`.
+* **STZ cannot be compared against a single-rank reference as written.** `set_init`
+  selects its state from `myrank`, not from `z`, so at 2 ranks (one compute rank) the
+  whole domain is the left state and there is no shock tube at all. To use STZ as a
+  halo regression test, give it a smooth z-dependent initial condition (e.g.
+  `rho = 1 + 0.1*sin(2*pi*z/Lz)`) written in terms of `z(k)`, which is already
+  globally offset by `iz_offset`.
+* **`TVD` is a no-op for `SCHEME='KEEP'`.** The KEEP kernel templates never reference
+  `id_tvd` and `KEEP2/4/6` carry no limiter, so `TVD='tvd'`/`'hybrid'` only affects
+  SLAU/Roe/Hybrid. KEEP on a shock tube therefore runs fully unlimited.
 
 ### SWLBLI: the blowing/suction strip (`BC_FORCING`)
 

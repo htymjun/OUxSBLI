@@ -294,7 +294,7 @@ contains
     enddo
     call syncthreads()
     k = k_base + kt
-    if (k_lo <= k .and. k <= k_hi .and. i <= nx-1 .and. j <= ny-1) then
+    if (max(k_lo, io+1) <= k .and. k <= min(k_hi, nz-(io+1)) .and. i <= nx-1 .and. j <= ny-1) then
       fdz = 0.5_sp * (sensor(i,j,k) + sensor(i,j,k+1))
       if (fdz <= threshold) then
         block
@@ -316,7 +316,7 @@ contains
       endif
     endif
     call syncthreads()
-    if (k_lo <= k .and. k <= k_hi .and. i <= nx-1 .and. j <= ny-1 .and. fdz > threshold) then
+    if (max(k_lo, io+1) <= k .and. k <= min(k_hi, nz-(io+1)) .and. i <= nx-1 .and. j <= ny-1 .and. fdz > threshold) then
       rho(kt,jt,it) = rhol;   u(kt,jt,it) = ul;   v(kt,jt,it) = vl
         w(kt,jt,it) = wl;     p(kt,jt,it) = pl
       associate(un1 => w(kt,jt,it), un2 => wr(kt,jt,it))

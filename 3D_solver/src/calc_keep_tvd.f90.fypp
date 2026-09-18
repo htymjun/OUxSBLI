@@ -1,0 +1,105 @@
+#! ---------------------------------------------------------------------------
+#! calc_keep_tvd.f90.fypp -- limited artificial dissipation for the KEEP flux.
+#!
+#! #:include'd (raw text, no `module` wrapper) into the `contains` section of
+#! calc_keep_kernel.f90.fypp and calc_keep_kernel_internal.f90.fypp when the
+#! case sets KEEP_TVD = True. Like calc_visc_cent.f90.fypp it is NOT in
+#! 3D_solver/CMakeLists.txt's _SHARED_FYPP list -- fypp resolves the include
+#! itself -- which also means CMake does not track it as a dependency, so
+#! touch a kernel template (or wipe build/) after editing this file.
+#!
+#! WHY THIS EXISTS
+#! KEEP is a central, kinetic-energy- and entropy-preserving flux with no
+#! numerical dissipation of its own, and the KEEP kernels never read id_tvd:
+#! `TVD` only ever reached SLAU/Roe/Hybrid. On a flow with a discontinuity
+#! (e.g. STZ's Sod tube) nothing damps the 2-cell mode and the solution rings.
+#! With KEEP_TVD = True the face flux becomes
+#!
+#!     F = F_KEEP  -  1/2 |lambda| (U_R - U_L)
+#!
+#! i.e. KEEP plus the dissipation term of a Rusanov (local Lax-Friedrichs)
+#! flux, where U_L/U_R are the MUSCL states reconstructed by the SAME
+#! delta4/delta6 chain SLAU and Hybrid already use, so `TVD` selects the
+#! limiter exactly as it does for them.
+#!
+#! COST: this is a deliberate trade. U_R - U_L does not vanish in smooth
+#! regions -- it is O(dx^k), not zero -- so the scheme is no longer exactly
+#! entropy/kinetic-energy preserving, which is KEEP's entire reason for
+#! existing. Do not switch this on for TGV/DHIT-class runs. For a case that
+#! genuinely mixes smooth regions and shocks, SCHEME='Hybrid' (KEEP where the
+#! Ducros sensor is quiet, SLAU where it fires) leaves KEEP untouched in the
+#! smooth part and is the better answer.
+#! ---------------------------------------------------------------------------
+  !$dir inline
+  attributes(device) subroutine delta_r2(id_acc, sensor, a, al, ar)
+    integer(2), intent(in), value :: id_acc
+    real(sp), intent(in), value   :: sensor
+    real(8), intent(in)           :: a(2)
+    real(8), intent(out)          :: al, ar
+    al = a(1); ar = a(2)
+  end subroutine delta_r2
+
+  !$dir inline
+  attributes(device) subroutine delta_r4(id_acc, sensor, a, al, ar)
+    integer(4), intent(in), value :: id_acc
+    real(sp), intent(in), value   :: sensor
+    real(8), intent(in)           :: a(4)
+    real(8), intent(out)          :: al, ar
+    call delta4(sensor, a, al, ar)
+  end subroutine delta_r4
+
+  !$dir inline
+  attributes(device) subroutine delta_r6(id_acc, sensor, a, al, ar)
+    integer(8), intent(in), value :: id_acc
+    real(sp), intent(in)  , value :: sensor
+    real(8), intent(in)           :: a(6)
+    real(8), intent(out)          :: al, ar
+    call delta6(sensor, a, al, ar)
+  end subroutine delta_r6
+
+#:for n, k in [(2, 2), (4, 4), (6, 8)]
+#! index of the two cells straddling the face within an n-point stencil
+#:set nl = n // 2
+#:set nr = nl + 1
+  !> Rusanov dissipation D = 1/2 |lambda| (U_R - U_L) for the face at the
+  !> centre of an ${n}$-point stencil; the caller subtracts D from F_KEEP.
+  !> `Normal` is the same Normal_x/y/z constant the KEEP call uses, so
+  !> Normal(2:4) picks out the face-normal velocity component.
+  attributes(device) subroutine keep_diss${n}$(id_acc, rho, u, v, w, p, Normal, D)
+    integer(${k}$), intent(in), value     :: id_acc
+    real(8), intent(in), dimension(${n}$) :: rho, u, v, w, p
+    real(8), intent(in), dimension(5)     :: Normal
+    real(8), intent(out)                  :: D(5)
+    real(8) :: rl, ul, vl, wl, pl
+    real(8) :: rr, ur, vr, wr, pr
+    real(8) :: unl, unr, lam, el, er
+    real(sp), parameter :: no_sensor = 0.0_sp
+    call delta_r(id_acc, no_sensor, rho, rl, rr)
+    call delta_r(id_acc, no_sensor,   u, ul, ur)
+    call delta_r(id_acc, no_sensor,   v, vl, vr)
+    call delta_r(id_acc, no_sensor,   w, wl, wr)
+    call delta_r(id_acc, no_sensor,   p, pl, pr)
+    ! A limited reconstruction can still undershoot across a strong jump.
+    ! Fall back to the two cell values rather than take sqrt of a negative
+    ! pressure -- first order at that face, which is what we want there.
+    if (rl <= 0.d0 .or. rr <= 0.d0 .or. pl <= 0.d0 .or. pr <= 0.d0) then
+      rl = rho(${nl}$); rr = rho(${nr}$)
+      ul =   u(${nl}$); ur =   u(${nr}$)
+      vl =   v(${nl}$); vr =   v(${nr}$)
+      wl =   w(${nl}$); wr =   w(${nr}$)
+      pl =   p(${nl}$); pr =   p(${nr}$)
+    endif
+    unl = ul * Normal(2) + vl * Normal(3) + wl * Normal(4)
+    unr = ur * Normal(2) + vr * Normal(3) + wr * Normal(4)
+    lam = max(abs(unl) + sqrt(gamma * pl / rl), abs(unr) + sqrt(gamma * pr / rr))
+    el  = pl * over_gamma_1 + 0.5d0 * rl * (ul*ul + vl*vl + wl*wl)
+    er  = pr * over_gamma_1 + 0.5d0 * rr * (ur*ur + vr*vr + wr*wr)
+    lam = 0.5d0 * lam
+    D(1) = lam * (rr      - rl)
+    D(2) = lam * (rr * ur - rl * ul)
+    D(3) = lam * (rr * vr - rl * vl)
+    D(4) = lam * (rr * wr - rl * wl)
+    D(5) = lam * (er      - el)
+  end subroutine keep_diss${n}$
+
+#:endfor
