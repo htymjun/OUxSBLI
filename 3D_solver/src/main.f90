@@ -32,7 +32,7 @@ program main
   endif
   allocate(Q(nx,ny,nz,dimension+2), x(nx), dx(nx-1), y(ny), dy(ny-1), z(nz), dz(nz-1), Jacobian(nx,ny))
   call set_grid(myrank, nx, ny, nz, Lx, Ly, Lz, x, y, z, dx, dy, dz)
-  call set_Jacobian_xy3(nx, ny, nz, dx, dy, dz, Jacobian)
+  call set_Jacobian_xy3_strech(nx, ny, nz, dx, dy, dz, Jacobian)
 
   if (mod(myrank,2) == 0) then
     if (id_recal) then
