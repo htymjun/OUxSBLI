@@ -10,7 +10,7 @@ module mod_globals
   real(8), parameter :: Lx = 165.d0 * blt !176!20
   real(8), parameter :: Ly = 56.d0 * blt !80!5
   ! DNS
-  integer, parameter :: nx = 1025 !257!257
+  integer, parameter :: nx = 257 !257!257
   integer, parameter :: ny = 480 !129!257
 
   ! flat-plate geometry
@@ -28,8 +28,8 @@ module mod_globals
 
   ! time
   integer, parameter :: step_offset = 0
-  real(8), parameter :: endT  = 1.8d-2 !1.d-2
-  integer, parameter :: np    = 180 !100
+  real(8), parameter :: endT  = 1.7d-2 !1.d-2
+  integer, parameter :: np    = 170 !100
   real(8), parameter :: R     = 287.15d0
   real(8), parameter :: gamma = 1.4d0
   real(8), parameter :: M0    = 2.15d0
