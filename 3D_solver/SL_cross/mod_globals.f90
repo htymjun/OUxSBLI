@@ -26,7 +26,12 @@ module mod_globals
 
   integer, parameter :: nx_main = 492!428*2 !384
   integer, parameter :: nx_buf =  30!20  !30
-  integer, parameter :: nx = nx_main + nx_buf + 2!438
+  ! x方向MPI分割: npx = xスラブ数(= 計算ランク数 = MPIランク数/2)。npx=1 は分割なし。
+  ! nx はスラブ1枚の点数(接続側にゴースト3面)。(nx_global-6) が npx で割り切れること。
+  ! 実行は mpiexec -n 2*npx(set.f90 の set_grid が検査する)。
+  integer, parameter :: npx = 1
+  integer, parameter :: nx_global = nx_main + nx_buf + 2!438
+  integer, parameter :: nx = (nx_global - 6)/npx + 6
   
   integer, parameter :: ny_main = 128 !256 !192
   integer, parameter :: ny_buf =  14     !15
@@ -62,6 +67,11 @@ integer, parameter :: nz_uniform = ny_uniform
   real(8), parameter :: Pr    = 0.71d0
   real(8), parameter :: Prt   = 0.9d0
   real(8), parameter :: R     = 287.15d0
+
+  ! passive scalar (mixture fraction xi: 1 in stream 1 [u1], 0 in stream 2 [u2]), solved in set.f90
+  logical, parameter :: scalar_on = .true.          ! .false. -> no scalar, no extra cost
+  real(8), parameter :: Sc        = 0.7d0           ! Schmidt number: rho*D = mu/Sc
+  integer, parameter :: scalar_output_every = 1     ! write xi every this many flow outputs (nt steps each)
 
   ! initial condition
   real(8), parameter :: p    = 80d3

@@ -1,6 +1,7 @@
 module set
   use mod_globals , only : nx, ny, nz, Lx, Ly, Lz, gamma, R,dt,nt, &
-                           Lx_main, Lx_buf,Ly_main, Ly_buf,Lz_main,Lz_buf,nx_main, nx_buf,ny_main, ny_buf, nz_main, nz_buf
+                           Lx_main, Lx_buf,Ly_main, Ly_buf,Lz_main,Lz_buf,nx_main, nx_buf,ny_main, ny_buf, nz_main, nz_buf, &
+                           npx, nx_global
   use set_bc_common
   use set_coordinate
   implicit none
@@ -27,6 +28,30 @@ module set
   real(8), allocatable, device :: q0_1(:,:,:), q0_2(:,:,:), q0_3(:,:,:), q0_4(:,:,:), q0_5(:,:,:)
   real(8), save :: dx_saved(nx-1), dy_saved(ny-1), dz_saved(nz-1)
   integer, parameter :: nsp_x = nx_buf, nsp_y = 7
+
+  ! ---- x方向MPI分割(mod_globalsのnpx)。偶数(計算)ランクごとに1スラブ、奇数(I/O)ランクは相方と同じスラブ。
+  ! global i = local i + i_offset。接続側のゴーストは3面で、set_bcの最後(exchange_x)で隣スラブの
+  ! 内部3面を受け取る。共有カーネルは配列端から3面目以降の面/セルを高次で計算するので、
+  ! 内部セルは分割なしと同じステンシルになる。
+  integer, save :: my_slab = 0          ! このランクのスラブ番号(0..npx-1)
+  integer, save :: i_offset = 0         ! ローカル→全体のx番号オフセット
+  integer, save :: comm_compute         ! 計算ランクだけのコミュニケータ
+  ! 配列端のヤコビアンは隣の列のコピー(set_Jacobian_xy3)なので、端のゴースト面だけ
+  ! QJ = Q/J を真のJとの比で換算して受け取る(一様部では1)。
+  real(8), save :: x_fac_lo = 1.d0, x_fac_hi = 1.d0
+  real(8), allocatable, device :: xs_lo_d(:), xs_hi_d(:), xr_lo_d(:), xr_hi_d(:)
+  ! ホスト側の送受信バッファはピン留めメモリ(ページ可能メモリより転送が速い)
+  real(8), allocatable, pinned :: xs_lo_h(:), xs_hi_h(:), xr_lo_h(:), xr_hi_h(:)
+
+  ! ---- パッシブスカラー(混合分率 xi)。mod_globalsのscalar_onで有効化 ----
+  real(8), allocatable, device :: sc_phi(:,:,:)       ! xi (時刻n)
+  real(8), allocatable, device :: sc_phis(:,:,:)      ! RK中間段
+  real(8), allocatable, device :: sc_phib(:,:,:)      ! RK 段2の結果
+  real(8), allocatable, device :: sc_gam(:,:,:)       ! rho*D = mu/Sc
+  real(8), device  :: sc_mx(nx), sc_my(ny), sc_mz(nz)           ! セル中心のメトリック 1/h = 2/(d(i-1)+d(i))
+  real(8), device  :: sc_idx(nx-1), sc_idy(ny-1), sc_idz(nz-1)  ! 1/(中心間隔)
+  real(8), device  :: sc_in(ny,nz)                    ! 流入分布(初期の十字型分布と同じ)
+  real(4), save    :: sc_xc(nx), sc_yc(ny), sc_zc(nz) ! VTK出力用のセル中心座標(流れ場のVTKと同じ)
   integer, parameter :: nsp_z = max(1, nint(dble(nz_buf*nsp_y)/dble(ny_buf)))
   real(8), parameter :: sigma_max_x = 0.06d0, sigma_max_y = 0.01d0
 
@@ -64,7 +89,480 @@ pure attributes(device) function inlet_normal(j, k, frame, component, seed) resu
 end function inlet_normal
 
 
+!=====================================================================
+! パッシブスカラー(混合分率 xi)。SL_spatial_inletと同じ方式を、このケースの十字型分布・
+! 非周期で不等間隔のz・x分割に合わせて移植したもの。流れ場には一切影響しない。
+!   xi = 1 : 流れ1(u1)側の流体、 xi = 0 : 流れ2(u2)側の流体
+!   d(xi)/dt = -u.grad(xi) + (1/rho) div( (mu/Sc) grad(xi) )
+! 流れ場の1ステップごと(最終RK段のset_bc)に、更新後の速度場でSSP-RK3により1ステップ進める。
+! mod_globalsのscalar_on, Sc, scalar_output_everyで制御する。
+!=====================================================================
+
+
+!=====================================================================
+! パッシブスカラー: 風上側から再構成したセル界面値(Korenリミッタ、TVD)。
+! a=風上のさらに風上, b=風上, c=風下。値は必ずbとcの間に収まる。
+! 勾配比 r=(c-b)/(b-a) の割り算を避け、psi(r)*(b-a) を直接評価する(割り算版と数学的に同じ):
+!   s=sign(b-a), psi*(b-a) = s*max(0, min(2*s*(c-b), (|b-a|+2*s*(c-b))/3, 2*|b-a|))
+!=====================================================================
+pure attributes(device) function sc_face(a, b, c) result(f)
+  real(8), intent(in), value :: a, b, c
+  real(8) :: f, da, dc, s, m
+  da = b - a
+  dc = c - b
+  s  = sign(1.d0, da)
+  m  = max(0.d0, min(2.d0*s*dc, min((abs(da) + 2.d0*s*dc)/3.d0, 2.d0*abs(da))))
+  f  = b + 0.5d0*s*m
+end function sc_face
+
+
+!=====================================================================
+! パッシブスカラー: 境界条件。流入は固定の十字型分布(先頭スラブ)、流出(最終スラブ)と
+! y,zの両端は勾配ゼロ。zは周期ではない。xの接続面はsc_exchange_xで隣スラブから受け取る。
+!=====================================================================
+subroutine sc_bc(myrank, nx, ny, nz, f)
+  integer, intent(in), value     :: myrank, nx, ny, nz
+  real(8), intent(inout), device :: f(nx,ny,nz)
+  integer :: i, j, k
+
+  if (my_slab == 0) then
+    !$cuf kernel do(2)<<<*,*>>>
+    do k = 2, nz-1
+      do j = 2, ny-1
+        f(1,j,k)  = sc_in(j,k)
+    enddo;enddo
+  endif
+  if (my_slab == npx-1) then
+    !$cuf kernel do(2)<<<*,*>>>
+    do k = 2, nz-1
+      do j = 2, ny-1
+        f(nx,j,k) = f(nx-1,j,k)
+    enddo;enddo
+  endif
+
+  !$cuf kernel do(2)<<<*,*>>>
+  do k = 2, nz-1
+    do i = 1, nx
+      f(i,1,k)  = f(i,2,k)
+      f(i,ny,k) = f(i,ny-1,k)
+  enddo;enddo
+
+  !$cuf kernel do(2)<<<*,*>>>
+  do j = 1, ny
+    do i = 1, nx
+      f(i,j,1)  = f(i,j,2)
+      f(i,j,nz) = f(i,j,nz-1)
+  enddo;enddo
+
+  call sc_exchange_x(nx, ny, nz, f)
+end subroutine sc_bc
+
+
+!=====================================================================
+! パッシブスカラー: x方向の袖交換(非周期)。流れ場のexchange_xと同じ面を交換する。
+! 送受信バッファは流れ場用(xs_*, xr_*)の先頭 3*ny*nz 要素を借りる。
+!=====================================================================
+subroutine sc_exchange_x(nx, ny, nz, f)
+  use mpi
+  integer, intent(in), value     :: nx, ny, nz
+  real(8), intent(inout), device :: f(nx,ny,nz)
+  integer :: left, right, n, ierr
+  integer :: istat(MPI_STATUS_SIZE)
+
+  if (npx == 1) return
+  call alloc_exchange_x(ny, nz)
+  n = 3*ny*nz
+  left  = MPI_PROC_NULL;  if (my_slab > 0)     left  = my_slab - 1
+  right = MPI_PROC_NULL;  if (my_slab < npx-1) right = my_slab + 1
+  if (right /= MPI_PROC_NULL) then
+    call sc_pack_x(nx, ny, nz, nx-5, f, xs_hi_d)
+    xs_hi_h(1:n) = xs_hi_d(1:n)
+  endif
+  if (left /= MPI_PROC_NULL) then
+    call sc_pack_x(nx, ny, nz, 4, f, xs_lo_d)
+    xs_lo_h(1:n) = xs_lo_d(1:n)
+  endif
+  call MPI_SENDRECV(xs_hi_h, n, MPI_REAL8, right, 43, xr_lo_h, n, MPI_REAL8, left,  43, comm_compute, istat, ierr)
+  call MPI_SENDRECV(xs_lo_h, n, MPI_REAL8, left,  44, xr_hi_h, n, MPI_REAL8, right, 44, comm_compute, istat, ierr)
+  if (left /= MPI_PROC_NULL) then
+    xr_lo_d(1:n) = xr_lo_h(1:n)
+    call sc_unpack_x(nx, ny, nz, 1, xr_lo_d, f)
+  endif
+  if (right /= MPI_PROC_NULL) then
+    xr_hi_d(1:n) = xr_hi_h(1:n)
+    call sc_unpack_x(nx, ny, nz, nx-2, xr_hi_d, f)
+  endif
+end subroutine sc_exchange_x
+
+subroutine sc_pack_x(nx, ny, nz, i0, f, buf)
+  integer, intent(in), value     :: nx, ny, nz, i0
+  real(8), intent(in), device    :: f(nx,ny,nz)
+  real(8), intent(inout), device :: buf(3*ny*nz*5)
+  integer :: j, k, m
+  !$cuf kernel do(2)<<<*,*>>>
+  do k = 1, nz
+    do j = 1, ny
+      do m = 1, 3
+        buf(m + 3*((j-1) + ny*(k-1))) = f(i0+m-1,j,k)
+  enddo;enddo;enddo
+end subroutine sc_pack_x
+
+subroutine sc_unpack_x(nx, ny, nz, i0, buf, f)
+  integer, intent(in), value     :: nx, ny, nz, i0
+  real(8), intent(in), device    :: buf(3*ny*nz*5)
+  real(8), intent(inout), device :: f(nx,ny,nz)
+  integer :: j, k, m
+  !$cuf kernel do(2)<<<*,*>>>
+  do k = 1, nz
+    do j = 1, ny
+      do m = 1, 3
+        f(i0+m-1,j,k) = buf(m + 3*((j-1) + ny*(k-1)))
+  enddo;enddo;enddo
+end subroutine sc_unpack_x
+
+
+!=====================================================================
+! x方向の袖交換バッファ(流れ場5変数x3面。スカラーは先頭の1変数分を使う)
+!=====================================================================
+subroutine alloc_exchange_x(ny, nz)
+  integer, intent(in) :: ny, nz
+  integer :: n
+  if (allocated(xs_lo_d)) return
+  n = 3*ny*nz*5
+  allocate(xs_lo_d(n), xs_hi_d(n), xr_lo_d(n), xr_hi_d(n))
+  allocate(xs_lo_h(n), xs_hi_h(n), xr_lo_h(n), xr_hi_h(n))
+end subroutine alloc_exchange_x
+
+
+
+!=====================================================================
+! パッシブスカラー: 拡散係数 rho*D = mu/Sc (ソルバーと同じサザーランド則)
+!=====================================================================
+subroutine sc_calc_gam(myrank, nx, ny, nz, jacobian, Q_1, Q_2, Q_3, Q_4, Q_5, gam)
+  use mod_globals, only : Sc
+  use mod_constant, only : mu0_T0_S_over_T0_2_3
+  integer, intent(in), value  :: myrank, nx, ny, nz
+  real(8), intent(in), device :: jacobian(nx,ny)
+  real(8), intent(in), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+  real(8), intent(inout), device :: gam(nx,ny,nz)
+  integer :: i, j, k
+  real(8) :: rho, u, v, w, pres, temp, over_Sc
+
+  over_Sc = 1.d0/Sc
+  !$cuf kernel do(3)<<<*,*>>>
+  do k = 1, nz
+    do j = 1, ny
+      do i = 1, nx
+        rho  = Q_1(i,j,k)*jacobian(i,j)
+        u    = Q_2(i,j,k)/Q_1(i,j,k)
+        v    = Q_3(i,j,k)/Q_1(i,j,k)
+        w    = Q_4(i,j,k)/Q_1(i,j,k)
+        pres = (gamma-1.d0)*(Q_5(i,j,k)*jacobian(i,j) - 0.5d0*rho*(u*u + v*v + w*w))
+        temp = pres/(R*rho)
+        gam(i,j,k) = mu0_T0_S_over_T0_2_3/(temp + 110.4d0)*(temp*sqrt(temp))*over_Sc
+  enddo;enddo;enddo
+
+end subroutine sc_calc_gam
+
+
+!=====================================================================
+! パッシブスカラー: 1セルの右辺  d(xi)/dt = -u.grad(xi) + (1/rho) div(rho*D grad(xi))
+! 移流はKorenリミッタ付き3次風上(端は添字クランプで1次風上に落ちる)、拡散は2次中心。
+! 近傍のxiは最初にまとめて読み込む(互いに独立な読み出しをまとめて発行してレイテンシを重ねる)。
+! 読み込んだ値は界面値と拡散項の計算で使い回す。全セルを計算する(省略はしない)。
+!=====================================================================
+attributes(device) function sc_rhs_cell(nx, ny, nz, i, j, k, jacobian, Q_1, Q_2, Q_3, Q_4, f, gam) result(r)
+  integer, intent(in), value  :: nx, ny, nz, i, j, k
+  real(8), intent(in), device :: jacobian(nx,ny)
+  real(8), intent(in), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz)
+  real(8), intent(in), device :: f(nx,ny,nz), gam(nx,ny,nz)
+  real(8) :: r
+  integer :: im2, ip2, jm2, jp2, km2, kp2
+  real(8) :: fc, fim1, fip1, fim2, fip2, fjm1, fjp1, fjm2, fjp2, fkm1, fkp1, fkm2, fkp2
+  real(8) :: rho, u, v, w, adv, dif, d, dz_adv
+
+  im2 = max(i-2, 1);  ip2 = min(i+2, nx)
+  jm2 = max(j-2, 1);  jp2 = min(j+2, ny)
+  km2 = max(k-2, 1);  kp2 = min(k+2, nz)
+
+  fc   = f(i,j,k)
+  fim1 = f(i-1,j,k);  fip1 = f(i+1,j,k);  fim2 = f(im2,j,k);  fip2 = f(ip2,j,k)
+  fjm1 = f(i,j-1,k);  fjp1 = f(i,j+1,k);  fjm2 = f(i,jm2,k);  fjp2 = f(i,jp2,k)
+  fkm1 = f(i,j,k-1);  fkp1 = f(i,j,k+1);  fkm2 = f(i,j,km2);  fkp2 = f(i,j,kp2)
+
+  rho = Q_1(i,j,k)*jacobian(i,j)
+  u   = Q_2(i,j,k)/Q_1(i,j,k)
+  v   = Q_3(i,j,k)/Q_1(i,j,k)
+  w   = Q_4(i,j,k)/Q_1(i,j,k)
+
+  ! --- x ---
+  if (u >= 0.d0) then
+    d = sc_face(fim1, fc, fip1) - sc_face(fim2, fim1, fc)
+  else
+    d = sc_face(fip2, fip1, fc) - sc_face(fip1, fc, fim1)
+  endif
+  adv = u*d*sc_mx(i)
+  dif = sc_mx(i)*( 0.5d0*(gam(i,j,k)+gam(i+1,j,k))*(fip1-fc)*sc_idx(i) &
+                 - 0.5d0*(gam(i,j,k)+gam(i-1,j,k))*(fc-fim1)*sc_idx(i-1) )
+
+  ! --- y ---
+  if (v >= 0.d0) then
+    d = sc_face(fjm1, fc, fjp1) - sc_face(fjm2, fjm1, fc)
+  else
+    d = sc_face(fjp2, fjp1, fc) - sc_face(fjp1, fc, fjm1)
+  endif
+  adv = adv + v*d*sc_my(j)
+  dif = dif + sc_my(j)*( 0.5d0*(gam(i,j,k)+gam(i,j+1,k))*(fjp1-fc)*sc_idy(j) &
+                       - 0.5d0*(gam(i,j,k)+gam(i,j-1,k))*(fc-fjm1)*sc_idy(j-1) )
+
+  ! --- z の風上差分(面値の差) ---
+  if (w >= 0.d0) then
+    dz_adv = sc_face(fkm1, fc, fkp1) - sc_face(fkm2, fkm1, fc)
+  else
+    dz_adv = sc_face(fkp2, fkp1, fc) - sc_face(fkp1, fc, fkm1)
+  endif
+  ! --- z (不等間隔格子: 面値の再構成はx,yと同じ、メトリックは局所の格子幅) ---
+  adv = adv + w*dz_adv*sc_mz(k)
+  dif = dif + sc_mz(k)*( 0.5d0*(gam(i,j,k)+gam(i,j,k+1))*(fkp1-fc)*sc_idz(k) &
+                       - 0.5d0*(gam(i,j,k)+gam(i,j,k-1))*(fc-fkm1)*sc_idz(k-1) )
+
+  r = -adv + dif/rho
+end function sc_rhs_cell
+
+
+!=====================================================================
+! パッシブスカラー: SSP-RK3の1段 (右辺の評価と更新を1つのカーネルにまとめたもの)
+!   sc_stage : out = ca*phi0 + cb*( f + dt*L(f) )     (段1: ca=0,cb=1  段2: ca=3/4,cb=1/4)
+!   sc_stage3: phi = ca*phi  + cb*( f + dt*L(f) )     (段3: ca=1/3,cb=2/3, phiをその場で更新)
+! outとfは別の配列(隣のセルを読むので同じ配列には書かない)。段3は読むのがfの近傍とphi自身の
+! 同じ点だけなので、phiにその場で書いても競合しない。
+!=====================================================================
+subroutine sc_stage(nx, ny, nz, ca, cb, jacobian, Q_1, Q_2, Q_3, Q_4, f, gam, phi0, out)
+  integer, intent(in), value  :: nx, ny, nz
+  real(8), intent(in), value  :: ca, cb
+  real(8), intent(in), device :: jacobian(nx,ny)
+  real(8), intent(in), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz)
+  real(8), intent(in), device :: f(nx,ny,nz), gam(nx,ny,nz), phi0(nx,ny,nz)
+  real(8), intent(inout), device :: out(nx,ny,nz)
+  integer :: i, j, k
+
+  !$cuf kernel do(3)<<<*,(32,4,1)>>>
+  do k = 2, nz-1
+    do j = 2, ny-1
+      do i = 2, nx-1
+        out(i,j,k) = ca*phi0(i,j,k) + cb*( f(i,j,k) + dt*sc_rhs_cell(nx, ny, nz, i, j, k, jacobian, Q_1, Q_2, Q_3, Q_4, f, gam) )
+  enddo;enddo;enddo
+end subroutine sc_stage
+
+
+subroutine sc_stage3(nx, ny, nz, ca, cb, jacobian, Q_1, Q_2, Q_3, Q_4, f, gam, phi)
+  integer, intent(in), value  :: nx, ny, nz
+  real(8), intent(in), value  :: ca, cb
+  real(8), intent(in), device :: jacobian(nx,ny)
+  real(8), intent(in), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz)
+  real(8), intent(in), device :: f(nx,ny,nz), gam(nx,ny,nz)
+  real(8), intent(inout), device :: phi(nx,ny,nz)
+  integer :: i, j, k
+
+  !$cuf kernel do(3)<<<*,(32,4,1)>>>
+  do k = 2, nz-1
+    do j = 2, ny-1
+      do i = 2, nx-1
+        phi(i,j,k) = ca*phi(i,j,k) + cb*( f(i,j,k) + dt*sc_rhs_cell(nx, ny, nz, i, j, k, jacobian, Q_1, Q_2, Q_3, Q_4, f, gam) )
+  enddo;enddo;enddo
+end subroutine sc_stage3
+
+
+!=====================================================================
+! パッシブスカラー: 流入分布を全域に与える(初期値)
+!=====================================================================
+subroutine sc_fill_inlet_profile(nx, ny, nz, f)
+  integer, intent(in), value     :: nx, ny, nz
+  real(8), intent(inout), device :: f(nx,ny,nz)
+  integer :: i, j, k
+
+  !$cuf kernel do(3)<<<*,*>>>
+  do k = 1, nz
+    do j = 1, ny
+      do i = 1, nx
+        f(i,j,k) = sc_in(j,k)
+  enddo;enddo;enddo
+end subroutine sc_fill_inlet_profile
+
+
+!=====================================================================
+! パッシブスカラー: 1ステップ進める(SSP-RK3、速度場は更新後の値で固定)
+!   段1: phis = phi + dt L(phi)
+!   段2: phib = 3/4 phi + 1/4 ( phis + dt L(phis) )
+!   段3: phi  = 1/3 phi + 2/3 ( phib + dt L(phib) )
+!=====================================================================
+subroutine sc_advance(myrank, nx, ny, nz, jacobian, Q_1, Q_2, Q_3, Q_4, Q_5)
+  integer, intent(in), value  :: myrank, nx, ny, nz
+  real(8), intent(in), device :: jacobian(nx,ny)
+  real(8), intent(in), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+
+  call sc_calc_gam(myrank, nx, ny, nz, jacobian, Q_1, Q_2, Q_3, Q_4, Q_5, sc_gam)
+
+  call sc_stage(nx, ny, nz, 0.d0, 1.d0, jacobian, Q_1, Q_2, Q_3, Q_4, sc_phi, sc_gam, sc_phi, sc_phis)
+  call sc_bc(myrank, nx, ny, nz, sc_phis)
+
+  call sc_stage(nx, ny, nz, 0.75d0, 0.25d0, jacobian, Q_1, Q_2, Q_3, Q_4, sc_phis, sc_gam, sc_phi, sc_phib)
+  call sc_bc(myrank, nx, ny, nz, sc_phib)
+
+  call sc_stage3(nx, ny, nz, 1.d0/3.d0, 2.d0/3.d0, jacobian, Q_1, Q_2, Q_3, Q_4, sc_phib, sc_gam, sc_phi)
+  call sc_bc(myrank, nx, ny, nz, sc_phi)
+end subroutine sc_advance
+
+
+!=====================================================================
+! パッシブスカラー: 出力。data/(<I/Oランク>/)xiNNNNN.vtr
+! 流れ場のQNNNNN.vtrと同じ格子・同じ番号のVTK(RectilinearGrid、単精度、点データ"xi")。
+! ParaViewで直接開ける。ゴースト面も流れ場と同じく含む(xの接続部は隣スラブと重複)。
+!=====================================================================
+subroutine sc_write(myrank, nx, ny, nz, idx)
+  use mod_globals, only : step_offset
+  integer, intent(in), value :: myrank, nx, ny, nz, idx
+  real(8), allocatable :: h(:,:,:)
+  real(4), allocatable :: h4(:,:,:)
+  character(len=64) :: filename
+  character(len=12) :: off1, off2, off3
+  character(len=6)  :: e1, e2, e3
+  character(len=1)  :: lf
+  integer    :: u
+  integer(4) :: nb_x, nb_y, nb_z, nb_f
+  real(8)    :: fmin, fmax
+
+  allocate(h(nx,ny,nz), h4(nx,ny,nz))
+  h  = sc_phi
+  h4 = real(h, 4)
+  fmin = minval(h(2:nx-1,2:ny-1,2:nz-1))
+  fmax = maxval(h(2:nx-1,2:ny-1,2:nz-1))
+  if (npx >= 2) then
+    write(filename, "(a, i0, a, i5.5, a)") "data/", myrank+1, "/xi", idx+step_offset, ".vtr"
+  else
+    write(filename, "(a, i5.5, a)") "data/xi", idx+step_offset, ".vtr"
+  endif
+
+  lf = char(10)
+  nb_x = 4*nx;  nb_y = 4*ny;  nb_z = 4*nz;  nb_f = 4*nx*ny*nz   ! 各ブロックのデータ長[byte]
+  write(e1, '(i6)') nx-1;  write(e2, '(i6)') ny-1;  write(e3, '(i6)') nz-1
+  write(off1, '(i12)') 4_8 + nb_x
+  write(off2, '(i12)') 8_8 + nb_x + nb_y
+  write(off3, '(i12)') 12_8 + nb_x + nb_y + nb_z
+  open(newunit=u, file=filename, status="replace", action="write", form="unformatted", access="stream", convert="little_endian")
+  write(u) '<?xml version="1.0"?>'//lf
+  write(u) '<VTKFile type="RectilinearGrid" version="1.0" byte_order="LittleEndian" header_type="UInt32">'//lf
+  write(u) '  <RectilinearGrid WholeExtent="0 '//e1//' 0 '//e2//' 0 '//e3//'">'//lf
+  write(u) '    <Piece Extent="0 '//e1//' 0 '//e2//' 0 '//e3//'">'//lf
+  write(u) '      <Coordinates>'//lf
+  write(u) '        <DataArray type="Float32" Name="x" format="appended" offset="0"/>'//lf
+  write(u) '        <DataArray type="Float32" Name="y" format="appended" offset="'//off1//'"/>'//lf
+  write(u) '        <DataArray type="Float32" Name="z" format="appended" offset="'//off2//'"/>'//lf
+  write(u) '      </Coordinates>'//lf
+  write(u) '      <PointData Scalars="xi">'//lf
+  write(u) '        <DataArray type="Float32" Name="xi" NumberOfComponents="1" format="appended" offset="'//off3//'"/>'//lf
+  write(u) '      </PointData>'//lf
+  write(u) '    </Piece>'//lf
+  write(u) '  </RectilinearGrid>'//lf
+  write(u) '  <AppendedData encoding="raw">'//lf
+  write(u) '  _', nb_x, sc_xc, nb_y, sc_yc, nb_z, sc_zc, nb_f, h4, lf
+  write(u) '  </AppendedData>'//lf
+  write(u) '</VTKFile>'//lf
+  close(u)
+  deallocate(h, h4)
+  print '(1x,a,i0,a,a,a,es13.6,a,es13.6)', "myrank is ", myrank, "  scalar written: ", trim(filename), &
+        "  min=", fmin, "  max=", fmax
+end subroutine sc_write
+
+
+!=====================================================================
+! パッシブスカラー: リスタートファイル recal/xiNNNNN.dat (スラブごと、real(8)、ゴースト込み)。
+! 流れ場のrecal/QNNNNN.datと同じく計算の最後に1回だけ書く。
+!=====================================================================
+subroutine sc_write_restart(myrank, nx, ny, nz)
+  integer, intent(in), value :: myrank, nx, ny, nz
+  real(8), allocatable :: h(:,:,:)
+  character(len=64) :: filename
+  integer :: u
+
+  allocate(h(nx,ny,nz))
+  h = sc_phi
+  write(filename, "(a, i5.5, a)") "recal/xi", myrank/2+1, ".dat"
+  open(newunit=u, file=filename, status="replace", action="write", form="unformatted", access="stream")
+  write(u) h
+  close(u)
+  deallocate(h)
+  print *, "myrank is ", myrank, " scalar restart file written: ", trim(filename)
+end subroutine sc_write_restart
+
+
+!=====================================================================
+! パッシブスカラー: 初期化。RESTART=Trueでrecal/xiNNNNN.datがあれば読み、
+! なければ流入分布(十字型のtanh)を全域に与える。
+!=====================================================================
+subroutine sc_init(myrank, nx, ny, nz)
+  use mod_constant, only : id_recal
+  integer, intent(in), value :: myrank, nx, ny, nz
+  real(8), allocatable :: h(:,:,:)
+  character(len=64) :: filename
+  integer :: u, ios, ierr
+  logical :: have_file
+
+  allocate(sc_phi(nx,ny,nz), sc_phis(nx,ny,nz), sc_phib(nx,ny,nz), sc_gam(nx,ny,nz), stat=ierr)
+  if (ierr /= 0) then
+    print *, "myrank is ", myrank, " scalar: GPU memory allocation failed", ierr
+    error stop 'scalar allocation failed'
+  endif
+  if (npx == 1) call execute_command_line("mkdir -p data", wait=.true., exitstat=ierr)
+  sc_phib = 0.d0
+  sc_gam = 0.d0
+
+  have_file = .false.
+  if (id_recal) then
+    write(filename, "(a, i5.5, a)") "recal/xi", myrank/2+1, ".dat"
+    inquire(file=filename, exist=have_file)
+  endif
+  if (have_file) then
+    allocate(h(nx,ny,nz))
+    open(newunit=u, file=filename, status="old", action="read", form="unformatted", access="stream")
+    read(u, iostat=ios) h
+    close(u)
+    if (ios /= 0) error stop 'scalar restart file has the wrong size'
+    sc_phi = h
+    deallocate(h)
+    print *, "myrank is ", myrank, " scalar restarted from ", trim(filename)
+  else
+    if (id_recal) print *, "myrank is ", myrank, " scalar: no restart file, starting from the inlet profile"
+    call sc_fill_inlet_profile(nx, ny, nz, sc_phi)
+  endif
+  call sc_bc(myrank, nx, ny, nz, sc_phi)
+  sc_phis = sc_phi
+  call sc_write(myrank, nx, ny, nz, 0)
+end subroutine sc_init
+
+
+!=====================================================================
+! パッシブスカラー: set_bcの最後から呼ばれる入口。最初の呼び出しで初期化し、
+! 各ステップの最終RK段(流れ場がQ^(n+1)になった時点)でxiを1ステップ進める。
+!=====================================================================
+subroutine sc_step(myrank, nx, ny, nz, jacobian, Q_1, Q_2, Q_3, Q_4, Q_5)
+  use mod_globals, only : np, inlet_rk_stages, scalar_output_every
+  integer, intent(in), value  :: myrank, nx, ny, nz
+  real(8), intent(in), device :: jacobian(nx,ny)
+  real(8), intent(in), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+  integer :: n
+
+  if (.not. allocated(sc_phi)) call sc_init(myrank, nx, ny, nz)
+  if (mod(inlet_bc_calls, inlet_rk_stages) /= 0) return
+  n = inlet_bc_calls/inlet_rk_stages                 ! 完了したステップ数
+  call sc_advance(myrank, nx, ny, nz, jacobian, Q_1, Q_2, Q_3, Q_4, Q_5)
+  if (mod(n, nt*scalar_output_every) == 0) call sc_write(myrank, nx, ny, nz, n/nt)
+  if (n == np*nt) call sc_write_restart(myrank, nx, ny, nz)
+end subroutine sc_step
+
+
 subroutine set_grid(myrank, nx, ny, nz, Lx, Ly, Lz, xc, yc, zc, dx, dy, dz)
+  use mpi
   use mod_constant, only : id_accuracy
   use mod_globals, only : dt, CFL, u1, u2, gamma, R, T1, T2, endT, np, Pr
   integer, intent(in)  :: myrank, nx, ny, nz
@@ -74,11 +572,52 @@ subroutine set_grid(myrank, nx, ny, nz, Lx, Ly, Lz, xc, yc, zc, dx, dy, dz)
   real(8) :: dx_min, dy_min, dz_min, dmin, c1, c2, umax, cmax, dt_suggest
   real(8) :: vmax_est, wmax_est, dt_conv, dt_diff, mu_max, rho_min
   integer :: nt_suggest
+  integer :: nranks, ierr
+  character(len=64) :: rank_dir
+
+  ! set_gridは全ランクから呼ばれるので、ここでx分割の情報とコミュニケータを用意する。
+  call MPI_COMM_SIZE(MPI_COMM_WORLD, nranks, ierr)
+  if (nranks /= 2*npx) then
+    print *, "x decomposition: npx =", npx, " needs", 2*npx, " MPI ranks, but got", nranks
+    error stop 'MPI rank count must be 2*npx'
+  endif
+  if (npx < 1 .or. mod(nx_global-6, npx) /= 0) then
+    print *, "x decomposition: nx_global-6 =", nx_global-6, " is not divisible by npx =", npx
+    error stop '(nx_main+nx_buf-4) must be divisible by npx'
+  endif
+  my_slab  = myrank/2
+  i_offset = my_slab*(nx-6)
+  call MPI_COMM_SPLIT(MPI_COMM_WORLD, mod(myrank,2), myrank, comm_compute, ierr)
+  if (npx > 1) then
+    ! 流出スポンジとその目標面(i = nx-1-nsp_x)は最終スラブの内部に収まること。
+    if (nx-1-nsp_x < 4) error stop 'x decomposition: the outflow sponge must fit inside the last slab (reduce npx or nx_buf)'
+    ! 奇数(I/O)ランクは data/<myrank>/ にスラブごとの出力を書く。
+    if (mod(myrank,2) == 1) then
+      write(rank_dir, "(a, i0)") "mkdir -p data/", myrank
+      call execute_command_line(trim(rank_dir), wait=.true., exitstat=ierr)
+    endif
+  endif
 
   call set_grid_main_buffer(nx, ny, nz, Lx_main, Lx_buf,Ly_main, Ly_buf,Lz,&
                             nx_main, nx_buf,ny_main, ny_buf,xc, yc, zc, dx, dy, dz)
   call set_profile_and_sponges(nx, ny, nz, yc, zc)
   call set_reference_volume(nx, ny, nz, dx, dy, dz)
+
+  ! パッシブスカラー用のメトリック(セル中心間隔から)と出力用の座標
+  block
+    real(8) :: mx_h(nx), my_h(ny), mz_h(nz)
+    integer :: ii
+    do ii = 2, nx-1; mx_h(ii) = 2.d0/(dx(ii-1) + dx(ii)); enddo
+    mx_h(1) = mx_h(2);  mx_h(nx) = mx_h(nx-1)
+    do ii = 2, ny-1; my_h(ii) = 2.d0/(dy(ii-1) + dy(ii)); enddo
+    my_h(1) = my_h(2);  my_h(ny) = my_h(ny-1)
+    do ii = 2, nz-1; mz_h(ii) = 2.d0/(dz(ii-1) + dz(ii)); enddo
+    mz_h(1) = mz_h(2);  mz_h(nz) = mz_h(nz-1)
+    sc_mx = mx_h;  sc_my = my_h;  sc_mz = mz_h
+    sc_idx = 1.d0/dx;  sc_idy = 1.d0/dy;  sc_idz = 1.d0/dz
+    sc_xc = real(xc, 4);  sc_yc = real(yc, 4);  sc_zc = real(zc, 4)
+  end block
+
   dx_min = minval(dx)
   dy_min = minval(dy)
   dz_min = minval(dz)
@@ -321,25 +860,28 @@ subroutine set_grid_main_buffer(nx, ny, nz, Lx_main, Lx_buf,Ly_main, Ly_buf,Lz,&
   real(8), intent(out) :: xc(nx), yc(ny), zc(nz)
   real(8), intent(out) :: dx(nx-1), dy(ny-1), dz(nz-1)
 
-  real(8) :: x(nx+1), y(ny+1), z(nz+1)
+  ! x は全体格子(nxg点)で生成し、このスラブの範囲を i_offset で切り出す。
+  integer, parameter :: nxg = nx_global
+  real(8) :: x(nxg+1), xcg(nxg), dxg(nxg-1), y(ny+1), z(nz+1)
   real(8) :: dr, r1_x
-  integer :: i, j, k
+  integer :: i, j, k, ig
 
   !=================================================================
   ! x: uniform main domain + outflow buffer (inflow end has no buffer)
   !=================================================================
   if (nx_main < 3 .or. Lx_main <= 0.d0) error stop 'Invalid uniform x mesh'
-  if (nx /= nx_main+nx_buf+2) error stop 'nx must be nx_main+nx_buf+2'
+  if (nxg /= nx_main+nx_buf+2) error stop 'nx_global must be nx_main+nx_buf+2'
+  if (i_offset + nx > nxg) error stop 'x slab exceeds the global grid'
   do i = 2, nx_main+1
     x(i) = Lx_main*dble(i-2)/dble(nx_main-1)
   enddo
   dr = x(nx_main+1) - x(nx_main)
   call buffer_faces(x, nx_main+1, +1, nx_buf, 1.d0, Lx_buf, dr, r1_x)
-  x(1)    = x(2) - (x(3)-x(2))
-  x(nx)   = x(nx-1) + dr
-  x(nx+1) = x(nx)   + dr
+  x(1)     = x(2) - (x(3)-x(2))
+  x(nxg)   = x(nxg-1) + dr
+  x(nxg+1) = x(nxg)   + dr
 
-  print *, "x(nx-1) - x(nx_main+1) =", x(nx-1) - x(nx_main+1), " (目標:", Lx_buf, ")"
+  print *, "x(nx-1) - x(nx_main+1) =", x(nxg-1) - x(nx_main+1), " (目標:", Lx_buf, ")"
   print *, "xバッファ 開始伸び率=", 1.d0, " 終端伸び率=", r1_x
 
   !=================================================================
@@ -351,11 +893,24 @@ subroutine set_grid_main_buffer(nx, ny, nz, Lx_main, Lx_buf,Ly_main, Ly_buf,Lz,&
   !=================================================================
   ! Cell centres and centre-to-centre spacings
   !=================================================================
-  do i = 1, nx; xc(i) = 0.5d0*(x(i)+x(i+1)); enddo
+  do i = 1, nxg; xcg(i) = 0.5d0*(x(i)+x(i+1)); enddo
+  do i = 1, nxg-1; dxg(i) = xcg(i+1)-xcg(i); enddo
   do j = 1, ny; yc(j) = 0.5d0*(y(j)+y(j+1)); enddo
   do k = 1, nz; zc(k) = 0.5d0*(z(k)+z(k+1)); enddo
 
-  do i = 1, nx-1; dx(i) = xc(i+1)-xc(i); enddo
+  ! このスラブの切り出し(値は全体格子と同一)
+  do i = 1, nx;   xc(i) = xcg(i+i_offset); enddo
+  do i = 1, nx-1; dx(i) = dxg(i+i_offset); enddo
+  ! 接続側の配列端(local 1, nx)で、真のJ / ローカルのJ(隣の列のコピー)。
+  x_fac_lo = 1.d0;  x_fac_hi = 1.d0
+  if (my_slab > 0) then
+    ig = i_offset + 1
+    x_fac_lo = (dxg(ig) + dxg(ig+1)) / (dxg(ig-1) + dxg(ig))
+  endif
+  if (my_slab < npx-1) then
+    ig = i_offset + nx
+    x_fac_hi = (dxg(ig-2) + dxg(ig-1)) / (dxg(ig-1) + dxg(ig))
+  endif
   do j = 1, ny-1; dy(j) = yc(j+1)-yc(j); enddo
   do k = 1, nz-1; dz(k) = zc(k+1)-zc(k); enddo
 
@@ -363,8 +918,10 @@ subroutine set_grid_main_buffer(nx, ny, nz, Lx_main, Lx_buf,Ly_main, Ly_buf,Lz,&
   ! 確認出力
   !=================================================================
   print *, "=== 格子生成確認 ==="
-  print *, "x: 主計算領域 ", x(2), "~", x(nx_main+1), " バッファ ~", x(nx-1)
-  print *, "dx_main(一様) =", x(3)-x(2), " dx_buf_max =", x(nx-1)-x(nx-2)
+  print *, "x: 主計算領域 ", x(2), "~", x(nx_main+1), " バッファ ~", x(nxg-1)
+  print *, "dx_main(一様) =", x(3)-x(2), " dx_buf_max =", x(nxg-1)-x(nxg-2)
+  if (npx > 1) print *, "x slab", my_slab, " of", npx, ": global i =", i_offset+1, "~", i_offset+nx, &
+                        " x =", xc(1), "~", xc(nx)
   print *, "y: バッファ下 ", y(2), "~", y(ny_buf+2)
   print *, "y: 主計算領域 ", y(ny_buf+2), "~", y(ny_buf+ny_main+1)
   print *, "y: バッファ上 ", y(ny_buf+ny_main+1), "~", y(ny-1)
@@ -418,6 +975,7 @@ end subroutine set_grid_main_buffer
   ! sponge weights, cached on the device for set_bc.
   !=====================================================================
   subroutine set_profile_and_sponges(nx, ny, nz, yc, zc)
+    use mod_globals, only : u1, u2
     integer, intent(in) :: nx, ny, nz
     real(8), intent(in) :: yc(ny), zc(nz)
     real(8) :: rho_h(ny,nz), u_h(ny,nz), env_h(ny,nz)
@@ -429,7 +987,7 @@ end subroutine set_grid_main_buffer
       enddo
     enddo
     do ii = 1, nx
-      sx_h(ii) = sponge_weight(dble(ii-(nx-1-nsp_x))/dble(nsp_x), sigma_max_x)
+      sx_h(ii) = sponge_weight(dble(ii+i_offset-(nx_global-1-nsp_x))/dble(nsp_x), sigma_max_x)
     enddo
     do jj = 1, ny
       sy_h(jj) = sponge_weight(max(dble(1+nsp_y-jj), dble(jj-(ny-nsp_y)))/dble(nsp_y), sigma_max_y)
@@ -440,6 +998,8 @@ end subroutine set_grid_main_buffer
     rho_target = rho_h
     u_target = u_h
     inlet_envelope = env_h
+    ! パッシブスカラーの流入分布: 速度の十字型分布と同じ形。u1側で1、u2側で0。
+    sc_in = (u_h - u2)/(u1 - u2)
     sigma_x_1d = sx_h
     sigma_y_1d = sy_h
     sigma_z_1d = sz_h
@@ -516,7 +1076,7 @@ end subroutine set_grid_main_buffer
 subroutine set_bc(myrank, nx, ny, nz, Jacobian, Q_1, Q_2, Q_3, Q_4, Q_5)
   use mod_constant, only : id_accuracy
   use mod_globals, only : u1, rho1, u2, rho2, p, amp, dt, gamma, Ly, Lz, Lx,T1,T2,delta_bl, step_offset, &
-                          inlet_fluctuation_rms, inlet_random_seed, inlet_rk_stages, stretched_z_correction
+                          inlet_fluctuation_rms, inlet_random_seed, inlet_rk_stages, stretched_z_correction, scalar_on
   use set_coordinate
   integer, intent(in), value            :: myrank, nx, ny, nz
   real(8), intent(in), device           :: jacobian(nx,ny)
@@ -559,6 +1119,7 @@ subroutine set_bc(myrank, nx, ny, nz, Jacobian, Q_1, Q_2, Q_3, Q_4, Q_5)
     inlet_frame = inlet_bc_calls / inlet_rk_stages
     inlet_bc_calls = inlet_bc_calls + 1
 
+    if (my_slab == 0) then
     !$cuf kernel do(2)<<<*,*>>>
     do k = 2, nz-1
       do j = 2, ny-1
@@ -576,7 +1137,10 @@ subroutine set_bc(myrank, nx, ny, nz, Jacobian, Q_1, Q_2, Q_3, Q_4, Q_5)
         Q_4(i,j,k) = rho_init*w*over_jacobian_tab(i,j)
         Q_5(i,j,k) = (p/(gamma-1.d0) + 0.5d0*rho_init*(u**2+v**2+w**2))*over_jacobian_tab(i,j)
       enddo;enddo
+    endif
 
+    ! x流出スポンジ(目標面の取得を含む)は最終スラブだけが持つ。
+    if (my_slab == npx-1) then
     !===================================================================
     ! Capture the full yz plane before damping.  A z average would erase
     ! the reversed high/low streams.  Keep each (j,k) target independently.
@@ -630,6 +1194,7 @@ subroutine set_bc(myrank, nx, ny, nz, Jacobian, Q_1, Q_2, Q_3, Q_4, Q_5)
 
           endif
         enddo;enddo;enddo
+    endif
 
     !===================================================================
     ! Apply y/z sponge weights together to preserve symmetry at corners.
@@ -664,8 +1229,9 @@ subroutine set_bc(myrank, nx, ny, nz, Jacobian, Q_1, Q_2, Q_3, Q_4, Q_5)
         enddo;enddo;enddo
 
     !===================================================================
-    ! x = nx 流出境界(1点ゴースト): 物理量で1次外挿してJ補正
+    ! x = nx 流出境界(1点ゴースト): 物理量で1次外挿してJ補正(最終スラブのみ)
     !===================================================================
+    if (my_slab == npx-1) then
     !$cuf kernel do(2)<<<*,*>>>
     do k = 1, nz
       do j = 1, ny
@@ -681,6 +1247,7 @@ subroutine set_bc(myrank, nx, ny, nz, Jacobian, Q_1, Q_2, Q_3, Q_4, Q_5)
           Q_5(nx,j,k) = ( 2.0d0*(Q_5(nx-1,j,k)*jacobian(nx-1,j)) &
                              - (Q_5(nx-2,j,k)*jacobian(nx-2,j)) ) * over_jacobian_tab(nx,j)                                                                                         
         enddo;enddo;enddo 
+    endif
     !===================================================================
     ! y方向境界(j=1, j=ny): 0次外挿。物理保存量をコピーしてJ補正。
     !===================================================================
@@ -720,12 +1287,103 @@ subroutine set_bc(myrank, nx, ny, nz, Jacobian, Q_1, Q_2, Q_3, Q_4, Q_5)
       enddo
     enddo
 
+    ! x方向の接続面: 隣スラブの内部3面をゴーストに受け取る(npx=1なら何もしない)。
+    call exchange_x(myrank, nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5)
+
     ! After the last stage this array is Q^(n+1), i.e. Q0 of the next step.
+    ! (交換の後に取るので、ゴースト面のQ0も隣スラブの値になる。)
     if (stretched_z_correction .and. rk_stage == inlet_rk_stages) then
       q0_1 = Q_1; q0_2 = Q_2; q0_3 = Q_3; q0_4 = Q_4; q0_5 = Q_5
     endif
 
+    ! パッシブスカラー(混合分率)。流れ場には一切影響しない。
+    if (scalar_on) call sc_step(myrank, nx, ny, nz, jacobian, Q_1, Q_2, Q_3, Q_4, Q_5)
+
   end subroutine set_bc
+
+  !=====================================================================
+  ! x方向の袖交換(非周期: 両端のスラブは外側に相手を持たない)。
+  ! 右隣へ内部の最後の3面(nx-5..nx-3)、左隣へ最初の3面(4..6)を送り、
+  ! ゴースト(1..3, nx-2..nx)に受け取る。y/zのゴーストも含む全(j,k)。
+  ! GPU上で1次元バッファに詰め、ホスト経由でMPI_SENDRECVする。
+  !=====================================================================
+  subroutine exchange_x(myrank, nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5)
+    use mpi
+    integer, intent(in), value     :: myrank, nx, ny, nz
+    real(8), intent(inout), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    integer :: left, right, n, ierr
+    integer :: istat(MPI_STATUS_SIZE)
+
+    if (npx == 1) return
+    n = 3*ny*nz*5
+    call alloc_exchange_x(ny, nz)
+    left  = MPI_PROC_NULL;  if (my_slab > 0)     left  = my_slab - 1
+    right = MPI_PROC_NULL;  if (my_slab < npx-1) right = my_slab + 1
+
+    if (right /= MPI_PROC_NULL) then
+      call pack_x(nx, ny, nz, nx-5, Q_1, Q_2, Q_3, Q_4, Q_5, xs_hi_d)
+      xs_hi_h = xs_hi_d
+    endif
+    if (left /= MPI_PROC_NULL) then
+      call pack_x(nx, ny, nz, 4, Q_1, Q_2, Q_3, Q_4, Q_5, xs_lo_d)
+      xs_lo_h = xs_lo_d
+    endif
+    call MPI_SENDRECV(xs_hi_h, n, MPI_REAL8, right, 41, xr_lo_h, n, MPI_REAL8, left,  41, comm_compute, istat, ierr)
+    call MPI_SENDRECV(xs_lo_h, n, MPI_REAL8, left,  42, xr_hi_h, n, MPI_REAL8, right, 42, comm_compute, istat, ierr)
+    if (left /= MPI_PROC_NULL) then
+      xr_lo_d = xr_lo_h
+      call unpack_x(nx, ny, nz, 1, 1, x_fac_lo, xr_lo_d, Q_1, Q_2, Q_3, Q_4, Q_5)
+    endif
+    if (right /= MPI_PROC_NULL) then
+      xr_hi_d = xr_hi_h
+      call unpack_x(nx, ny, nz, nx-2, nx, x_fac_hi, xr_hi_d, Q_1, Q_2, Q_3, Q_4, Q_5)
+    endif
+  end subroutine exchange_x
+
+  !> x面 i0..i0+2 を1次元バッファへ詰める。
+  subroutine pack_x(nx, ny, nz, i0, Q_1, Q_2, Q_3, Q_4, Q_5, buf)
+    integer, intent(in), value     :: nx, ny, nz, i0
+    real(8), intent(in), device    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    real(8), intent(inout), device :: buf(3*ny*nz*5)
+    integer :: j, k, m, idx, n3
+    n3 = 3*ny*nz
+    !$cuf kernel do(2)<<<*,*>>>
+    do k = 1, nz
+      do j = 1, ny
+        do m = 1, 3
+          idx = m + 3*((j-1) + ny*(k-1))
+          buf(idx)        = Q_1(i0+m-1,j,k)
+          buf(idx+n3)     = Q_2(i0+m-1,j,k)
+          buf(idx+2*n3)   = Q_3(i0+m-1,j,k)
+          buf(idx+3*n3)   = Q_4(i0+m-1,j,k)
+          buf(idx+4*n3)   = Q_5(i0+m-1,j,k)
+    enddo;enddo;enddo
+  end subroutine pack_x
+
+  !> 1次元バッファをx面 i0..i0+2 へ展開する。配列端の面 i_edge だけ、
+  !> Q/J を真のJ/ローカルのJ の比 fac で換算する(module header参照)。
+  subroutine unpack_x(nx, ny, nz, i0, i_edge, fac, buf, Q_1, Q_2, Q_3, Q_4, Q_5)
+    integer, intent(in), value     :: nx, ny, nz, i0, i_edge
+    real(8), intent(in), value     :: fac
+    real(8), intent(in), device    :: buf(3*ny*nz*5)
+    real(8), intent(inout), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    integer :: j, k, m, idx, n3
+    real(8) :: f
+    n3 = 3*ny*nz
+    !$cuf kernel do(2)<<<*,*>>>
+    do k = 1, nz
+      do j = 1, ny
+        do m = 1, 3
+          idx = m + 3*((j-1) + ny*(k-1))
+          f = 1.d0
+          if (i0+m-1 == i_edge) f = fac
+          Q_1(i0+m-1,j,k) = buf(idx)*f
+          Q_2(i0+m-1,j,k) = buf(idx+n3)*f
+          Q_3(i0+m-1,j,k) = buf(idx+2*n3)*f
+          Q_4(i0+m-1,j,k) = buf(idx+3*n3)*f
+          Q_5(i0+m-1,j,k) = buf(idx+4*n3)*f
+    enddo;enddo;enddo
+  end subroutine unpack_x
 
   !> Q = Q0 + (Q - Q0)*fz(k) on the points calc_step updates (see module header).
   subroutine apply_stretched_z(nx, ny, nz, fz, P_1, P_2, P_3, P_4, P_5, Q_1, Q_2, Q_3, Q_4, Q_5)
