@@ -521,10 +521,13 @@ subroutine sc_write(myrank, nx, ny, nz, idx)
   integer    :: u
   integer(4) :: nb_x, nb_y, nb_z, nb_f
   real(8)    :: fmin, fmax
+  logical    :: out_of_range
 
   allocate(h(nx,ny,nz), h4(nx,ny,nz))
   h  = sc_phi
   h4 = real(h, 4)
+  ! 値域の検査(NaNも「範囲外」になる)。正常なときは何も表示しない。
+  out_of_range = .not. all(h(2:nx-1,2:ny-1,4:nz-3) >= -1.d-6 .and. h(2:nx-1,2:ny-1,4:nz-3) <= 1.d0+1.d-6)
   fmin = minval(h(2:nx-1,2:ny-1,4:nz-3))
   fmax = maxval(h(2:nx-1,2:ny-1,4:nz-3))
   if (npx >= 2) then
@@ -560,8 +563,9 @@ subroutine sc_write(myrank, nx, ny, nz, idx)
   write(u) '</VTKFile>'//lf
   close(u)
   deallocate(h, h4)
-  print '(1x,a,i0,a,a,a,es13.6,a,es13.6)', "myrank is ", myrank, "  scalar written: ", trim(filename), &
-        "  min=", fmin, "  max=", fmax
+  if (out_of_range) &
+    print '(1x,a,i0,a,a,a,es13.6,a,es13.6)', "myrank is ", myrank, "  WARNING scalar out of [0,1]: ", trim(filename), &
+          "  min=", fmin, "  max=", fmax
 end subroutine sc_write
 
 
@@ -651,6 +655,138 @@ subroutine sc_step(myrank, nx, ny, nz, jacobian, Q_1, Q_2, Q_3, Q_4, Q_5)
 end subroutine sc_step
 
 
+!=====================================================================
+! このランクのGPUを選ぶ。main.f90のmygpuと同じ式(ノード内ランク/2 を GPU数で割った余り)。
+! モジュール変数のdevice配列(over_jacobian_tab, sigma_*, sc_*など)は GPU ごとに別のコピーが
+! あり、書き込んだ時点で選ばれている GPU のコピーに入る。本来の選択(check_gpu)は set_grid より
+! 後のRungeKutta内なので、複数GPUでは GPU 0 に表を書いて別のGPUで読むことになる。
+! そのため、表に書き込む前(set_grid の最初)に同じ GPU を選んでおく。GPU 1枚なら常に 0。
+!=====================================================================
+subroutine select_my_gpu()
+  use mpi
+  use cudafor
+  integer :: comm_node, rank_node, ndev, ierr, stat
+
+  call MPI_COMM_SPLIT_TYPE(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, comm_node, ierr)
+  call MPI_COMM_RANK(comm_node, rank_node, ierr)
+  call MPI_COMM_FREE(comm_node, ierr)
+  stat = cudaGetDeviceCount(ndev)
+  if (stat == 0 .and. ndev >= 1) stat = cudaSetDevice(mod(rank_node/2, ndev))
+end subroutine select_my_gpu
+
+
+!=====================================================================
+! 診断(最初の数回のset_bcだけ): CUDAエラー(カーネル起動失敗など)の報告、このランクの
+! GPU(型番とcc)、device表の中身(空でないか)を表示する。通常時は1行(GPUの情報)だけ出る。
+!=====================================================================
+subroutine diag_first_calls(myrank, nx, ny)
+  use cudafor
+  integer, intent(in), value :: myrank, nx, ny
+  integer :: stat, dev
+  type(cudaDeviceProp) :: prop
+  real(8) :: t
+
+  if (inlet_bc_calls > 7) return
+  stat = cudaDeviceSynchronize()
+  if (stat /= 0) print '(1x,a,i0,a,i0,a,a)', "myrank is ", myrank, "  CUDA error before set_bc call ", &
+                       inlet_bc_calls+1, ": ", trim(cudaGetErrorString(stat))
+  stat = cudaGetLastError()
+  if (stat /= 0) print '(1x,a,i0,a,i0,a,a)', "myrank is ", myrank, "  CUDA error before set_bc call ", &
+                       inlet_bc_calls+1, ": ", trim(cudaGetErrorString(stat))
+  if (inlet_bc_calls == 0) then
+    stat = cudaGetDevice(dev)
+    stat = cudaGetDeviceProperties(prop, dev)
+    t = over_jacobian_tab(nx/2, ny/2)
+    print '(1x,a,i0,a,i0,a,a,a,i0,a,i0,a,es10.3)', "myrank is ", myrank, "  set_bc runs on GPU ", dev, " (", &
+          trim(prop%name), ", cc ", prop%major, ".", prop%minor, ")  over_jacobian_tab sample =", t
+    if (.not. (t > 0.d0 .and. t < huge(1.d0))) print '(1x,a,i0,a)', "myrank is ", myrank, &
+          "  ERROR: the module device tables are empty on this GPU (they were written on another device)"
+  endif
+end subroutine diag_first_calls
+
+
+!=====================================================================
+! 配列中のNaN/Infの個数と、最初の(最小の線形番号の)位置を数える。
+!=====================================================================
+subroutine nan_scan(nx, ny, nz, Q, cnt, first)
+  integer, intent(in), value  :: nx, ny, nz
+  real(8), intent(in), device :: Q(nx,ny,nz)
+  integer, intent(out)        :: cnt, first
+  integer :: i, j, k, c, f, lin
+
+  c = 0
+  f = huge(1)
+  !$cuf kernel do(3)<<<*,*>>>
+  do k = 1, nz
+    do j = 1, ny
+      do i = 1, nx
+        if (.not. (abs(Q(i,j,k)) <= 1.d300)) then
+          c = c + 1
+          lin = i + nx*((j-1) + ny*(k-1))
+          f = min(f, lin)
+        endif
+  enddo;enddo;enddo
+  cnt = c
+  first = f
+end subroutine nan_scan
+
+
+!=====================================================================
+! NaN/Infの検査。見つけたら場所を表示して全ランクを強制終了する(MPI_ABORT)。
+! 最初の8回のset_bc(= 最初の2ステップ)は毎回、その後は nan_check_every ステップごとの
+! 4段目(Q^(n+1)になった時点)で、流れ場の保存変数5つと濃度xiを検査する。
+! nan_check_every = 0 なら検査しない。set_bcの入口で呼ぶので、直前のRK段の結果を見る。
+!=====================================================================
+subroutine check_nan_abort(myrank, nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5)
+  use mpi
+  use mod_globals, only : nan_check_every, inlet_rk_stages, dt
+  integer, intent(in), value  :: myrank, nx, ny, nz
+  real(8), intent(in), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+  integer :: m, cnt, first, ii, jj, kk, ierr, stage, step
+  logical :: bad
+  character(len=8) :: name
+
+  if (nan_check_every <= 0) return
+  stage = mod(inlet_bc_calls, inlet_rk_stages) + 1          ! この呼び出しが見るRK段の結果(1..4)
+  step  = inlet_bc_calls/inlet_rk_stages + 1                ! その段が属するステップ番号
+  if (inlet_bc_calls > 7) then
+    if (stage /= inlet_rk_stages) return
+    if (mod(step, max(nan_check_every, 1)) /= 0) return
+  endif
+
+  bad = .false.
+  do m = 1, 6
+    select case (m)
+    case (1); name = "Q_1";  call nan_scan(nx, ny, nz, Q_1, cnt, first)
+    case (2); name = "Q_2";  call nan_scan(nx, ny, nz, Q_2, cnt, first)
+    case (3); name = "Q_3";  call nan_scan(nx, ny, nz, Q_3, cnt, first)
+    case (4); name = "Q_4";  call nan_scan(nx, ny, nz, Q_4, cnt, first)
+    case (5); name = "Q_5";  call nan_scan(nx, ny, nz, Q_5, cnt, first)
+    case (6)
+      name = "xi"
+      cnt = 0;  first = huge(1)
+      if (allocated(sc_phi)) call nan_scan(nx, ny, nz, sc_phi, cnt, first)
+    end select
+    if (cnt > 0) then
+      bad = .true.
+      ii = mod(first-1, nx) + 1
+      jj = mod((first-1)/nx, ny) + 1
+      kk = (first-1)/(nx*ny) + 1
+      print '(1x,a,i0,a,i0,a,i0,a,i0,a,es10.3,a)', "myrank is ", myrank, "  NaN/Inf detected: step ", step, &
+            ", RK stage ", stage, " (set_bc call ", inlet_bc_calls+1, ", t = ", dble(step-1)*dt, " s)"
+      print '(1x,a,a,a,i0,a,i0,a,i0,a,i0,a,i0,a,i0)', "   array ", trim(name), ": ", cnt, " cells; first at local (i,j,k) = ", &
+            ii, ",", jj, ",", kk, "   (global i = ", ii + i_offset, ")"
+    endif
+  enddo
+  if (bad) then
+    print '(1x,a,i0,a)', "myrank is ", myrank, "  aborting all MPI ranks because of NaN/Inf"
+    call flush(6)
+    call MPI_ABORT(MPI_COMM_WORLD, 1, ierr)
+    stop 1
+  endif
+end subroutine check_nan_abort
+
+
 subroutine set_grid(myrank, nx, ny, nz, Lx, Ly, Lz, xc, yc, zc, dx, dy, dz)
   use mpi
   use mod_constant, only : id_accuracy
@@ -665,6 +801,9 @@ subroutine set_grid(myrank, nx, ny, nz, Lx, Ly, Lz, xc, yc, zc, dx, dy, dz)
   integer :: nranks, ierr
   character(len=64) :: rank_dir
   real(8) :: jac_h(nx,ny)
+
+  ! 表(device配列)に書き込む前に、このランクのGPUを選ぶ(select_my_gpuの説明を参照)。
+  call select_my_gpu()
 
   ! set_gridは全ランクから呼ばれるので、ここでx分割の情報とコミュニケータを用意する。
   call MPI_COMM_SIZE(MPI_COMM_WORLD, nranks, ierr)
@@ -1267,6 +1406,8 @@ subroutine set_bc(myrank, nx, ny, nz, Jacobian, Q_1, Q_2, Q_3, Q_4, Q_5 )
     ! point, N(0,1) samples are multiplied by
     ! 0.05*abs(u_init)*sech^2(2*(y-Ly/2)/delta_bl).
     !===================================================================
+    call diag_first_calls(myrank, nx, ny)
+    call check_nan_abort(myrank, nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5)
     inlet_frame = inlet_bc_calls / inlet_rk_stages
     inlet_bc_calls = inlet_bc_calls + 1
     k_off = k_offset
