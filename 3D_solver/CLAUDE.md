@@ -6,7 +6,8 @@ This file documents the 3D Cartesian solver. See the repository root `CLAUDE.md`
 
 | Template (in `src/` or `3D_solver/src/`) | Purpose |
 |------------------------------------------|---------|
-| `src/mod_constant.f90.fypp` | Kind-dispatch Fortran parameters from config values |
+| `src/mod_precision.f90.fypp` | Real kinds `kd_arr` / `kd_conv` / `kd_visc` from `CONV_PRECISION` / `VISC_PRECISION` (via `src/precision.fypp`) |
+| `src/mod_constant.f90.fypp` | Kind-dispatch Fortran parameters from config values, and the constants in each real kind |
 | `3D_solver/src/calc_flux_base.f90.fypp` | Top-level flux dispatcher (convective + viscous) |
 | `3D_solver/src/calc_time_dev.f90.fypp` | RK time-stepping orchestration |
 | `3D_solver/src/calc_para.f90.fypp` | MPI halo exchange: x-direction pack/unpack and the COMMZ z-halo `start_exchange_z`/`finish_exchange_z` (`MPI='CPU'` host staging or `MPI='GPU'` CUDA-aware) |
@@ -133,6 +134,16 @@ python -m ouxsbli.analysis.tbl_stats report tbl_acc.npz
 | Hybrid (KEEP↔SLAU via Ducros sensor) | `calc_hybrid_kernel.f90.fypp`, `calc_hybrid_kernel_internal.f90.fypp` | Mixed smooth/shocked regions |
 
 Viscous discretization: `calc_visc2.f90.fypp` (Gaitonde & Visbal 2nd-order, `VISC_ORDER=2`) or `calc_visc_high.f90.fypp` + `calc_visc_high_internal.f90.fypp` (4th/6th-order, `VISC_ORDER=4` or `6`).
+
+## Precision in the fused kernels
+
+`calc_keep_visc_kernel` / `calc_slau_visc_kernel` stay fused in every precision
+combination. The tiles both terms read (`rho,u,v,w,p`, KEEP's `tmp`) are `kd_arr`; the
+cross-derivative tiles (`uy,uz`, ...) are `kd_visc`; SLAU's right-state tiles are
+`kd_conv`. When the two precisions differ the single-precision term copies its stencil
+out of the `kd_arr` tiles into locals of its own kind (`#:if CONV_CAST` / `#:if
+VISC_CAST` blocks) and the summed flux is stored in `kd_arr`. See the Precision section
+of the root `CLAUDE.md` for the general rules.
 
 ## Cell-Center Velocity Gradients (`ux`, `vy`, `wz`)
 

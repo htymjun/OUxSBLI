@@ -11,6 +11,8 @@ A standalone 2D solver sharing the same convective/viscous kernels as the 3D Car
 
 The 2D solver uses CMake (like 3D); `2D_solver/src/calc_flux_base.f90.fypp` is preprocessed by the per-case CMakeLists.txt using the same `fypp -I<case-dir>` pattern.
 
+`CONV_PRECISION` / `VISC_PRECISION` in `config.fypp` select single or double precision per term exactly as in the 3D solver (root `CLAUDE.md`, Precision); `calc_visc2`, `calc_visc4[_internal]`, `load_smem_visc*` and `calc_div` are the viscous (`kd_visc`) files.
+
 ## Cases
 
 | Case | Description |

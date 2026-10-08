@@ -1,21 +1,19 @@
 !> Curvilinear Hybrid flux kernels with Ducros-based scheme blending
 !> Automatically switches between KEEP (smooth) and SLAU (shock) schemes
 module calc_hybrid_kernel_curv
+  use mod_precision
+  ! constants referenced by the included calc_scheme_math.f90
+  use mod_constant, only : gamma_conv, over_gamma_1_conv, R_over_gamma_1_conv, one_third_conv, one_sixth_conv, one_twelfth_conv, two_third_conv, &
+                           one_24_conv, one_48_conv, one_60_conv, one_120_conv, one_240_conv, seven_twelfth_conv
   use libm
-  use mod_globals, only : gamma, threshold, threadsE, threadsF, threadsG
-  use mod_constant, only : over_gamma_1, R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third, id_accuracy, id_slau
+  use mod_globals, only : threshold, threadsE, threadsF, threadsG
+  use mod_constant, only : id_accuracy, id_slau
   use calc_muscl
   use calc_hybrid_curv
   implicit none
   private
   public calc_hybrid_xi_curv, calc_hybrid_eta_curv, calc_hybrid_z_curv
 
-  real(8), parameter :: one_24  = 1.d0 / 24.d0
-  real(8), parameter :: one_48  = 1.d0 / 48.d0
-  real(8), parameter :: one_60  = 1.d0 / 60.d0
-  real(8), parameter :: one_120 = 1.d0 / 120.d0
-  real(8), parameter :: one_240 = 1.d0 / 240.d0
-  real(8), parameter :: seven_twelfth = 7.d0 / 12.d0
 
   interface KEEP
     module procedure KEEP2
@@ -35,28 +33,28 @@ contains
                                                       n_xi_x, n_xi_y, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, E)
     integer(2), intent(in), value             :: id_accuracy
     integer,  intent(in), value               :: nx, ny, nz
-    real(8),  intent(in), device, contiguous  :: n_xi_x(nx-1,ny-2), n_xi_y(nx-1,ny-2)
-    real(8),  intent(in), device, contiguous  :: Q_1(nx,ny,nz)
-    real(8),  intent(in), device, contiguous  :: Q_2(nx,ny,nz)
-    real(8),  intent(in), device, contiguous  :: Q_3(nx,ny,nz)
-    real(8),  intent(in), device, contiguous  :: Q_4(nx,ny,nz)
-    real(8),  intent(in), device, contiguous  :: Q_5(nx,ny,nz)
-    real(8),  intent(in), device, contiguous  :: T(nx,ny,nz)
+    real(kd_arr),  intent(in), device, contiguous  :: n_xi_x(nx-1,ny-2), n_xi_y(nx-1,ny-2)
+    real(kd_arr),  intent(in), device, contiguous  :: Q_1(nx,ny,nz)
+    real(kd_arr),  intent(in), device, contiguous  :: Q_2(nx,ny,nz)
+    real(kd_arr),  intent(in), device, contiguous  :: Q_3(nx,ny,nz)
+    real(kd_arr),  intent(in), device, contiguous  :: Q_4(nx,ny,nz)
+    real(kd_arr),  intent(in), device, contiguous  :: Q_5(nx,ny,nz)
+    real(kd_arr),  intent(in), device, contiguous  :: T(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8),  intent(out), device, contiguous :: E(nx-1,ny-2,nz-2,5)
+    real(kd_arr),  intent(out), device, contiguous :: E(nx-1,ny-2,nz-2,5)
     integer :: i, j, k
-    real(8) :: nxx, nxy, S, Normal(5)
-    real(8) :: rho(2), u(2), v(2), w(2), uu(2), p(2), Tv(2)
-    real(8) :: rhol, rhor, ul, ur, vl, vr, wl, wr, pl, pr
+    real(kd_conv) :: nxx, nxy, S, Normal(5)
+    real(kd_conv) :: rho(2), u(2), v(2), w(2), uu(2), p(2), Tv(2)
+    real(kd_conv) :: rhol, rhor, ul, ur, vl, vr, wl, wr, pl, pr
     real(sp) :: fdx
-    real(8) :: EKeep(5), ESLAU(5)
+    real(kd_conv) :: EKeep(5), ESLAU(5)
     i = (blockIdx%x-1)*blockDim%x + threadIdx%x
     j = (blockIdx%y-1)*blockDim%y + threadIdx%y + 1
     k = (blockIdx%z-1)*blockDim%z + threadIdx%z + 1
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
     nxx = n_xi_x(i, j-1);  nxy = n_xi_y(i, j-1)
     S   = sqrt(nxx*nxx + nxy*nxy)
-    Normal = (/ 0.d0, nxx/S, nxy/S, 0.d0, 0.d0 /)
+    Normal = (/ 0._kd_conv, nxx/S, nxy/S, 0._kd_conv, 0._kd_conv /)
 
     rho(1) = Q_1(i,j,k);  rho(2) = Q_1(i+1,j,k)
     u(1)   = Q_2(i,j,k);  u(2)   = Q_2(i+1,j,k)
@@ -91,28 +89,28 @@ contains
                                                        n_eta_x, n_eta_y, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, F)
     integer(2), intent(in), value             :: id_accuracy
     integer,  intent(in), value               :: nx, ny, nz
-    real(8),  intent(in), device, contiguous  :: n_eta_x(nx-2,ny-1), n_eta_y(nx-2,ny-1)
-    real(8),  intent(in), device, contiguous  :: Q_1(nx,ny,nz)
-    real(8),  intent(in), device, contiguous  :: Q_2(nx,ny,nz)
-    real(8),  intent(in), device, contiguous  :: Q_3(nx,ny,nz)
-    real(8),  intent(in), device, contiguous  :: Q_4(nx,ny,nz)
-    real(8),  intent(in), device, contiguous  :: Q_5(nx,ny,nz)
-    real(8),  intent(in), device, contiguous  :: T(nx,ny,nz)
+    real(kd_arr),  intent(in), device, contiguous  :: n_eta_x(nx-2,ny-1), n_eta_y(nx-2,ny-1)
+    real(kd_arr),  intent(in), device, contiguous  :: Q_1(nx,ny,nz)
+    real(kd_arr),  intent(in), device, contiguous  :: Q_2(nx,ny,nz)
+    real(kd_arr),  intent(in), device, contiguous  :: Q_3(nx,ny,nz)
+    real(kd_arr),  intent(in), device, contiguous  :: Q_4(nx,ny,nz)
+    real(kd_arr),  intent(in), device, contiguous  :: Q_5(nx,ny,nz)
+    real(kd_arr),  intent(in), device, contiguous  :: T(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8),  intent(out), device, contiguous :: F(nx-2,ny-1,nz-2,5)
+    real(kd_arr),  intent(out), device, contiguous :: F(nx-2,ny-1,nz-2,5)
     integer :: i, j, k
-    real(8) :: nxx, nxy, S, Normal(5)
-    real(8) :: rho(2), u(2), v(2), w(2), uu(2), p(2), Tv(2)
-    real(8) :: rhol, rhor, ul, ur, vl, vr, wl, wr, pl, pr
+    real(kd_conv) :: nxx, nxy, S, Normal(5)
+    real(kd_conv) :: rho(2), u(2), v(2), w(2), uu(2), p(2), Tv(2)
+    real(kd_conv) :: rhol, rhor, ul, ur, vl, vr, wl, wr, pl, pr
     real(sp) :: fdy
-    real(8) :: FKeep(5), FSLAU(5)
+    real(kd_conv) :: FKeep(5), FSLAU(5)
     i = (blockIdx%x-1)*blockDim%x + threadIdx%x + 1
     j = (blockIdx%y-1)*blockDim%y + threadIdx%y
     k = (blockIdx%z-1)*blockDim%z + threadIdx%z + 1
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
     nxx = n_eta_x(i-1, j);  nxy = n_eta_y(i-1, j)
     S   = sqrt(nxx*nxx + nxy*nxy)
-    Normal = (/ 0.d0, nxx/S, nxy/S, 0.d0, 0.d0 /)
+    Normal = (/ 0._kd_conv, nxx/S, nxy/S, 0._kd_conv, 0._kd_conv /)
 
     rho(1) = Q_1(i,j,k);  rho(2) = Q_1(i,j+1,k)
     u(1)   = Q_2(i,j,k);  u(2)   = Q_2(i,j+1,k)
@@ -147,22 +145,22 @@ contains
   !> Caller will scale by dt_Szeta = dt * J_2D(i,j)
   attributes(global) subroutine calc_hybrid_z_curv(id_accuracy, nx, ny, nz, &
                                                      Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, G)
-    use mod_constant, only : Normal_z
+    use mod_constant, only : Normal_z => Normal_z_conv
     integer(2), intent(in), value             :: id_accuracy
     integer,  intent(in), value               :: nx, ny, nz
-    real(8),  intent(in), device, contiguous  :: Q_1(nx,ny,nz)
-    real(8),  intent(in), device, contiguous  :: Q_2(nx,ny,nz)
-    real(8),  intent(in), device, contiguous  :: Q_3(nx,ny,nz)
-    real(8),  intent(in), device, contiguous  :: Q_4(nx,ny,nz)
-    real(8),  intent(in), device, contiguous  :: Q_5(nx,ny,nz)
-    real(8),  intent(in), device, contiguous  :: T(nx,ny,nz)
+    real(kd_arr),  intent(in), device, contiguous  :: Q_1(nx,ny,nz)
+    real(kd_arr),  intent(in), device, contiguous  :: Q_2(nx,ny,nz)
+    real(kd_arr),  intent(in), device, contiguous  :: Q_3(nx,ny,nz)
+    real(kd_arr),  intent(in), device, contiguous  :: Q_4(nx,ny,nz)
+    real(kd_arr),  intent(in), device, contiguous  :: Q_5(nx,ny,nz)
+    real(kd_arr),  intent(in), device, contiguous  :: T(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8),  intent(out), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    real(kd_arr),  intent(out), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     integer :: i, j, k
-    real(8) :: rho(2), u(2), v(2), w(2), uu(2), p(2), Tv(2)
-    real(8) :: rhol, rhor, ul, ur, vl, vr, wl, wr, pl, pr
+    real(kd_conv) :: rho(2), u(2), v(2), w(2), uu(2), p(2), Tv(2)
+    real(kd_conv) :: rhol, rhor, ul, ur, vl, vr, wl, wr, pl, pr
     real(sp) :: fdz
-    real(8) :: GKeep(5), GSLAU(5)
+    real(kd_conv) :: GKeep(5), GSLAU(5)
     i = (blockIdx%x-1)*blockDim%x + threadIdx%x + 1
     j = (blockIdx%y-1)*blockDim%y + threadIdx%y + 1
     k = (blockIdx%z-1)*blockDim%z + threadIdx%z

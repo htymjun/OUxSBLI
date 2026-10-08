@@ -1,4 +1,5 @@
 module set
+  use mod_precision
   use mod_globals, only : nx, ny, nz, gamma, rho_L, p_L, rho_R, p_R, Lx, Ly, Lz
   use set_bc_common
   use set_coordinate
@@ -68,9 +69,9 @@ contains
     use mpi
     use mod_constant, only : id_accuracy
     integer, intent(in), value               :: myrank, nx, ny, nz
-    real(8), intent(in), device              :: Jacobian(nx,ny)
-    real(8), intent(inout), device           :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
-    real(8), intent(in), device, optional    :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
+    real(kd_arr), intent(in), device              :: Jacobian(nx,ny)
+    real(kd_arr), intent(inout), device           :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(kd_arr), intent(in), device, optional    :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
     integer nranks, ierr, i, j, k, m, ovlp
     ovlp = kind(id_accuracy)/3 + 1
     call MPI_COMM_SIZE(MPI_COMM_WORLD, nranks, ierr)
@@ -145,7 +146,7 @@ contains
 
   subroutine set_bc_mut(nx, ny, nz, mut, qc2)
     integer, intent(in), value     :: nx, ny, nz
-    real(8), intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
+    real(kd_arr), intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
     call set_bc_mut_common(nx, ny, nz, mut, qc2)
   end subroutine set_bc_mut
 end module set

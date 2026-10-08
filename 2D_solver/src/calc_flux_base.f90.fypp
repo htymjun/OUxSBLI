@@ -6,6 +6,7 @@
 !> Dispatches to different numerical schemes (KEEP, SLAU, Hybrid)
 !> Groups all GPU kernel calls for computing E, F flux components
 module calc_flux_base
+  use mod_precision
   use mod_globals, only : sp, &
   & blocks, threads, blocksE, blocksF, threadsE, threadsF, &
   & blocksEv, blocksFv, threadsEv, threadsFv
@@ -62,15 +63,15 @@ contains
     implicit none
     integer, intent(in), value               :: nx             !< number of grid points in x direction
     integer, intent(in), value               :: ny             !< number of grid points in y direction
-    real(8), intent(in), device, contiguous  :: inv_dx(nx-1)   !< inverse grid spacing x (1/dx)
-    real(8), intent(in), device, contiguous  :: inv_dy(ny-1)   !< inverse grid spacing y (1/dy)
-    real(8), intent(in), device, contiguous  :: Q_1(nx,ny)     !< rho
-    real(8), intent(in), device, contiguous  :: Q_2(nx,ny)     !< u
-    real(8), intent(in), device, contiguous  :: Q_3(nx,ny)     !< v
-    real(8), intent(in), device, contiguous  :: Q_4(nx,ny)     !< p
-    real(8), intent(in), device, contiguous  :: T(nx,ny)       !< temperature field
-    real(8), intent(out), device, contiguous :: E(nx-1,ny-2,4) !< convective flux in x direction
-    real(8), intent(out), device, contiguous :: F(nx-2,ny-1,4) !< convective flux in y direction
+    real(kd_arr), intent(in), device, contiguous  :: inv_dx(nx-1)   !< inverse grid spacing x (1/dx)
+    real(kd_arr), intent(in), device, contiguous  :: inv_dy(ny-1)   !< inverse grid spacing y (1/dy)
+    real(kd_arr), intent(in), device, contiguous  :: Q_1(nx,ny)     !< rho
+    real(kd_arr), intent(in), device, contiguous  :: Q_2(nx,ny)     !< u
+    real(kd_arr), intent(in), device, contiguous  :: Q_3(nx,ny)     !< v
+    real(kd_arr), intent(in), device, contiguous  :: Q_4(nx,ny)     !< p
+    real(kd_arr), intent(in), device, contiguous  :: T(nx,ny)       !< temperature field
+    real(kd_arr), intent(out), device, contiguous :: E(nx-1,ny-2,4) !< convective flux in x direction
+    real(kd_arr), intent(out), device, contiguous :: F(nx-2,ny-1,4) !< convective flux in y direction
     ! set fypp
     #:set scheme_name = SCHEME.lower()
     #:set args_t = ", T" if SCHEME in ('KEEP', 'Hybrid') else ""
@@ -90,17 +91,17 @@ contains
   subroutine calc_EF(nx, ny, inv_dx, inv_dy, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T, mu, ux, vy, E, F)
     integer, intent(in), value                 :: nx              !> number of grid points in x direction
     integer, intent(in), value                 :: ny              !> number of grid points in y direction
-    real(8), intent(in), device, contiguous    :: inv_dx(nx-1)    !> 1 / dx
-    real(8), intent(in), device, contiguous    :: inv_dy(ny-1)    !> 1 / dy
-    real(8), intent(in), device, contiguous    :: Jacobian(nx,ny) !> Jacobian
-    real(8), intent(in), device, contiguous    :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny) !> Q(rho, rhou, rhov, E) / Jacobian
-    real(8), intent(inout), device, contiguous :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)      !> Q(rho, u, v, p)
-    real(8), intent(inout), device, contiguous :: T(nx,ny)        !> temperature
-    real(8), intent(inout), device, contiguous :: mu(1,1)         !> viscosity, size is (1,1) in case of Euler
-    real(8), intent(inout), device, contiguous :: ux(1,1)         !> unused (Euler)
-    real(8), intent(inout), device, contiguous :: vy(1,1)         !> unused (Euler)
-    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,4)  !> Flux in x direction
-    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,4)  !> Flux in y direction
+    real(kd_arr), intent(in), device, contiguous    :: inv_dx(nx-1)    !> 1 / dx
+    real(kd_arr), intent(in), device, contiguous    :: inv_dy(ny-1)    !> 1 / dy
+    real(kd_arr), intent(in), device, contiguous    :: Jacobian(nx,ny) !> Jacobian
+    real(kd_arr), intent(in), device, contiguous    :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny) !> Q(rho, rhou, rhov, E) / Jacobian
+    real(kd_arr), intent(inout), device, contiguous :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)      !> Q(rho, u, v, p)
+    real(kd_arr), intent(inout), device, contiguous :: T(nx,ny)        !> temperature
+    real(kd_arr), intent(inout), device, contiguous :: mu(1,1)         !> viscosity, size is (1,1) in case of Euler
+    real(kd_arr), intent(inout), device, contiguous :: ux(1,1)         !> unused (Euler)
+    real(kd_arr), intent(inout), device, contiguous :: vy(1,1)         !> unused (Euler)
+    real(kd_arr), intent(inout), device, contiguous :: E(nx-1,ny-2,4)  !> Flux in x direction
+    real(kd_arr), intent(inout), device, contiguous :: F(nx-2,ny-1,4)  !> Flux in y direction
     call calc_quantities_2D(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T)
     call calc_conv(nx, ny, inv_dx, inv_dy, Q_1, Q_2, Q_3, Q_4, T, E, F)
   end subroutine calc_EF
@@ -114,22 +115,22 @@ contains
   subroutine calc_EF(nx, ny, inv_dx, inv_dy, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T, mu, ux, vy, E, F)
     integer, intent(in), value                 :: nx              !> number of grid points in x direction
     integer, intent(in), value                 :: ny              !> number of grid points in y direction
-    real(8), intent(in), device, contiguous    :: inv_dx(nx-1)    !> 1 / dx (for finite differences)
-    real(8), intent(in), device, contiguous    :: inv_dy(ny-1)    !> 1 / dy
-    real(8), intent(in), device, contiguous    :: Jacobian(nx,ny) !> Jacobian determinant for scaling
-    real(8), intent(in), device, contiguous    :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny) !> Q/Jacobian (scaled conserved variables)
-    real(8), intent(inout), device, contiguous :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)      !> Q(rho, u, v, p) primitive variables
-    real(8), intent(inout), device, contiguous :: T(nx,ny)        !> temperature field (for viscosity & heat flux)
-    real(8), intent(inout), device, contiguous :: mu(nx,ny)       !> molecular viscosity via Sutherland's law
+    real(kd_arr), intent(in), device, contiguous    :: inv_dx(nx-1)    !> 1 / dx (for finite differences)
+    real(kd_arr), intent(in), device, contiguous    :: inv_dy(ny-1)    !> 1 / dy
+    real(kd_arr), intent(in), device, contiguous    :: Jacobian(nx,ny) !> Jacobian determinant for scaling
+    real(kd_arr), intent(in), device, contiguous    :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny) !> Q/Jacobian (scaled conserved variables)
+    real(kd_arr), intent(inout), device, contiguous :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)      !> Q(rho, u, v, p) primitive variables
+    real(kd_arr), intent(inout), device, contiguous :: T(nx,ny)        !> temperature field (for viscosity & heat flux)
+    real(kd_arr), intent(inout), device, contiguous :: mu(nx,ny)       !> molecular viscosity via Sutherland's law
     #:if VISC_ORDER > 2
-    real(8), intent(inout), device, contiguous :: ux(nx,ny)       !> cell-center du/dx, precomputed once per stage
-    real(8), intent(inout), device, contiguous :: vy(nx,ny)       !> cell-center dv/dy, precomputed once per stage
+    real(kd_arr), intent(inout), device, contiguous :: ux(nx,ny)       !> cell-center du/dx, precomputed once per stage
+    real(kd_arr), intent(inout), device, contiguous :: vy(nx,ny)       !> cell-center dv/dy, precomputed once per stage
     #:else
-    real(8), intent(inout), device, contiguous :: ux(1,1)         !> unused (VISC_ORDER<=2)
-    real(8), intent(inout), device, contiguous :: vy(1,1)         !> unused (VISC_ORDER<=2)
+    real(kd_arr), intent(inout), device, contiguous :: ux(1,1)         !> unused (VISC_ORDER<=2)
+    real(kd_arr), intent(inout), device, contiguous :: vy(1,1)         !> unused (VISC_ORDER<=2)
     #:endif
-    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,4)  !> x-direction flux (convective + viscous)
-    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,4)  !> y-direction flux (convective + viscous)
+    real(kd_arr), intent(inout), device, contiguous :: E(nx-1,ny-2,4)  !> x-direction flux (convective + viscous)
+    real(kd_arr), intent(inout), device, contiguous :: F(nx-2,ny-1,4)  !> y-direction flux (convective + viscous)
     ! Step 1: Decode Q and compute T(rho) and mu(T) via Sutherland's formula
     call calc_quantities_T_2D(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T, mu)
     ! Step 2: Compute convective fluxes (KEEP/SLAU/Hybrid depending on id_scheme)

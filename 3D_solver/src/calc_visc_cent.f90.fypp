@@ -1,7 +1,7 @@
 #:set N = VISC_ORDER
   attributes(device) function interp${N}$(a) result(ai)
-    real(8), intent(in), contiguous :: a(${N}$)
-    real(8) ai
+    real(kd_visc), intent(in), contiguous :: a(${N}$)
+    real(kd_visc) ai
     #:if N == 4
     block
       !ai = 0.0625d0 * (-a(1) + 9.d0 * (a(2) + a(3)) - a(4))
@@ -11,36 +11,36 @@
       !s2 = a(1) + a(4)
       !ai = 0.0625d0 * fma(9.d0, s1, -s2)
       ! register efficiency
-      real(8) v
+      real(kd_visc) v
       v  = -a(1)
-      v  = fma(9.d0, a(2), v)
-      v  = fma(9.d0, a(3), v)
+      v  = fma(9._kd_visc, a(2), v)
+      v  = fma(9._kd_visc, a(3), v)
       v  = v - a(4)
-      ai = 0.0625d0 * v
+      ai = 0.0625_kd_visc * v
     end block
     #:else
     block
-      real(8) v
+      real(kd_visc) v
       !ai = 0.00390625d0 * (3.d0*a(1) - 25.d0*a(2) + 150.d0*(a(3)+a(4)) - 25.d0*a(5) + 3.d0*a(6))
       ! compute efficiency
       !v  = 0.01171875d0 * (a(1) + a(6))
       !v  = fma(-0.09765625d0, (a(2) + a(5)), v)
       !ai = fma(0.5859375d0,   (a(3) + a(4)), v)
       ! register efficiency
-      v  = 3.d0 * a(1)
-      v  = fma(-25.d0, a(2), v)
-      v  = fma(150.d0, a(3), v)
-      v  = fma(150.d0, a(4), v)
-      v  = fma(-25.d0, a(5), v)
-      v  = fma(3.d0,   a(6), v)
-      ai = 0.00390625d0 * v
+      v  = 3._kd_visc * a(1)
+      v  = fma(-25._kd_visc, a(2), v)
+      v  = fma(150._kd_visc, a(3), v)
+      v  = fma(150._kd_visc, a(4), v)
+      v  = fma(-25._kd_visc, a(5), v)
+      v  = fma(3._kd_visc,   a(6), v)
+      ai = 0.00390625_kd_visc * v
     end block
     #:endif
   end function interp${N}$
 
   attributes(device) function interp2_${N}$(a, b) result(ai)
-    real(8), intent(in), contiguous :: a(${N}$), b(${N}$)
-    real(8) ai
+    real(kd_visc), intent(in), contiguous :: a(${N}$), b(${N}$)
+    real(kd_visc) ai
     #:if N == 4
     block
       !ai = 0.0625d0 * (-a(1) + 9.d0 * (a(2) + a(3)) - a(4))
@@ -50,37 +50,37 @@
       !s2 = a(1) + a(4) + b(1) + b(4)
       !ai = 0.0625d0 * fma(9.d0, s1, -s2)
       ! register efficiency
-      real(8) v
+      real(kd_visc) v
       v  = -(a(1) + b(1))
-      v  = fma(9.d0, (a(2) + b(2)), v)
-      v  = fma(9.d0, (a(3) + b(3)), v)
+      v  = fma(9._kd_visc, (a(2) + b(2)), v)
+      v  = fma(9._kd_visc, (a(3) + b(3)), v)
       v  = v - (a(4) + b(4))
-      ai = 0.0625d0 * v
+      ai = 0.0625_kd_visc * v
     end block
     #:else
     block
-      real(8) v
+      real(kd_visc) v
       !ai = 0.00390625d0 * (3.d0*a(1) - 25.d0*a(2) + 150.d0*(a(3)+a(4)) - 25.d0*a(5) + 3.d0*a(6))
       ! compute efficiency
       !v  = 0.01171875d0 * (a(1) + a(6) + b(1) + b(6))
       !v  = fma(-0.09765625d0, (a(2) + a(5) + b(2) + b(5)), v)
       !ai = fma(0.5859375d0,   (a(3) + a(4) + b(3) + b(4)), v)
       ! register efficiency
-      v  = 3.d0 * (a(1) + b(1))
-      v  = fma(-25.d0, (a(2) + b(2)), v)
-      v  = fma(150.d0, (a(3) + b(3)), v)
-      v  = fma(150.d0, (a(4) + b(4)), v)
-      v  = fma(-25.d0, (a(5) + b(5)), v)
-      v  = fma(3.d0,   (a(6) + b(6)), v)
-      ai = 0.00390625d0 * v
+      v  = 3._kd_visc * (a(1) + b(1))
+      v  = fma(-25._kd_visc, (a(2) + b(2)), v)
+      v  = fma(150._kd_visc, (a(3) + b(3)), v)
+      v  = fma(150._kd_visc, (a(4) + b(4)), v)
+      v  = fma(-25._kd_visc, (a(5) + b(5)), v)
+      v  = fma(3._kd_visc,   (a(6) + b(6)), v)
+      ai = 0.00390625_kd_visc * v
     end block
     #:endif
   end function interp2_${N}$
 
   attributes(device) function diff${N}$(d, a) result(da)
-    real(8), intent(in)             :: d
-    real(8), intent(in), contiguous :: a(${N}$)
-    real(8) da
+    real(kd_visc), intent(in)             :: d
+    real(kd_visc), intent(in), contiguous :: a(${N}$)
+    real(kd_visc) da
     #:if N == 4
     block
       !da = (a(1) - 27.d0 * (a(2) - a(3)) - a(4)) * one_24 * d
@@ -90,29 +90,29 @@
       !s2 = a(1) - a(4)
       !da = one_24 * d * fma(-27.d0, s1, s2)
       ! register efficiency
-      real(8) v
+      real(kd_visc) v
       v  = a(1)
-      v  = fma(-27.d0, a(2), v)
-      v  = fma(27.d0,  a(3), v)
+      v  = fma(-27._kd_visc, a(2), v)
+      v  = fma(27._kd_visc,  a(3), v)
       v  = v - a(4)
-      da = one_24 * d * v
+      da = one_24_visc * d * v
     end block
     #:else
     block
-      real(8) v
+      real(kd_visc) v
       !da = (-0.0046875d0*a(1) + 0.065104167d0*a(2) - 1.171875d0*(a(3)-a(4)) - 0.065104167d0*a(5) + 0.0046875d0*a(6)) * d
       ! compute efficiency
       !v  = 0.0046875d0 * (-a(1) + a(6))
       !v  = fma(0.065104167d0,   a(2) - a(5), v)
       !da = d * fma(1.171875d0, -a(3) + a(4), v)
       ! register efficiency
-      real(8) v
-      v  = -0.0046875d0 * a(1)
-      v  = fma(0.065104167d0,  a(2), v)
-      v  = fma(-1.171875d0,    a(3), v)
-      v  = fma(1.171875d0,     a(4), v)
-      v  = fma(-0.065104167d0, a(5), v)
-      v  = fma(0.0046875d0,    a(6), v)
+      real(kd_visc) v
+      v  = -0.0046875_kd_visc * a(1)
+      v  = fma(0.065104167_kd_visc,  a(2), v)
+      v  = fma(-1.171875_kd_visc,    a(3), v)
+      v  = fma(1.171875_kd_visc,     a(4), v)
+      v  = fma(-0.065104167_kd_visc, a(5), v)
+      v  = fma(0.0046875_kd_visc,    a(6), v)
       da = d * v
     end block
     #:endif
@@ -131,31 +131,31 @@
   ! single N-argument call.
   #:if N == 4
   attributes(device) function interp${N}$_s(s1, s2) result(ai)
-    real(8), intent(in) :: s1, s2
-    real(8) ai
-    ai = 0.0625d0 * fma(9.d0, s1, -s2)
+    real(kd_visc), intent(in) :: s1, s2
+    real(kd_visc) ai
+    ai = 0.0625_kd_visc * fma(9._kd_visc, s1, -s2)
   end function interp${N}$_s
 
   attributes(device) function diff${N}$_s(d, s1, s2) result(da)
-    real(8), intent(in) :: d, s1, s2
-    real(8) da
-    da = one_24 * d * fma(-27.d0, s1, s2)
+    real(kd_visc), intent(in) :: d, s1, s2
+    real(kd_visc) da
+    da = one_24_visc * d * fma(-27._kd_visc, s1, s2)
   end function diff${N}$_s
   #:else
   attributes(device) function interp${N}$_s(s1, s2, s3) result(ai)
-    real(8), intent(in) :: s1, s2, s3
-    real(8) ai, v
-    v  = 0.01171875d0 * s1
-    v  = fma(-0.09765625d0, s2, v)
-    ai = fma(0.5859375d0,   s3, v)
+    real(kd_visc), intent(in) :: s1, s2, s3
+    real(kd_visc) ai, v
+    v  = 0.01171875_kd_visc * s1
+    v  = fma(-0.09765625_kd_visc, s2, v)
+    ai = fma(0.5859375_kd_visc,   s3, v)
   end function interp${N}$_s
 
   attributes(device) function diff${N}$_s(d, s1, s2, s3) result(da)
-    real(8), intent(in) :: d, s1, s2, s3
-    real(8) da, v
-    v  = 0.0046875d0 * s1
-    v  = fma(0.065104167d0, s2, v)
-    da = d * fma(1.171875d0, s3, v)
+    real(kd_visc), intent(in) :: d, s1, s2, s3
+    real(kd_visc) da, v
+    v  = 0.0046875_kd_visc * s1
+    v  = fma(0.065104167_kd_visc, s2, v)
+    da = d * fma(1.171875_kd_visc, s3, v)
   end function diff${N}$_s
   #:endif
 
@@ -166,51 +166,51 @@
   ! interp2_${N}$'s own a(k)+b(k) pairing.
   #:if N == 4
   attributes(device) function interp2_${N}$_s(sa1, sb1, sa2, sb2) result(ai)
-    real(8), intent(in) :: sa1, sb1, sa2, sb2
-    real(8) ai
-    ai = 0.0625d0 * fma(9.d0, (sa1 + sb1), -(sa2 + sb2))
+    real(kd_visc), intent(in) :: sa1, sb1, sa2, sb2
+    real(kd_visc) ai
+    ai = 0.0625_kd_visc * fma(9._kd_visc, (sa1 + sb1), -(sa2 + sb2))
   end function interp2_${N}$_s
   #:else
   attributes(device) function interp2_${N}$_s(sa1, sb1, sa2, sb2, sa3, sb3) result(ai)
-    real(8), intent(in) :: sa1, sb1, sa2, sb2, sa3, sb3
-    real(8) ai, v
-    v  = 0.01171875d0 * (sa1 + sb1)
-    v  = fma(-0.09765625d0, (sa2 + sb2), v)
-    ai = fma(0.5859375d0,   (sa3 + sb3), v)
+    real(kd_visc), intent(in) :: sa1, sb1, sa2, sb2, sa3, sb3
+    real(kd_visc) ai, v
+    v  = 0.01171875_kd_visc * (sa1 + sb1)
+    v  = fma(-0.09765625_kd_visc, (sa2 + sb2), v)
+    ai = fma(0.5859375_kd_visc,   (sa3 + sb3), v)
   end function interp2_${N}$_s
   #:endif
 
   attributes(device) subroutine calc_tau_straight(mui, u, vy, wz, d, t11, ut11)
-    real(8), intent(in), value      :: mui
-    real(8), intent(in), contiguous :: u(${N}$)
-    real(8), intent(in), contiguous :: vy(${N}$)
-    real(8), intent(in), contiguous :: wz(${N}$)
-    real(8), intent(in)             :: d
-    real(8), intent(out)            :: t11
-    real(8), intent(out)            :: ut11
-    real(8) vywz, ux
+    real(kd_visc), intent(in), value      :: mui
+    real(kd_visc), intent(in), contiguous :: u(${N}$)
+    real(kd_visc), intent(in), contiguous :: vy(${N}$)
+    real(kd_visc), intent(in), contiguous :: wz(${N}$)
+    real(kd_visc), intent(in)             :: d
+    real(kd_visc), intent(out)            :: t11
+    real(kd_visc), intent(out)            :: ut11
+    real(kd_visc) vywz, ux
     vywz = interp2_${N}$(vy, wz)
     ux   = diff${N}$(d, u)
-    t11  = two_third * mui * (fma(2.d0, ux, -vywz))
+    t11  = two_third_visc * mui * (fma(2._kd_visc, ux, -vywz))
     ut11 = interp${N}$(u) * t11
   end subroutine calc_tau_straight
 
   attributes(device) subroutine calc_tau_straight_LES(mui, muti, u, vy, wz, d, t11, ut11)
-    real(8), intent(in), value      :: mui
-    real(8), intent(in), value      :: muti
-    real(8), intent(in), contiguous :: u(${N}$)
-    real(8), intent(in), contiguous :: vy(${N}$)
-    real(8), intent(in), contiguous :: wz(${N}$)
-    real(8), intent(in)             :: d
-    real(8), intent(out)            :: t11
-    real(8), intent(out)            :: ut11
-    real(8) vywz, ux, mui_blend
+    real(kd_visc), intent(in), value      :: mui
+    real(kd_visc), intent(in), value      :: muti
+    real(kd_visc), intent(in), contiguous :: u(${N}$)
+    real(kd_visc), intent(in), contiguous :: vy(${N}$)
+    real(kd_visc), intent(in), contiguous :: wz(${N}$)
+    real(kd_visc), intent(in)             :: d
+    real(kd_visc), intent(out)            :: t11
+    real(kd_visc), intent(out)            :: ut11
+    real(kd_visc) vywz, ux, mui_blend
     vywz = interp2_${N}$(vy, wz)
     ux   = diff${N}$(d, u)
-    t11  = two_third * mui * (fma(2.d0, ux, -vywz))
+    t11  = two_third_visc * mui * (fma(2._kd_visc, ux, -vywz))
     ut11 = interp${N}$(u) * t11
-    mui_blend = 0.5d0 * (mui + muti)
-    t11  = two_third * mui_blend * (fma(2.d0, ux, -vywz))
+    mui_blend = 0.5_kd_visc * (mui + muti)
+    t11  = two_third_visc * mui_blend * (fma(2._kd_visc, ux, -vywz))
   end subroutine calc_tau_straight_LES
 
   ! Scalar-argument sibling of calc_tau_straight, for non-contiguous
@@ -219,76 +219,76 @@
   ! direction's own contiguous shared-memory slice.
   #:if N == 4
   attributes(device) subroutine calc_tau_straight_s(mui, u, sa1, sb1, sa2, sb2, d, t11, ut11)
-    real(8), intent(in), value      :: mui
-    real(8), intent(in), contiguous :: u(${N}$)
-    real(8), intent(in)             :: sa1, sb1, sa2, sb2
-    real(8), intent(in)             :: d
-    real(8), intent(out)            :: t11
-    real(8), intent(out)            :: ut11
-    real(8) vywz, ux
+    real(kd_visc), intent(in), value      :: mui
+    real(kd_visc), intent(in), contiguous :: u(${N}$)
+    real(kd_visc), intent(in)             :: sa1, sb1, sa2, sb2
+    real(kd_visc), intent(in)             :: d
+    real(kd_visc), intent(out)            :: t11
+    real(kd_visc), intent(out)            :: ut11
+    real(kd_visc) vywz, ux
     vywz = interp2_${N}$_s(sa1, sb1, sa2, sb2)
     ux   = diff${N}$(d, u)
-    t11  = two_third * mui * (fma(2.d0, ux, -vywz))
+    t11  = two_third_visc * mui * (fma(2._kd_visc, ux, -vywz))
     ut11 = interp${N}$(u) * t11
   end subroutine calc_tau_straight_s
 
   attributes(device) subroutine calc_tau_straight_LES_s(mui, muti, u, sa1, sb1, sa2, sb2, d, t11, ut11)
-    real(8), intent(in), value      :: mui
-    real(8), intent(in), value      :: muti
-    real(8), intent(in), contiguous :: u(${N}$)
-    real(8), intent(in)             :: sa1, sb1, sa2, sb2
-    real(8), intent(in)             :: d
-    real(8), intent(out)            :: t11
-    real(8), intent(out)            :: ut11
-    real(8) vywz, ux, mui_blend
+    real(kd_visc), intent(in), value      :: mui
+    real(kd_visc), intent(in), value      :: muti
+    real(kd_visc), intent(in), contiguous :: u(${N}$)
+    real(kd_visc), intent(in)             :: sa1, sb1, sa2, sb2
+    real(kd_visc), intent(in)             :: d
+    real(kd_visc), intent(out)            :: t11
+    real(kd_visc), intent(out)            :: ut11
+    real(kd_visc) vywz, ux, mui_blend
     vywz = interp2_${N}$_s(sa1, sb1, sa2, sb2)
     ux   = diff${N}$(d, u)
-    t11  = two_third * mui * (fma(2.d0, ux, -vywz))
+    t11  = two_third_visc * mui * (fma(2._kd_visc, ux, -vywz))
     ut11 = interp${N}$(u) * t11
-    mui_blend = 0.5d0 * (mui + muti)
-    t11  = two_third * mui_blend * (fma(2.d0, ux, -vywz))
+    mui_blend = 0.5_kd_visc * (mui + muti)
+    t11  = two_third_visc * mui_blend * (fma(2._kd_visc, ux, -vywz))
   end subroutine calc_tau_straight_LES_s
   #:else
   attributes(device) subroutine calc_tau_straight_s(mui, u, sa1, sb1, sa2, sb2, sa3, sb3, d, t11, ut11)
-    real(8), intent(in), value      :: mui
-    real(8), intent(in), contiguous :: u(${N}$)
-    real(8), intent(in)             :: sa1, sb1, sa2, sb2, sa3, sb3
-    real(8), intent(in)             :: d
-    real(8), intent(out)            :: t11
-    real(8), intent(out)            :: ut11
-    real(8) vywz, ux
+    real(kd_visc), intent(in), value      :: mui
+    real(kd_visc), intent(in), contiguous :: u(${N}$)
+    real(kd_visc), intent(in)             :: sa1, sb1, sa2, sb2, sa3, sb3
+    real(kd_visc), intent(in)             :: d
+    real(kd_visc), intent(out)            :: t11
+    real(kd_visc), intent(out)            :: ut11
+    real(kd_visc) vywz, ux
     vywz = interp2_${N}$_s(sa1, sb1, sa2, sb2, sa3, sb3)
     ux   = diff${N}$(d, u)
-    t11  = two_third * mui * (fma(2.d0, ux, -vywz))
+    t11  = two_third_visc * mui * (fma(2._kd_visc, ux, -vywz))
     ut11 = interp${N}$(u) * t11
   end subroutine calc_tau_straight_s
 
   attributes(device) subroutine calc_tau_straight_LES_s(mui, muti, u, sa1, sb1, sa2, sb2, sa3, sb3, d, t11, ut11)
-    real(8), intent(in), value      :: mui
-    real(8), intent(in), value      :: muti
-    real(8), intent(in), contiguous :: u(${N}$)
-    real(8), intent(in)             :: sa1, sb1, sa2, sb2, sa3, sb3
-    real(8), intent(in)             :: d
-    real(8), intent(out)            :: t11
-    real(8), intent(out)            :: ut11
-    real(8) vywz, ux, mui_blend
+    real(kd_visc), intent(in), value      :: mui
+    real(kd_visc), intent(in), value      :: muti
+    real(kd_visc), intent(in), contiguous :: u(${N}$)
+    real(kd_visc), intent(in)             :: sa1, sb1, sa2, sb2, sa3, sb3
+    real(kd_visc), intent(in)             :: d
+    real(kd_visc), intent(out)            :: t11
+    real(kd_visc), intent(out)            :: ut11
+    real(kd_visc) vywz, ux, mui_blend
     vywz = interp2_${N}$_s(sa1, sb1, sa2, sb2, sa3, sb3)
     ux   = diff${N}$(d, u)
-    t11  = two_third * mui * (fma(2.d0, ux, -vywz))
+    t11  = two_third_visc * mui * (fma(2._kd_visc, ux, -vywz))
     ut11 = interp${N}$(u) * t11
-    mui_blend = 0.5d0 * (mui + muti)
-    t11  = two_third * mui_blend * (fma(2.d0, ux, -vywz))
+    mui_blend = 0.5_kd_visc * (mui + muti)
+    t11  = two_third_visc * mui_blend * (fma(2._kd_visc, ux, -vywz))
   end subroutine calc_tau_straight_LES_s
   #:endif
 
   attributes(device) subroutine calc_tau_cross(mui, v, uy, d, t12, vt12)
-    real(8), intent(in), value      :: mui
-    real(8), intent(in), contiguous :: v(${N}$)
-    real(8), intent(in), contiguous :: uy(${N}$)
-    real(8), intent(in)             :: d
-    real(8), intent(out)            :: t12
-    real(8), intent(out)            :: vt12
-    real(8) uyi, vx
+    real(kd_visc), intent(in), value      :: mui
+    real(kd_visc), intent(in), contiguous :: v(${N}$)
+    real(kd_visc), intent(in), contiguous :: uy(${N}$)
+    real(kd_visc), intent(in)             :: d
+    real(kd_visc), intent(out)            :: t12
+    real(kd_visc), intent(out)            :: vt12
+    real(kd_visc) uyi, vx
     uyi  = interp${N}$(uy)
     vx   = diff${N}$(d, v)
     t12  = mui * (uyi + vx)
@@ -296,18 +296,18 @@
   end subroutine calc_tau_cross
 
   attributes(device) subroutine calc_tau_cross_LES(mui, muti, v, uy, d, t12, vt12)
-    real(8), intent(in), value      :: mui
-    real(8), intent(in), value      :: muti
-    real(8), intent(in), contiguous :: v(${N}$)
-    real(8), intent(in), contiguous :: uy(${N}$)
-    real(8), intent(in)             :: d
-    real(8), intent(out)            :: t12
-    real(8), intent(out)            :: vt12
-    real(8) uyi, vx, mui_blend
+    real(kd_visc), intent(in), value      :: mui
+    real(kd_visc), intent(in), value      :: muti
+    real(kd_visc), intent(in), contiguous :: v(${N}$)
+    real(kd_visc), intent(in), contiguous :: uy(${N}$)
+    real(kd_visc), intent(in)             :: d
+    real(kd_visc), intent(out)            :: t12
+    real(kd_visc), intent(out)            :: vt12
+    real(kd_visc) uyi, vx, mui_blend
     uyi  = interp${N}$(uy)
     vx   = diff${N}$(d, v)
     t12  = mui * (uyi + vx)
     vt12 = interp${N}$(v) * t12
-    mui_blend = 0.5d0 * (mui + muti)
+    mui_blend = 0.5_kd_visc * (mui + muti)
     t12  = mui_blend * (uyi + vx)
   end subroutine calc_tau_cross_LES

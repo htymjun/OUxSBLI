@@ -1,17 +1,19 @@
 !> Module for time-stepping orchestration and time integration schemes
 !> Implements 3rd-order and 4th-order Runge-Kutta time stepping with MPI/GPU support
 #:include 'config.fypp'
+#:include 'precision.fypp'
 #:if not defined('VISC_ORDER')
   #:set VISC_ORDER = 4 if ORDER >= 4 else 2
 #:endif
 module calc_time_dev
+  use mod_precision
   use cudafor
   use mpi
   use nvtx
   use mod_globals, only : nt, np, &
   & blocks, threads, blocksE, blocksF, threadsE, threadsF, &
   & blocksEv, blocksFv, threadsEv, threadsFv
-  use mod_constant, only : one_third
+  use mod_constant, only : one_third => one_third_arr
   use calc_flux_base
   use calc_steps
   use set
@@ -40,12 +42,12 @@ contains
     integer i, j, k, l, t1, t2, overlap, ierr, nranks, ndevices, stat, ireq, ireq2(2)
     integer istat(MPI_STATUS_SIZE), istat2(MPI_STATUS_SIZE,2)
     ! GPU !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    real(8), allocatable, device :: Q_1(:,:), Q_2(:,:), Q_3(:,:), Q_4(:,:)
-    real(8), allocatable, device :: QJ_1(:,:), QJ_2(:,:), QJ_3(:,:), QJ_4(:,:)
-    real(8), allocatable, device :: QJ2_1(:,:), QJ2_2(:,:), QJ2_3(:,:), QJ2_4(:,:)
-    real(8), allocatable, device :: E(:,:,:), F(:,:,:)
-    real(8), allocatable, device :: T(:,:), mu(:,:), ux(:,:), vy(:,:)
-    real(8), allocatable, device :: xix(:), etay(:), Jacobian(:,:), dtdx(:), dtdy(:)
+    real(kd_arr), allocatable, device :: Q_1(:,:), Q_2(:,:), Q_3(:,:), Q_4(:,:)
+    real(kd_arr), allocatable, device :: QJ_1(:,:), QJ_2(:,:), QJ_3(:,:), QJ_4(:,:)
+    real(kd_arr), allocatable, device :: QJ2_1(:,:), QJ2_2(:,:), QJ2_3(:,:), QJ2_4(:,:)
+    real(kd_arr), allocatable, device :: E(:,:,:), F(:,:,:)
+    real(kd_arr), allocatable, device :: T(:,:), mu(:,:), ux(:,:), vy(:,:)
+    real(kd_arr), allocatable, device :: xix(:), etay(:), Jacobian(:,:), dtdx(:), dtdy(:)
     ! for plot
     real(4) :: ke0 = 1.d0, entropy0 = 1.d0
 
@@ -85,19 +87,19 @@ contains
           ! Step 1: Compute fluxes E, F from current state QJ
           call calc_EF(nx, ny, xix, etay, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T, mu, ux, vy, E, F)
           ! Step 2a: TVD RK3 Stage 1 - compute Q(1), store in QJ2
-          call calc_step1<<<blocks,threads>>>(nx, ny, 1.d0, dtdx, dtdy, E, F, QJ_1, QJ_2, QJ_3, QJ_4, QJ2_1, QJ2_2, QJ2_3, QJ2_4)
+          call calc_step1<<<blocks,threads>>>(nx, ny, 1._kd_arr, dtdx, dtdy, E, F, QJ_1, QJ_2, QJ_3, QJ_4, QJ2_1, QJ2_2, QJ2_3, QJ2_4)
           ! Enforce boundary conditions at cell interfaces (extrapolation or characteristic-based)
           call set_bc(myrank, nx, ny, Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4)
 
           ! Step 2b: TVD RK3 Stage 2 - blend Q(1) with Q^n, store in QJ2
           call calc_EF(nx, ny, xix, etay, Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4, Q_1, Q_2, Q_3, Q_4, T, mu, ux, vy, E, F)
-          call calc_step2_3<<<blocks,threads>>>(nx, ny, 0.75d0, 0.25d0, 0.25d0, 1.d0, dtdx, dtdy, E, F, &
+          call calc_step2_3<<<blocks,threads>>>(nx, ny, 0.75_kd_arr, 0.25_kd_arr, 0.25_kd_arr, 1._kd_arr, dtdx, dtdy, E, F, &
                                                  QJ_1, QJ_2, QJ_3, QJ_4, QJ2_1, QJ2_2, QJ2_3, QJ2_4)
           call set_bc(myrank, nx, ny, Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4)
 
           ! Step 2c: TVD RK3 Stage 3 - final solution Q^(n+1), store in QJ (swap arrays)
           call calc_EF(nx, ny, xix, etay, Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4, Q_1, Q_2, Q_3, Q_4, T, mu, ux, vy, E, F)
-          call calc_step2_3<<<blocks,threads>>>(nx, ny, 2.d0, 1.d0, 2.d0, one_third, dtdx, dtdy, E, F, &
+          call calc_step2_3<<<blocks,threads>>>(nx, ny, 2._kd_arr, 1._kd_arr, 2._kd_arr, one_third, dtdx, dtdy, E, F, &
                                                  QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ_1, QJ_2, QJ_3, QJ_4)
           call set_bc(myrank, nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4)
         enddo
@@ -136,13 +138,13 @@ contains
     integer i, j, k, l, t1, t2, overlap, ierr, nranks, ndevices, stat, ireq, ireq2(2)
     integer istat(MPI_STATUS_SIZE), istat2(MPI_STATUS_SIZE,2)
     ! GPU !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    real(8), allocatable, device :: Q_1(:,:), Q_2(:,:), Q_3(:,:), Q_4(:,:)
-    real(8), allocatable, device :: QJ_1(:,:), QJ_2(:,:), QJ_3(:,:), QJ_4(:,:)
-    real(8), allocatable, device :: QJs_1(:,:), QJs_2(:,:), QJs_3(:,:), QJs_4(:,:)
-    real(8), allocatable, device :: Rs(:,:,:)
-    real(8), allocatable, device :: E(:,:,:), F(:,:,:)
-    real(8), allocatable, device :: T(:,:), mu(:,:), ux(:,:), vy(:,:)
-    real(8), allocatable, device :: xix(:), etay(:), Jacobian(:,:), dtdx(:), dtdy(:)
+    real(kd_arr), allocatable, device :: Q_1(:,:), Q_2(:,:), Q_3(:,:), Q_4(:,:)
+    real(kd_arr), allocatable, device :: QJ_1(:,:), QJ_2(:,:), QJ_3(:,:), QJ_4(:,:)
+    real(kd_arr), allocatable, device :: QJs_1(:,:), QJs_2(:,:), QJs_3(:,:), QJs_4(:,:)
+    real(kd_arr), allocatable, device :: Rs(:,:,:)
+    real(kd_arr), allocatable, device :: E(:,:,:), F(:,:,:)
+    real(kd_arr), allocatable, device :: T(:,:), mu(:,:), ux(:,:), vy(:,:)
+    real(kd_arr), allocatable, device :: xix(:), etay(:), Jacobian(:,:), dtdx(:), dtdy(:)
     ! for plot
     real(4) :: ke0 = 1.d0, entropy0 = 1.d0
 
@@ -160,7 +162,7 @@ contains
       print *, "myrank is ", myrank, " memory allocation has completed"
       call pre_calc(nx, ny, myrank, nranks, x, dx_cpu, y, dy_cpu, Jacobian_cpu, Q, overlap, &
                     dtdx, dtdy, xix, etay, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, ke0, entropy0)
-      Rs = 0.d0
+      Rs = 0._kd_arr
       QJs_1 = QJ_1; QJs_2 = QJ_2; QJs_3 = QJ_3; QJs_4 = QJ_4 ! initialize QJs
     else
       call MPI_RECV(ke0,      1, MPI_REAL4, myrank-1, 3*myrank+1, MPI_COMM_WORLD, istat, ierr)
@@ -177,19 +179,19 @@ contains
         do t1 = 1, nt
           ! Stage 1: k1 = RHS(Q^n), coefficients: 0.5*dt applied, weight 1.0 to Rs
           call calc_EF(nx, ny, xix, etay, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T, mu, ux, vy, E, F)
-          call calc_step<<<blocks,threads>>>(nx, ny, 0.5d0, 1.d0, dtdx, dtdy, E, F, &
+          call calc_step<<<blocks,threads>>>(nx, ny, 0.5_kd_arr, 1._kd_arr, dtdx, dtdy, E, F, &
                                               QJ_1, QJ_2, QJ_3, QJ_4, QJs_1, QJs_2, QJs_3, QJs_4, Rs) ! QJs = Q2 = Q^n + 0.5*dt*k1
           call set_bc(myrank, nx, ny, Jacobian, QJs_1, QJs_2, QJs_3, QJs_4)
 
           ! Stage 2: k2 = RHS(Q^n + 0.5*dt*k1), weight 2.0 to Rs for (2*k2 term)
           call calc_EF(nx, ny, xix, etay, Jacobian, QJs_1, QJs_2, QJs_3, QJs_4, Q_1, Q_2, Q_3, Q_4, T, mu, ux, vy, E, F)
-          call calc_step<<<blocks,threads>>>(nx, ny, 0.5d0, 2.d0, dtdx, dtdy, E, F, &
+          call calc_step<<<blocks,threads>>>(nx, ny, 0.5_kd_arr, 2._kd_arr, dtdx, dtdy, E, F, &
                                               QJ_1, QJ_2, QJ_3, QJ_4, QJs_1, QJs_2, QJs_3, QJs_4, Rs) ! QJs = Q3 = Q^n + 0.5*dt*k2
           call set_bc(myrank, nx, ny, Jacobian, QJs_1, QJs_2, QJs_3, QJs_4)
 
           ! Stage 3: k3 = RHS(Q^n + 0.5*dt*k2), weight 2.0 for (2*k3 term)
           call calc_EF(nx, ny, xix, etay, Jacobian, QJs_1, QJs_2, QJs_3, QJs_4, Q_1, Q_2, Q_3, Q_4, T, mu, ux, vy, E, F)
-          call calc_step<<<blocks,threads>>>(nx, ny, 1.0d0, 2.d0, dtdx, dtdy, E, F, &
+          call calc_step<<<blocks,threads>>>(nx, ny, 1.0_kd_arr, 2._kd_arr, dtdx, dtdy, E, F, &
                                               QJ_1, QJ_2, QJ_3, QJ_4, QJs_1, QJs_2, QJs_3, QJs_4, Rs) ! QJs = Q4 = Q^n + dt*k3
           call set_bc(myrank, nx, ny, Jacobian, QJs_1, QJs_2, QJs_3, QJs_4)
 

@@ -7,11 +7,12 @@
 #:set D_SFX = 2 if VISC_ORDER == 4 else 3
 
 module load_smem_visc_cent${VISC_ORDER}$
+  use mod_precision
   use mod_globals, only : threadsEv, threadsFv, threadsGv
   #:if VISC_ORDER == 4
-  use mod_constant, only : two_third, one_twelfth
+  use mod_constant, only : two_third => two_third_visc, one_twelfth => one_twelfth_visc
   #:else
-  use mod_constant, only : one_sixty
+  use mod_constant, only : one_sixty => one_sixty_visc
   #:endif
   implicit none
   private
@@ -31,20 +32,20 @@ contains
     integer, intent(in), value              :: nx
     integer, intent(in), value              :: ny
     integer, intent(in), value              :: nz
-    real(8), intent(in), value              :: inv_dy_j
-    real(8), intent(in), value              :: inv_dz_k
-    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz)
-    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    real(kd_visc), intent(in), value              :: inv_dy_j
+    real(kd_visc), intent(in), value              :: inv_dz_k
+    real(kd_arr), intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous :: Q_4(nx,ny,nz)
     integer, parameter :: io_v = ${io_v_val}$
     integer, parameter :: sx = threadsEv%x + 2*io_v + 1
     integer, parameter :: sy = threadsEv%y
     integer, parameter :: sz = threadsEv%z
-    real(8), intent(inout) ::  u(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) ::  v(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) ::  w(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) :: uy(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) :: uz(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) ::  u(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) ::  v(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) ::  w(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) :: uy(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) :: uz(-(io_v-1):sx*sy*sz-io_v)
     integer i_base, ii, i, idx, offset_yz
     logical :: jk_in_range, jk_in_range_grad_y, jk_in_range_grad_z
     i_base = (blockIdx%x-1)*blockDim%x
@@ -62,16 +63,16 @@ contains
       endif
       if (1 <= i .and. i <= nx .and. jk_in_range_grad_y) then
 #:if VISC_ORDER == 4
-        uy(idx) = (two_third * (-Q_2(i,j-1,k) + Q_2(i,j+1,k)) - one_twelfth * (-Q_2(i,j-2,k) + Q_2(i,j+2,k))) * inv_dy_j
+        uy(idx) = (two_third * (-real(Q_2(i,j-1,k), kd_visc) + real(Q_2(i,j+1,k), kd_visc)) - one_twelfth * (-real(Q_2(i,j-2,k), kd_visc) + real(Q_2(i,j+2,k), kd_visc))) * inv_dy_j
 #:else
-        uy(idx) = (one_sixty * (-Q_2(i,j-3,k) + Q_2(i,j+3,k)) + 0.15d0 * (Q_2(i,j-2,k) - Q_2(i,j+2,k)) + 0.75d0 * (-Q_2(i,j-1,k) + Q_2(i,j+1,k))) * inv_dy_j
+        uy(idx) = (one_sixty * (-real(Q_2(i,j-3,k), kd_visc) + real(Q_2(i,j+3,k), kd_visc)) + 0.15_kd_visc * (real(Q_2(i,j-2,k), kd_visc) - real(Q_2(i,j+2,k), kd_visc)) + 0.75_kd_visc * (-real(Q_2(i,j-1,k), kd_visc) + real(Q_2(i,j+1,k), kd_visc))) * inv_dy_j
 #:endif
       endif
       if (1 <= i .and. i <= nx .and. jk_in_range_grad_z) then
 #:if VISC_ORDER == 4
-        uz(idx) = (two_third * (-Q_2(i,j,k-1) + Q_2(i,j,k+1)) - one_twelfth * (-Q_2(i,j,k-2) + Q_2(i,j,k+2))) * inv_dz_k
+        uz(idx) = (two_third * (-real(Q_2(i,j,k-1), kd_visc) + real(Q_2(i,j,k+1), kd_visc)) - one_twelfth * (-real(Q_2(i,j,k-2), kd_visc) + real(Q_2(i,j,k+2), kd_visc))) * inv_dz_k
 #:else
-        uz(idx) = (one_sixty * (-Q_2(i,j,k-3) + Q_2(i,j,k+3)) + 0.15d0 * (Q_2(i,j,k-2) - Q_2(i,j,k+2)) + 0.75d0 * (-Q_2(i,j,k-1) + Q_2(i,j,k+1))) * inv_dz_k
+        uz(idx) = (one_sixty * (-real(Q_2(i,j,k-3), kd_visc) + real(Q_2(i,j,k+3), kd_visc)) + 0.15_kd_visc * (real(Q_2(i,j,k-2), kd_visc) - real(Q_2(i,j,k+2), kd_visc)) + 0.75_kd_visc * (-real(Q_2(i,j,k-1), kd_visc) + real(Q_2(i,j,k+1), kd_visc))) * inv_dz_k
 #:endif
       endif
     enddo
@@ -91,20 +92,20 @@ contains
     integer, intent(in), value              :: nx
     integer, intent(in), value              :: ny
     integer, intent(in), value              :: nz
-    real(8), intent(in), value              :: inv_dx_i
-    real(8), intent(in), value              :: inv_dz_k
-    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz)
-    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    real(kd_visc), intent(in), value              :: inv_dx_i
+    real(kd_visc), intent(in), value              :: inv_dz_k
+    real(kd_arr), intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous :: Q_4(nx,ny,nz)
     integer, parameter :: io_v = ${io_v_val}$
     integer, parameter :: sx = threadsFv%x
     integer, parameter :: sy = threadsFv%y + 2*io_v + 1
     integer, parameter :: sz = threadsFv%z
-    real(8), intent(inout) ::  u(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) ::  v(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) ::  w(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) :: vx(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) :: vz(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) ::  u(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) ::  v(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) ::  w(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) :: vx(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) :: vz(-(io_v-1):sx*sy*sz-io_v)
     integer j_base, jj, j, idx, offset_xz
     logical :: ik_in_range, ik_in_range_grad_x, ik_in_range_grad_z
     j_base = (blockIdx%y-1)*blockDim%y
@@ -122,16 +123,16 @@ contains
       endif
       if (ik_in_range_grad_x .and. 1 <= j .and. j <= ny) then
 #:if VISC_ORDER == 4
-        vx(idx) = (two_third * (-Q_3(i-1,j,k) + Q_3(i+1,j,k)) - one_twelfth * (-Q_3(i-2,j,k) + Q_3(i+2,j,k))) * inv_dx_i
+        vx(idx) = (two_third * (-real(Q_3(i-1,j,k), kd_visc) + real(Q_3(i+1,j,k), kd_visc)) - one_twelfth * (-real(Q_3(i-2,j,k), kd_visc) + real(Q_3(i+2,j,k), kd_visc))) * inv_dx_i
 #:else
-        vx(idx) = (one_sixty * (-Q_3(i-3,j,k) + Q_3(i+3,j,k)) + 0.15d0 * (Q_3(i-2,j,k) - Q_3(i+2,j,k)) + 0.75d0 * (-Q_3(i-1,j,k) + Q_3(i+1,j,k))) * inv_dx_i
+        vx(idx) = (one_sixty * (-real(Q_3(i-3,j,k), kd_visc) + real(Q_3(i+3,j,k), kd_visc)) + 0.15_kd_visc * (real(Q_3(i-2,j,k), kd_visc) - real(Q_3(i+2,j,k), kd_visc)) + 0.75_kd_visc * (-real(Q_3(i-1,j,k), kd_visc) + real(Q_3(i+1,j,k), kd_visc))) * inv_dx_i
 #:endif
       endif
       if (ik_in_range_grad_z .and. 1 <= j .and. j <= ny) then
 #:if VISC_ORDER == 4
-        vz(idx) = (two_third * (-Q_3(i,j,k-1) + Q_3(i,j,k+1)) - one_twelfth * (-Q_3(i,j,k-2) + Q_3(i,j,k+2))) * inv_dz_k
+        vz(idx) = (two_third * (-real(Q_3(i,j,k-1), kd_visc) + real(Q_3(i,j,k+1), kd_visc)) - one_twelfth * (-real(Q_3(i,j,k-2), kd_visc) + real(Q_3(i,j,k+2), kd_visc))) * inv_dz_k
 #:else
-        vz(idx) = (one_sixty * (-Q_3(i,j,k-3) + Q_3(i,j,k+3)) + 0.15d0 * (Q_3(i,j,k-2) - Q_3(i,j,k+2)) + 0.75d0 * (-Q_3(i,j,k-1) + Q_3(i,j,k+1))) * inv_dz_k
+        vz(idx) = (one_sixty * (-real(Q_3(i,j,k-3), kd_visc) + real(Q_3(i,j,k+3), kd_visc)) + 0.15_kd_visc * (real(Q_3(i,j,k-2), kd_visc) - real(Q_3(i,j,k+2), kd_visc)) + 0.75_kd_visc * (-real(Q_3(i,j,k-1), kd_visc) + real(Q_3(i,j,k+1), kd_visc))) * inv_dz_k
 #:endif
       endif
     enddo
@@ -151,20 +152,20 @@ contains
     integer, intent(in), value              :: nx
     integer, intent(in), value              :: ny
     integer, intent(in), value              :: nz
-    real(8), intent(in), value              :: inv_dx_i
-    real(8), intent(in), value              :: inv_dy_j
-    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz)
-    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    real(kd_visc), intent(in), value              :: inv_dx_i
+    real(kd_visc), intent(in), value              :: inv_dy_j
+    real(kd_arr), intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous :: Q_4(nx,ny,nz)
     integer, parameter :: io_v = ${io_v_val}$
     integer, parameter :: sx = threadsGv%x
     integer, parameter :: sy = threadsGv%y
     integer, parameter :: sz = threadsGv%z + 2*io_v + 1
-    real(8), intent(inout) ::  u(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) ::  v(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) ::  w(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) :: wx(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) :: wy(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) ::  u(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) ::  v(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) ::  w(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) :: wx(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) :: wy(-(io_v-1):sx*sy*sz-io_v)
     integer k_base, kk, k, idx, offset_xy
     logical :: ij_in_range, ij_in_range_grad_x, ij_in_range_grad_y
     k_base = (blockIdx%z-1)*blockDim%z
@@ -182,16 +183,16 @@ contains
       endif
       if (ij_in_range_grad_x .and. 1 <= k .and. k <= nz) then
 #:if VISC_ORDER == 4
-        wx(idx) = (two_third * (-Q_4(i-1,j,k) + Q_4(i+1,j,k)) - one_twelfth * (-Q_4(i-2,j,k) + Q_4(i+2,j,k))) * inv_dx_i
+        wx(idx) = (two_third * (-real(Q_4(i-1,j,k), kd_visc) + real(Q_4(i+1,j,k), kd_visc)) - one_twelfth * (-real(Q_4(i-2,j,k), kd_visc) + real(Q_4(i+2,j,k), kd_visc))) * inv_dx_i
 #:else
-        wx(idx) = (one_sixty * (-Q_4(i-3,j,k) + Q_4(i+3,j,k)) + 0.15d0 * (Q_4(i-2,j,k) - Q_4(i+2,j,k)) + 0.75d0 * (-Q_4(i-1,j,k) + Q_4(i+1,j,k))) * inv_dx_i
+        wx(idx) = (one_sixty * (-real(Q_4(i-3,j,k), kd_visc) + real(Q_4(i+3,j,k), kd_visc)) + 0.15_kd_visc * (real(Q_4(i-2,j,k), kd_visc) - real(Q_4(i+2,j,k), kd_visc)) + 0.75_kd_visc * (-real(Q_4(i-1,j,k), kd_visc) + real(Q_4(i+1,j,k), kd_visc))) * inv_dx_i
 #:endif
       endif
       if (ij_in_range_grad_y .and. 1 <= k .and. k <= nz) then
 #:if VISC_ORDER == 4
-        wy(idx) = (two_third * (-Q_4(i,j-1,k) + Q_4(i,j+1,k)) - one_twelfth * (-Q_4(i,j-2,k) + Q_4(i,j+2,k))) * inv_dy_j
+        wy(idx) = (two_third * (-real(Q_4(i,j-1,k), kd_visc) + real(Q_4(i,j+1,k), kd_visc)) - one_twelfth * (-real(Q_4(i,j-2,k), kd_visc) + real(Q_4(i,j+2,k), kd_visc))) * inv_dy_j
 #:else
-        wy(idx) = (one_sixty * (-Q_4(i,j-3,k) + Q_4(i,j+3,k)) + 0.15d0 * (Q_4(i,j-2,k) - Q_4(i,j+2,k)) + 0.75d0 * (-Q_4(i,j-1,k) + Q_4(i,j+1,k))) * inv_dy_j
+        wy(idx) = (one_sixty * (-real(Q_4(i,j-3,k), kd_visc) + real(Q_4(i,j+3,k), kd_visc)) + 0.15_kd_visc * (real(Q_4(i,j-2,k), kd_visc) - real(Q_4(i,j+2,k), kd_visc)) + 0.75_kd_visc * (-real(Q_4(i,j-1,k), kd_visc) + real(Q_4(i,j+1,k), kd_visc))) * inv_dy_j
 #:endif
       endif
     enddo
@@ -211,21 +212,21 @@ contains
     integer, intent(in), value              :: nx
     integer, intent(in), value              :: ny
     integer, intent(in), value              :: nz
-    real(8), intent(in), value              :: inv_dx_i
-    real(8), intent(in), value              :: inv_dy_j
-    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz)
-    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    real(kd_visc), intent(in), value              :: inv_dx_i
+    real(kd_visc), intent(in), value              :: inv_dy_j
+    real(kd_arr), intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous :: Q_4(nx,ny,nz)
     integer, intent(in), value              :: k_lo
     integer, parameter :: io_v = ${io_v_val}$
     integer, parameter :: sx = threadsGv%x
     integer, parameter :: sy = threadsGv%y
     integer, parameter :: sz = threadsGv%z + 2*io_v + 1
-    real(8), intent(inout) ::  u(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) ::  v(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) ::  w(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) :: wx(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) :: wy(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) ::  u(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) ::  v(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) ::  w(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) :: wx(-(io_v-1):sx*sy*sz-io_v)
+    real(kd_visc), intent(inout) :: wy(-(io_v-1):sx*sy*sz-io_v)
     integer k_base, kk, k, idx, offset_xy
     logical :: ij_in_range, ij_in_range_grad_x, ij_in_range_grad_y
     k_base = (blockIdx%z-1)*blockDim%z + k_lo - 1
@@ -243,16 +244,16 @@ contains
       endif
       if (ij_in_range_grad_x .and. 1 <= k .and. k <= nz) then
 #:if VISC_ORDER == 4
-        wx(idx) = (two_third * (-Q_4(i-1,j,k) + Q_4(i+1,j,k)) - one_twelfth * (-Q_4(i-2,j,k) + Q_4(i+2,j,k))) * inv_dx_i
+        wx(idx) = (two_third * (-real(Q_4(i-1,j,k), kd_visc) + real(Q_4(i+1,j,k), kd_visc)) - one_twelfth * (-real(Q_4(i-2,j,k), kd_visc) + real(Q_4(i+2,j,k), kd_visc))) * inv_dx_i
 #:else
-        wx(idx) = (one_sixty * (-Q_4(i-3,j,k) + Q_4(i+3,j,k)) + 0.15d0 * (Q_4(i-2,j,k) - Q_4(i+2,j,k)) + 0.75d0 * (-Q_4(i-1,j,k) + Q_4(i+1,j,k))) * inv_dx_i
+        wx(idx) = (one_sixty * (-real(Q_4(i-3,j,k), kd_visc) + real(Q_4(i+3,j,k), kd_visc)) + 0.15_kd_visc * (real(Q_4(i-2,j,k), kd_visc) - real(Q_4(i+2,j,k), kd_visc)) + 0.75_kd_visc * (-real(Q_4(i-1,j,k), kd_visc) + real(Q_4(i+1,j,k), kd_visc))) * inv_dx_i
 #:endif
       endif
       if (ij_in_range_grad_y .and. 1 <= k .and. k <= nz) then
 #:if VISC_ORDER == 4
-        wy(idx) = (two_third * (-Q_4(i,j-1,k) + Q_4(i,j+1,k)) - one_twelfth * (-Q_4(i,j-2,k) + Q_4(i,j+2,k))) * inv_dy_j
+        wy(idx) = (two_third * (-real(Q_4(i,j-1,k), kd_visc) + real(Q_4(i,j+1,k), kd_visc)) - one_twelfth * (-real(Q_4(i,j-2,k), kd_visc) + real(Q_4(i,j+2,k), kd_visc))) * inv_dy_j
 #:else
-        wy(idx) = (one_sixty * (-Q_4(i,j-3,k) + Q_4(i,j+3,k)) + 0.15d0 * (Q_4(i,j-2,k) - Q_4(i,j+2,k)) + 0.75d0 * (-Q_4(i,j-1,k) + Q_4(i,j+1,k))) * inv_dy_j
+        wy(idx) = (one_sixty * (-real(Q_4(i,j-3,k), kd_visc) + real(Q_4(i,j+3,k), kd_visc)) + 0.15_kd_visc * (real(Q_4(i,j-2,k), kd_visc) - real(Q_4(i,j+2,k), kd_visc)) + 0.75_kd_visc * (-real(Q_4(i,j-1,k), kd_visc) + real(Q_4(i,j+1,k), kd_visc))) * inv_dy_j
 #:endif
       endif
     enddo

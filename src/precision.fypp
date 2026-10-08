@@ -1,0 +1,23 @@
+#! Precision selection shared by every template (include after config.fypp).
+#!   CONV_PRECISION / VISC_PRECISION : 4 or 8, arithmetic kind of the convective /
+#!                                     viscous kernels (default 8).
+#!   ARR       : kind of the device arrays, the RK update, BCs and MPI buffers.
+#!               Equal to the two term precisions when they agree, 8 otherwise.
+#!   CONV_CAST / VISC_CAST : True when that term's kind differs from ARR, i.e. the
+#!               term reads ARR-kind arrays, computes in its own (single) kind and
+#!               casts back when it stores into E/F/G.
+#:if not defined('CONV_PRECISION')
+  #:set CONV_PRECISION = 8
+#:endif
+#:if not defined('VISC_PRECISION')
+  #:set VISC_PRECISION = 8
+#:endif
+#:if CONV_PRECISION not in (4, 8)
+  #:stop 'CONV_PRECISION must be 4 or 8'
+#:endif
+#:if VISC_PRECISION not in (4, 8)
+  #:stop 'VISC_PRECISION must be 4 or 8'
+#:endif
+#:set ARR = CONV_PRECISION if CONV_PRECISION == VISC_PRECISION else 8
+#:set CONV_CAST = (CONV_PRECISION != ARR)
+#:set VISC_CAST = (VISC_PRECISION != ARR)

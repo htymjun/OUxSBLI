@@ -1,4 +1,5 @@
 module set
+  use mod_precision
   use cudafor
   use mod_globals, only : rho0, p0, u0, rho2, p2, ux, uy
   use mod_constant, only : gamma_1, over_gamma, over_gamma_1
@@ -64,8 +65,8 @@ contains
 
   subroutine set_bc(myrank, nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     integer, intent(in), value     :: myrank, nx, ny, nz
-    real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(kd_arr), intent(in), device    :: Jacobian(nx,ny)
+    real(kd_arr), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8) Jacobian_tmp
     integer :: i, j, k
 
@@ -120,7 +121,7 @@ contains
 
   subroutine set_bc_mut(nx,ny,nz,mut,qc2)
     integer, intent(in), value     :: nx, ny, nz
-    real(8), intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
+    real(kd_arr), intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
     call set_bc_mut_common(nx, ny, nz, mut, qc2)
   end subroutine set_bc_mut
 end module set

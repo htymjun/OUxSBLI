@@ -39,8 +39,30 @@ All compile-time options are set here. Below is a full listing with allowed valu
 | `BC_Z` | bool | `True`, `False` | `False` | Wall/inflow BCs in z |
 | `ORDER_IO` | int | computed | `ORDER // 2 - 1` | Ghost-cell count for I/O interpolation |
 | `OUTPUT_PRECISION` | int | `4`, `8` | `4` | VTK output float precision (kind dispatch: real*4 vs real*8). Single precision can't resolve 6th-order convergence trends or tight Cf tolerances — the EVC/BL/OS validation tests set this to `8`. |
+| `CONV_PRECISION` | int | `4`, `8` | `8` | Real kind of the convective-flux arithmetic |
+| `VISC_PRECISION` | int | `4`, `8` | `8` | Real kind of the viscous-flux arithmetic |
 
 > **Note:** `COMMZ = True` and `RESCALE = True` cannot be combined.
+
+### Single and double precision
+
+`CONV_PRECISION` and `VISC_PRECISION` choose the precision of the two flux terms
+independently. The precision of the stored solution, the Runge-Kutta update, the
+boundary conditions and the MPI buffers follows from them:
+
+| `CONV_PRECISION` | `VISC_PRECISION` | Solution arrays and time integration | Where values are converted |
+|---|---|---|---|
+| `8` | `8` | double | nowhere |
+| `4` | `4` | single | only between the host (always double) and the GPU |
+| `4` | `8` | double | on entry to and exit from the convective kernels |
+| `8` | `4` | double | on entry to and exit from the viscous kernels |
+
+When the two differ, the single-precision term reads the double-precision arrays,
+does all of its arithmetic in single precision and converts its flux back to double
+when it is stored. Grid generation, the initial condition and the restart files
+(`recal/Q*.dat`) are always double precision, so the same restart file can be used with
+any combination. `OUTPUT_PRECISION` (VTK files) and the sensor kind `sp` in
+`mod_globals.f90` are separate settings.
 
 ### Example: NSTGV config.fypp
 
@@ -59,6 +81,8 @@ All compile-time options are set here. Below is a full listing with allowed valu
 #:set SLAU_VARIANT = 'HRSLAU2'
 #:set ORDER_IO     = ORDER // 2 - 1
 #:set OUTPUT_PRECISION = 4
+#:set CONV_PRECISION = 8
+#:set VISC_PRECISION = 8
 ```
 
 ---

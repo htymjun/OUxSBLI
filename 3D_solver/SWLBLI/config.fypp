@@ -4,7 +4,7 @@
 #:set TVD           = 'none'
 #:set SLAU_VARIANT  = 'HRSLAU2'
 #:set RESCALE       = False
-#:set RESTART       = True
+#:set RESTART       = False
 #:set RK            = 3
 #:set BC_X          = True
 #:set BC_Y          = True
@@ -15,3 +15,5 @@
 #:set MPI = 'GPU'
 #! set_bc takes (x, z, phi_l_gpu, phi_m_gpu, t_now) for the blowing/suction strip
 #:set BC_FORCING = True
+#:set CONV_PRECISION = 4
+#:set VISC_PRECISION = 4

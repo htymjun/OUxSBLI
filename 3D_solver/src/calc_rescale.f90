@@ -1,35 +1,36 @@
 module calc_rescale
+  use mod_precision
   use cudafor
   use mpi
   use mod_globals, only : nre1, nre2, rerank, nt, np, dt, gamma , R, Pr, u0, rho0, p0, M0, blt, start_rescale
-  use mod_constant, only : Cp, gamma_1, over_gamma_1, mu0_T0_S_over_T0_2_3, over_T0, id_gpumpi, id_recal
+  use mod_constant, only : Cp, gamma_1, over_gamma_1, mu0_T0_S_over_T0_2_3, over_T0, id_gpumpi, id_recal, gamma_1_arr
   use cpu_gpu_mpi
 contains
   subroutine calc_mean(step, ireq, flag_re, nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Qm_1, Qm_2, Qm_3, Qm_4, Qm_5)
     integer, intent(inout)         :: step, ireq
     integer, intent(in)            :: flag_re, nx, ny, nz
-    real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(in), device    :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
-    real(8), intent(inout), device :: Qm_1(ny), Qm_2(ny), Qm_3(ny), Qm_4(ny), Qm_5(ny)
-    real(8) Q1, Q2, Q3, Q4, Q5, rhoinv, Jacobian_tmp, volinv, step1, step2
+    real(kd_arr), intent(in), device    :: Jacobian(nx,ny)
+    real(kd_arr), intent(in), device    :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(kd_arr), intent(inout), device :: Qm_1(ny), Qm_2(ny), Qm_3(ny), Qm_4(ny), Qm_5(ny)
+    real(kd_arr) Q1, Q2, Q3, Q4, Q5, rhoinv, Jacobian_tmp, volinv, step1, step2
     logical arrived
     integer i, k, istat, ierr
-    volinv = 1.d0 / dble((nre2 - nre1 + 1) * (nz - 6))
+    volinv = 1._kd_arr / real((nre2 - nre1 + 1) * (nz - 6), kd_arr)
     call MPI_TEST(ireq, arrived, MPI_STATUS_IGNORE, ierr)
     if (flag_re == 0) then
       !$cuf kernel do <<<*,*>>>
       do j = 1, ny
-        Q1 = 0.d0; Q2 = 0.d0; Q3 = 0.d0; Q4 = 0.d0; Q5 = 0.d0
+        Q1 = 0._kd_arr; Q2 = 0._kd_arr; Q3 = 0._kd_arr; Q4 = 0._kd_arr; Q5 = 0._kd_arr
         do k = 4, nz-3
           do i = nre1, nre2
             Jacobian_tmp = Jacobian(i,j)
-            rhoinv = 1.d0 / QJ_1(i,j,k)
+            rhoinv = 1._kd_arr / QJ_1(i,j,k)
             Q1 = Q1 + QJ_1(i,j,k) * Jacobian_tmp
             Q2 = Q2 + QJ_2(i,j,k) * rhoinv
             Q3 = Q3 + QJ_3(i,j,k) * rhoinv
             Q4 = Q4 + QJ_4(i,j,k) * rhoinv
-            Q5 = Q5 + gamma_1 * Jacobian_tmp * (QJ_5(i,j,k) &
-                    - 0.5d0 * (QJ_2(i,j,k)**2 + QJ_3(i,j,k)**2 + QJ_4(i,j,k)**2) * rhoinv)
+            Q5 = Q5 + gamma_1_arr * Jacobian_tmp * (QJ_5(i,j,k) &
+                    - 0.5_kd_arr * (QJ_2(i,j,k)**2 + QJ_3(i,j,k)**2 + QJ_4(i,j,k)**2) * rhoinv)
         enddo;enddo
         Qm_1(j) = Q1 * volinv
         Qm_2(j) = Q2 * volinv
@@ -38,20 +39,20 @@ contains
         Qm_5(j) = Q5 * volinv
       enddo
     else
-      step1 = dble(step-1); step2 = 1.d0 / dble(step)
+      step1 = real(step-1, kd_arr); step2 = 1._kd_arr / real(step, kd_arr)
       !$cuf kernel do <<<*,*>>>
       do j = 1, ny
-        Q1 = 0.d0; Q2 = 0.d0; Q3 = 0.d0; Q4 = 0.d0; Q5 = 0.d0
+        Q1 = 0._kd_arr; Q2 = 0._kd_arr; Q3 = 0._kd_arr; Q4 = 0._kd_arr; Q5 = 0._kd_arr
         do k = 4, nz-3
           do i = nre1, nre2
             Jacobian_tmp = Jacobian(i,j)
-            rhoinv = 1.d0 / QJ_1(i,j,k)
+            rhoinv = 1._kd_arr / QJ_1(i,j,k)
             Q1 = Q1 + QJ_1(i,j,k) * Jacobian_tmp
             Q2 = Q2 + QJ_2(i,j,k) * rhoinv
             Q3 = Q3 + QJ_3(i,j,k) * rhoinv
             Q4 = Q4 + QJ_4(i,j,k) * rhoinv
-            Q5 = Q5 + gamma_1 * Jacobian_tmp * (QJ_5(i,j,k) &
-                    - 0.5d0 * (QJ_2(i,j,k)**2 + QJ_3(i,j,k)**2 + QJ_4(i,j,k)**2) * rhoinv)
+            Q5 = Q5 + gamma_1_arr * Jacobian_tmp * (QJ_5(i,j,k) &
+                    - 0.5_kd_arr * (QJ_2(i,j,k)**2 + QJ_3(i,j,k)**2 + QJ_4(i,j,k)**2) * rhoinv)
         enddo;enddo
         Qm_1(j) = (step1 * Qm_1(j) + Q1 * volinv) * step2
         Qm_2(j) = (step1 * Qm_2(j) + Q2 * volinv) * step2
@@ -67,8 +68,8 @@ contains
 
   subroutine copy(nx, ny, nz, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Qre_1, Qre_2, Qre_3, Qre_4, Qre_5)
     integer, intent(in)          :: nx, ny, nz
-    real(8), intent(in), device  :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
-    real(8), intent(out), device :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
+    real(kd_arr), intent(in), device  :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(kd_arr), intent(out), device :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
     integer j, k, offset
     !$cuf kernel do <<<*,*>>>
     do k = 1, nz-6
@@ -87,11 +88,11 @@ contains
                            QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Qm_1, Qm_2, Qm_3, Qm_4, Qm_5, Qre_1, Qre_2, Qre_3, Qre_4, Qre_5)
     integer, intent(in)            :: num, myrank, nx, ny, nz
     integer, intent(inout)         :: step, flag_re, flag_req, ireq, ireq2(2)
-    real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(in), device    :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
-    real(8), intent(inout), device :: Qm_1(ny), Qm_2(ny), Qm_3(ny), Qm_4(ny), Qm_5(ny)
-    real(8), intent(inout), device :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
-    real(8), device :: Qre_flat(ny*(nz-6)*5), Qm_flat(ny*5)
+    real(kd_arr), intent(in), device    :: Jacobian(nx,ny)
+    real(kd_arr), intent(in), device    :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(kd_arr), intent(inout), device :: Qm_1(ny), Qm_2(ny), Qm_3(ny), Qm_4(ny), Qm_5(ny)
+    real(kd_arr), intent(inout), device :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
+    real(kd_arr), device :: Qre_flat(ny*(nz-6)*5), Qm_flat(ny*5)
     integer ierr, j, n
     n = ny*(nz-6)
     if (myrank == rerank) then
@@ -142,9 +143,10 @@ contains
     integer, intent(in)    :: nx, ny, nz, step
     real(8), intent(in)    :: y(ny), Jacobian(nx,ny)
     real(8), intent(inout) :: Qm_cpu_1(ny), Qm_cpu_2(ny), Qm_cpu_3(ny), Qm_cpu_4(ny), Qm_cpu_5(ny)
-    real(8)         :: Qre_cpu(ny*(nz-6)*5), Qm_cpu_flat(ny*5), bltre
+    real(kd_arr)    :: Qre_cpu(ny*(nz-6)*5), Qm_cpu_flat(ny*5) ! host images of the device buffers
+    real(8)         :: bltre
     real(8)         :: Qre_cpu_1(ny*(nz-6)), Qre_cpu_2(ny*(nz-6)), Qre_cpu_3(ny*(nz-6)), Qre_cpu_4(ny*(nz-6)), Qre_cpu_5(ny*(nz-6))
-    real(8), device ::     Qre(ny*(nz-6)*5), Qm(ny*5)
+    real(kd_arr), device ::     Qre(ny*(nz-6)*5), Qm(ny*5)
     integer stat, errorcode, ierr, ireq, ireqs(2), flag_req, n
     integer istat(MPI_STATUS_SIZE), istats(MPI_STATUS_SIZE,2), j
     integer, parameter :: nQm = 1000 !< timesteps between recal/Qm.dat checkpoints

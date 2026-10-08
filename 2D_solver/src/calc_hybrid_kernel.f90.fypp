@@ -1,19 +1,18 @@
 #:include 'config.fypp'
+#:include 'precision.fypp'
 module calc_hybrid_kernel
+  use mod_precision
+  ! constants referenced by the included calc_scheme_math.f90
+  use mod_constant, only : gamma_conv, over_gamma_1_conv, R_over_gamma_1_conv, one_third_conv, one_sixth_conv, one_twelfth_conv, two_third_conv, &
+                           one_24_conv, one_48_conv, one_60_conv, one_120_conv, one_240_conv, seven_twelfth_conv
   use libm
-  use mod_globals, only : gamma, threshold, threadsE, threadsF
-  use mod_constant, only : id_slau, over_gamma_1, R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
+  use mod_globals, only : threshold, threadsE, threadsF
+  use mod_constant, only : id_slau
   use calc_muscl
   use calc_hybrid
   implicit none
   private
   public calc_hybrid_x, calc_hybrid_y
-  real(8), parameter :: one_24        = 1.d0 / 24.d0
-  real(8), parameter :: one_48        = 1.d0 / 48.d0
-  real(8), parameter :: one_60        = 1.d0 / 60.d0
-  real(8), parameter :: one_120       = 1.d0 / 120.d0
-  real(8), parameter :: one_240       = 1.d0 / 240.d0
-  real(8), parameter :: seven_twelfth = 7.d0 / 12.d0
   integer, parameter :: io            = ${ORDER_IO}$
 
   #:if ORDER == 6
@@ -38,18 +37,18 @@ contains
   include 'calc_scheme_math.f90'
 
   attributes(global) subroutine calc_hybrid_x(nx, ny, Q_1, Q_2, Q_3, Q_4, T, sensor, E)
-    use mod_constant, only : Normal_x
+    use mod_constant, only : Normal_x => Normal_x_conv
     integer, intent(in), value                :: nx, ny
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny), T(nx,ny)
+    real(kd_arr), intent(in), device, contiguous   :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny), T(nx,ny)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny)
-    real(8), intent(out), device, contiguous  :: E(nx-1,ny-2,4)
+    real(kd_arr), intent(out), device, contiguous  :: E(nx-1,ny-2,4)
     integer i, j, it, jt, ii, i_base
     integer :: idx, offset_y
     integer, parameter :: sx = threadsE%x + 2*io + 1
     integer, parameter :: sy = threadsE%y
-    real(8), dimension(-(io-1):sx*sy-io), shared :: rho, u, v, p
-    real(8)  :: rhol, ul, vl, pl
-    real(8)  :: rho_r, u_r, v_r, p_r
+    real(kd_conv), dimension(-(io-1):sx*sy-io), shared :: rho, u, v, p
+    real(kd_conv)  :: rhol, ul, vl, pl
+    real(kd_conv)  :: rho_r, u_r, v_r, p_r
     real(sp) :: fdx
     logical  :: compute_slau
     it = threadIdx%x
@@ -79,7 +78,7 @@ contains
     if (3 <= i .and. i <= nx-3) then
       if (fdx <= threshold) then
         block
-          real(8) :: tmp(6)
+          real(kd_conv) :: tmp(6)
           tmp = T(i-2:i+3,j)
           associate(uu => u)
             E(i,j-1,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3), v(idx-2:idx+3), &
@@ -96,7 +95,7 @@ contains
     elseif (2 <= i .and. i <= nx-2) then
       if (fdx <= threshold) then
         block
-          real(8) :: tmp(4)
+          real(kd_conv) :: tmp(4)
           tmp = T(i-1:i+2,j)
           associate(uu => u)
             E(i,j-1,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
@@ -113,7 +112,7 @@ contains
     else
       if (fdx <= threshold) then
         block
-          real(8) :: tmp(2)
+          real(kd_conv) :: tmp(2)
           tmp = T(i:i+1,j)
           associate(uu => u)
             E(i,j-1,:) = KEEP(id_acc2,       rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
@@ -132,7 +131,7 @@ contains
     if (2 <= i .and. i <= nx-2) then
       if (fdx <= threshold) then
         block
-          real(8) :: tmp(4)
+          real(kd_conv) :: tmp(4)
           tmp = T(i-1:i+2,j)
           associate(uu => u)
             E(i,j-1,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
@@ -149,7 +148,7 @@ contains
     else
       if (fdx <= threshold) then
         block
-          real(8) :: tmp(2)
+          real(kd_conv) :: tmp(2)
           tmp = T(i:i+1,j)
           associate(uu => u)
             E(i,j-1,:) = KEEP(id_acc2,       rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
@@ -167,7 +166,7 @@ contains
     #:else
     if (fdx <= threshold) then
       block
-        real(8) :: tmp(2)
+        real(kd_conv) :: tmp(2)
         tmp = T(i:i+1,j)
         associate(uu => u)
           E(i,j-1,:) = KEEP(id_acc,         rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
@@ -185,26 +184,37 @@ contains
 
     if (compute_slau) then
       associate(un1 => ul, un2 => u_r)
+        #:if CONV_CAST
+        block
+          real(kd_conv) :: o1, o2, o3, o4
+          call SLAU(id_slau, rhol, rho_r, ul, u_r, vl, v_r, un1, un2, pl, p_r, Normal_x, 1.0_sp, o1, o2, o3, o4)
+          E(i,j-1,1) = o1
+          E(i,j-1,2) = o2
+          E(i,j-1,3) = o3
+          E(i,j-1,4) = o4
+        end block
+        #:else
         call SLAU(id_slau, rhol, rho_r, ul, u_r, vl, v_r, un1, un2, pl, p_r, Normal_x, 1.0_sp, &
                   E(i,j-1,1), E(i,j-1,2), E(i,j-1,3), E(i,j-1,4))
+        #:endif
       end associate
     endif
   end subroutine calc_hybrid_x
 
 
   attributes(global) subroutine calc_hybrid_y(nx, ny, Q_1, Q_2, Q_3, Q_4, T, sensor, F)
-    use mod_constant, only : Normal_y
+    use mod_constant, only : Normal_y => Normal_y_conv
     integer, intent(in), value                :: nx, ny
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny), T(nx,ny)
+    real(kd_arr), intent(in), device, contiguous   :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny), T(nx,ny)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny)
-    real(8), intent(out), device, contiguous  :: F(nx-2,ny-1,4)
+    real(kd_arr), intent(out), device, contiguous  :: F(nx-2,ny-1,4)
     integer i, j, it, jt, jj, j_base
     integer :: idx, offset_x
     integer, parameter :: sx = threadsF%x
     integer, parameter :: sy = threadsF%y + 2*io + 1
-    real(8), dimension(-(io-1):sx*sy-io), shared :: rho, u, v, p
-    real(8)  :: rhol, ul, vl, pl
-    real(8)  :: rho_r, u_r, v_r, p_r
+    real(kd_conv), dimension(-(io-1):sx*sy-io), shared :: rho, u, v, p
+    real(kd_conv)  :: rhol, ul, vl, pl
+    real(kd_conv)  :: rho_r, u_r, v_r, p_r
     real(sp) :: fdy
     logical  :: compute_slau
     it = threadIdx%x
@@ -234,7 +244,7 @@ contains
     if (3 <= j .and. j <= ny-3) then
       if (fdy <= threshold) then
         block
-          real(8) :: tmp(6)
+          real(kd_conv) :: tmp(6)
           tmp = T(i,j-2:j+3)
           associate(vv => v)
             F(i-1,j,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3), v(idx-2:idx+3), &
@@ -251,7 +261,7 @@ contains
     elseif (2 <= j .and. j <= ny-2) then
       if (fdy <= threshold) then
         block
-          real(8) :: tmp(4)
+          real(kd_conv) :: tmp(4)
           tmp = T(i,j-1:j+2)
           associate(vv => v)
             F(i-1,j,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
@@ -268,7 +278,7 @@ contains
     else
       if (fdy <= threshold) then
         block
-          real(8) :: tmp(2)
+          real(kd_conv) :: tmp(2)
           tmp = T(i,j:j+1)
           associate(vv => v)
             F(i-1,j,:) = KEEP(id_acc2,       rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
@@ -287,7 +297,7 @@ contains
     if (2 <= j .and. j <= ny-2) then
       if (fdy <= threshold) then
         block
-          real(8) :: tmp(4)
+          real(kd_conv) :: tmp(4)
           tmp = T(i,j-1:j+2)
           associate(vv => v)
             F(i-1,j,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
@@ -304,7 +314,7 @@ contains
     else
       if (fdy <= threshold) then
         block
-          real(8) :: tmp(2)
+          real(kd_conv) :: tmp(2)
           tmp = T(i,j:j+1)
           associate(vv => v)
             F(i-1,j,:) = KEEP(id_acc2,       rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
@@ -322,7 +332,7 @@ contains
     #:else
     if (fdy <= threshold) then
       block
-        real(8) :: tmp(2)
+        real(kd_conv) :: tmp(2)
         tmp = T(i,j:j+1)
         associate(vv => v)
           F(i-1,j,:) = KEEP(id_acc,         rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
@@ -340,8 +350,19 @@ contains
 
     if (compute_slau) then
       associate(un1 => vl, un2 => v_r)
+        #:if CONV_CAST
+        block
+          real(kd_conv) :: o1, o2, o3, o4
+          call SLAU(id_slau, rhol, rho_r, ul, u_r, vl, v_r, un1, un2, pl, p_r, Normal_y, 1.0_sp, o1, o2, o3, o4)
+          F(i-1,j,1) = o1
+          F(i-1,j,2) = o2
+          F(i-1,j,3) = o3
+          F(i-1,j,4) = o4
+        end block
+        #:else
         call SLAU(id_slau, rhol, rho_r, ul, u_r, vl, v_r, un1, un2, pl, p_r, Normal_y, 1.0_sp, &
                   F(i-1,j,1), F(i-1,j,2), F(i-1,j,3), F(i-1,j,4))
+        #:endif
       end associate
     endif
   end subroutine calc_hybrid_y

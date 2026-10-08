@@ -1,6 +1,7 @@
 !> Module for shock detection and hybrid scheme support
 !> Computes Ducros sensor for automatic scheme switching between KEEP and SLAU
 module calc_hybrid
+  use mod_precision
   use cudafor
   use mod_globals, only : gamma, sp
   implicit none
@@ -10,23 +11,23 @@ contains
   !> Values closer to 1 indicate shock regions, close to 0 indicates smooth flow
   attributes(global) subroutine calc_Ducros(nx, ny, nz, dx, dy, dz, Q_2, Q_3, Q_4, fd)
     integer, intent(in), value                         :: nx, ny, nz
-    real(8), intent(in), dimension(nx-1), device       :: dx ! 1 / dx
-    real(8), intent(in), dimension(ny-1), device       :: dy ! 1 / dy
-    real(8), intent(in), dimension(nz-1), device       :: dz ! 1 / dz
-    real(8), intent(in), dimension(nx,ny,nz), device   :: Q_2, Q_3, Q_4
+    real(kd_arr), intent(in), dimension(nx-1), device       :: dx ! 1 / dx
+    real(kd_arr), intent(in), dimension(ny-1), device       :: dy ! 1 / dy
+    real(kd_arr), intent(in), dimension(nz-1), device       :: dz ! 1 / dz
+    real(kd_arr), intent(in), dimension(nx,ny,nz), device   :: Q_2, Q_3, Q_4
     real(sp), intent(out), device                      :: fd(nx,ny,nz)
     integer i, j, k
-    real(8) dudx, dudy, dudz, dvdx, dvdy, dvdz, dwdx, dwdy, dwdz
-    real(8) dx_tmp, dy_tmp, dz_tmp
+    real(kd_arr) dudx, dudy, dudz, dvdx, dvdy, dvdz, dwdx, dwdy, dwdz
+    real(kd_arr) dx_tmp, dy_tmp, dz_tmp
     real(sp) div, rot(3)
     real(sp), parameter :: eps = 1.0e-12_sp
     i = (blockIdx%x-1)*blockDim%x + threadIdx%x + 1 
     j = (blockIdx%y-1)*blockDim%y + threadIdx%y + 1
     k = (blockIdx%z-1)*blockDim%z + threadIdx%z + 1
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
-    dx_tmp = 0.25d0 * (dx(i-1) + dx(i))
-    dy_tmp = 0.25d0 * (dy(j-1) + dy(j))
-    dz_tmp = 0.25d0 * (dz(k-1) + dz(k))
+    dx_tmp = 0.25_kd_arr * (dx(i-1) + dx(i))
+    dy_tmp = 0.25_kd_arr * (dy(j-1) + dy(j))
+    dz_tmp = 0.25_kd_arr * (dz(k-1) + dz(k))
     dudx = (-Q_2(i-1,j,k) + Q_2(i+1,j,k)) * dx_tmp
     dvdx = (-Q_3(i-1,j,k) + Q_3(i+1,j,k)) * dx_tmp
     dwdx = (-Q_4(i-1,j,k) + Q_4(i+1,j,k)) * dx_tmp
@@ -73,11 +74,11 @@ contains
 
 
   pure attributes(device) function wiggle_detector(phi) result(ans)
-    real(8), intent(in) :: phi(4)
-    real(8) ans, phi1, phi2
+    real(kd_conv), intent(in) :: phi(4)
+    real(kd_conv) ans, phi1, phi2
     phi1 = (-phi(1) + phi(2)) * (-phi(2) + phi(3))
     phi2 = (-phi(3) + phi(4)) * (-phi(2) + phi(3))
-    ans  = 0.5d0 * (1.d0 - sign(1.d0, min(phi1, phi2)))
+    ans  = 0.5_kd_conv * (1._kd_conv - sign(1._kd_conv, min(phi1, phi2)))
   end function wiggle_detector
 end module calc_hybrid
 

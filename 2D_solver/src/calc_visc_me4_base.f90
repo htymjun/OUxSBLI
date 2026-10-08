@@ -2,10 +2,10 @@
   !> Uses compact central difference: F(i+1/2) = (-F_i + 26*F_{i+1/2} - F_{i+1})/24
   !> Achieves O(dx^4) accuracy with implicit stencil via dispersion relation optimization
   attributes(device) function flux4(a) result(ans)
-    real(8), intent(in) :: a(3) !< 3-point array of flux values
-    real(8) ans                 !< 4th-order flux result (-a1 + 26*a2 - a3) / 24
+    real(kd_visc), intent(in) :: a(3) !< 3-point array of flux values
+    real(kd_visc) ans                 !< 4th-order flux result (-a1 + 26*a2 - a3) / 24
     !ans = (-a(1) + 26.d0 * a(2) - a(3)) * one_24
-    ans = one_24 * fma(26.d0, a(2), -(a(1) + a(3)))
+    ans = one_24 * fma(26._kd_visc, a(2), -(a(1) + a(3)))
   end function flux4
 
   !> Pure device subroutine: Compute diagonal stress tensor components via 4th-order stencils
@@ -13,39 +13,39 @@
   !> Uses 6-point stencil for strain rates and 3-point for viscosity averaging
   !> Computes work term ut_ii = u_i * t_ii needed for energy equation viscous contribution
   attributes(device) subroutine calc_tau_straight(mu, u, vy, d, t11, ut11)
-    real(8), intent(in), contiguous :: mu(3) !< viscosity at 3 stencil points
-    real(8), intent(in), contiguous :: u(6)  !< velocity u at 6-point stencil
-    real(8), intent(in), contiguous :: vy(6) !< dv/dy at 6-point stencil
-    real(8), intent(in)             :: d     !< inverse grid spacing (1/dx or 1/dy)
-    real(8), intent(out)            :: t11   !< stress tensor component t_11
-    real(8), intent(out)            :: ut11  !< work term u * t_11
-    real(8) tmp1, tmp2, tmp3
-    real(8) ax, svy
+    real(kd_visc), intent(in), contiguous :: mu(3) !< viscosity at 3 stencil points
+    real(kd_visc), intent(in), contiguous :: u(6)  !< velocity u at 6-point stencil
+    real(kd_visc), intent(in), contiguous :: vy(6) !< dv/dy at 6-point stencil
+    real(kd_visc), intent(in)             :: d     !< inverse grid spacing (1/dx or 1/dy)
+    real(kd_visc), intent(out)            :: t11   !< stress tensor component t_11
+    real(kd_visc), intent(out)            :: ut11  !< work term u * t_11
+    real(kd_visc) tmp1, tmp2, tmp3
+    real(kd_visc) ax, svy
     !tmp1 = two_third * mu(1) * ((2.25d0 * (-u(2) + u(3)) - (-u(1) + u(4)) * one_twelfth) * d &
     !       - 0.0625d0 * (-vy(1) + 9.d0 * (vy(2) + vy(3)) - vy(4)))
-    ax   = fma(2.25d0, u(3) - u(2), -one_twelfth * (u(4) - u(1))) * d
-    svy  = fma(9.d0, vy(2) + vy(3), -(vy(1) + vy(4)))
-    tmp1 = two_third * mu(1) * fma(-0.0625d0, svy, ax)
+    ax   = fma(2.25_kd_visc, u(3) - u(2), -one_twelfth * (u(4) - u(1))) * d
+    svy  = fma(9._kd_visc, vy(2) + vy(3), -(vy(1) + vy(4)))
+    tmp1 = two_third * mu(1) * fma(-0.0625_kd_visc, svy, ax)
     !tmp2 = two_third * mu(2) * ((2.25d0 * (-u(3) + u(4)) - (-u(2) + u(5)) * one_twelfth) * d &
     !       - 0.0625d0 * (-vy(2) + 9.d0 * (vy(3) + vy(4)) - vy(5)))
-    ax   = fma(2.25d0, u(4) - u(3), -one_twelfth * (u(5) - u(2))) * d
-    svy  = fma(9.d0, vy(3) + vy(4), -(vy(2) + vy(5)))
-    tmp2 = two_third * mu(2) * fma(-0.0625d0, svy, ax)
+    ax   = fma(2.25_kd_visc, u(4) - u(3), -one_twelfth * (u(5) - u(2))) * d
+    svy  = fma(9._kd_visc, vy(3) + vy(4), -(vy(2) + vy(5)))
+    tmp2 = two_third * mu(2) * fma(-0.0625_kd_visc, svy, ax)
     !tmp3 = two_third * mu(3) * ((2.25d0 * (-u(4) + u(5)) - (-u(3) + u(6)) * one_twelfth) * d &
     !       - 0.0625d0 * (-vy(3) + 9.d0 * (vy(4) + vy(5)) - vy(6)))
-    ax   = fma(2.25d0, u(5) - u(4), -one_twelfth * (u(6) - u(3))) * d
-    svy  = fma(9.d0, vy(4) + vy(5), -(vy(3) + vy(6)))
-    tmp3 = two_third * mu(3) * fma(-0.0625d0, svy, ax)
+    ax   = fma(2.25_kd_visc, u(5) - u(4), -one_twelfth * (u(6) - u(3))) * d
+    svy  = fma(9._kd_visc, vy(4) + vy(5), -(vy(3) + vy(6)))
+    tmp3 = two_third * mu(3) * fma(-0.0625_kd_visc, svy, ax)
     !t11  = (-tmp1 + 26.d0 * tmp2 - tmp3) * one_24
-    t11  = one_24 * fma(26.d0, tmp2, -(tmp1 + tmp3))
+    t11  = one_24 * fma(26._kd_visc, tmp2, -(tmp1 + tmp3))
     !tmp1 = 0.0625d0 * (-u(1) + 9.d0 * (u(2) + u(3)) - u(4)) * tmp1
     !tmp2 = 0.0625d0 * (-u(2) + 9.d0 * (u(3) + u(4)) - u(5)) * tmp2
     !tmp3 = 0.0625d0 * (-u(3) + 9.d0 * (u(4) + u(5)) - u(6)) * tmp3
-    tmp1 = 0.0625d0 * fma(9.d0, u(2) + u(3), -(u(1) + u(4))) * tmp1
-    tmp2 = 0.0625d0 * fma(9.d0, u(3) + u(4), -(u(2) + u(5))) * tmp2
-    tmp3 = 0.0625d0 * fma(9.d0, u(4) + u(5), -(u(3) + u(6))) * tmp3
+    tmp1 = 0.0625_kd_visc * fma(9._kd_visc, u(2) + u(3), -(u(1) + u(4))) * tmp1
+    tmp2 = 0.0625_kd_visc * fma(9._kd_visc, u(3) + u(4), -(u(2) + u(5))) * tmp2
+    tmp3 = 0.0625_kd_visc * fma(9._kd_visc, u(4) + u(5), -(u(3) + u(6))) * tmp3
     !ut11 = (-tmp1 + 26.d0 * tmp2 - tmp3) * one_24
-    ut11 = one_24 * fma(26.d0, tmp2, -(tmp1 + tmp3))
+    ut11 = one_24 * fma(26._kd_visc, tmp2, -(tmp1 + tmp3))
   end subroutine calc_tau_straight
 
 
@@ -53,37 +53,37 @@
   !> Shear: t_ij = mu*(u_i,j + u_j,i) for i != j components
   !> 4th-order stencil preserves cross-derivatives symmetry (t_12 = t_21)
   attributes(device) subroutine calc_tau_cross(mu, v, uy, d, t12, vt12)
-    real(8), intent(in), contiguous :: mu(3) !< viscosity at 3 stencil points
-    real(8), intent(in), contiguous :: v(6)  !< velocity v at 6-point stencil
-    real(8), intent(in), contiguous :: uy(6) !< du/dy at 6-point stencil
-    real(8), intent(in)             :: d      !< inverse grid spacing
-    real(8), intent(out)            :: t12    !< shear stress component t_12
-    real(8), intent(out)            :: vt12   !< work term v * t_12
-    real(8) tmp1, tmp2, tmp3
-    real(8) av, suy
+    real(kd_visc), intent(in), contiguous :: mu(3) !< viscosity at 3 stencil points
+    real(kd_visc), intent(in), contiguous :: v(6)  !< velocity v at 6-point stencil
+    real(kd_visc), intent(in), contiguous :: uy(6) !< du/dy at 6-point stencil
+    real(kd_visc), intent(in)             :: d      !< inverse grid spacing
+    real(kd_visc), intent(out)            :: t12    !< shear stress component t_12
+    real(kd_visc), intent(out)            :: vt12   !< work term v * t_12
+    real(kd_visc) tmp1, tmp2, tmp3
+    real(kd_visc) av, suy
     !tmp1 = mu(1) * ((1.125d0 * (-v(2) + v(3)) - (-v(1) + v(4)) * one_24) * d &
     !                + 0.0625d0 * (-uy(1) + 9.d0 * (uy(2) + uy(3)) - uy(4)))
     !tmp2 = mu(2) * ((1.125d0 * (-v(3) + v(4)) - (-v(2) + v(5)) * one_24) * d &
     !                + 0.0625d0 * (-uy(2) + 9.d0 * (uy(3) + uy(4)) - uy(5)))
     !tmp3 = mu(3) * ((1.125d0 * (-v(4) + v(5)) - (-v(3) + v(6)) * one_24) * d &
     !                + 0.0625d0 * (-uy(3) + 9.d0 * (uy(4) + uy(5)) - uy(6)))
-    av   = fma(1.125d0, v(3) - v(2), -one_24 * (v(4) - v(1))) * d
-    suy  = fma(9.d0, uy(2) + uy(3), -(uy(1) + uy(4)))
-    tmp1 = mu(1) * fma(0.0625d0, suy, av)
-    av   = fma(1.125d0, v(4) - v(3), -one_24 * (v(5) - v(2))) * d
-    suy  = fma(9.d0, uy(3) + uy(4), -(uy(2) + uy(5)))
-    tmp2 = mu(2) * fma(0.0625d0, suy, av)
-    av   = fma(1.125d0, v(5) - v(4), -one_24 * (v(6) - v(3))) * d
-    suy  = fma(9.d0, uy(4) + uy(5), -(uy(3) + uy(6)))
-    tmp3 = mu(3) * fma(0.0625d0, suy, av)
+    av   = fma(1.125_kd_visc, v(3) - v(2), -one_24 * (v(4) - v(1))) * d
+    suy  = fma(9._kd_visc, uy(2) + uy(3), -(uy(1) + uy(4)))
+    tmp1 = mu(1) * fma(0.0625_kd_visc, suy, av)
+    av   = fma(1.125_kd_visc, v(4) - v(3), -one_24 * (v(5) - v(2))) * d
+    suy  = fma(9._kd_visc, uy(3) + uy(4), -(uy(2) + uy(5)))
+    tmp2 = mu(2) * fma(0.0625_kd_visc, suy, av)
+    av   = fma(1.125_kd_visc, v(5) - v(4), -one_24 * (v(6) - v(3))) * d
+    suy  = fma(9._kd_visc, uy(4) + uy(5), -(uy(3) + uy(6)))
+    tmp3 = mu(3) * fma(0.0625_kd_visc, suy, av)
     !t12  = (-tmp1 + 26.d0 * tmp2 - tmp3) * one_24
-    t12  = one_24 * fma(26.d0, tmp2, -(tmp1 + tmp3))
+    t12  = one_24 * fma(26._kd_visc, tmp2, -(tmp1 + tmp3))
     !tmp1 = 0.0625d0 * (-v(1) + 9.d0 * (v(2) + v(3)) - v(4)) * tmp1
     !tmp2 = 0.0625d0 * (-v(2) + 9.d0 * (v(3) + v(4)) - v(5)) * tmp2
     !tmp3 = 0.0625d0 * (-v(3) + 9.d0 * (v(4) + v(5)) - v(6)) * tmp3
-    tmp1 = 0.0625d0 * fma(9.d0, v(2) + v(3), -(v(1) + v(4))) * tmp1
-    tmp2 = 0.0625d0 * fma(9.d0, v(3) + v(4), -(v(2) + v(5))) * tmp2
-    tmp3 = 0.0625d0 * fma(9.d0, v(4) + v(5), -(v(3) + v(6))) * tmp3
+    tmp1 = 0.0625_kd_visc * fma(9._kd_visc, v(2) + v(3), -(v(1) + v(4))) * tmp1
+    tmp2 = 0.0625_kd_visc * fma(9._kd_visc, v(3) + v(4), -(v(2) + v(5))) * tmp2
+    tmp3 = 0.0625_kd_visc * fma(9._kd_visc, v(4) + v(5), -(v(3) + v(6))) * tmp3
     !vt12 = (-tmp1 + 26.d0 * tmp2 - tmp3) * one_24
-    vt12 = one_24 * fma(26.d0, tmp2, -(tmp1 + tmp3))
+    vt12 = one_24 * fma(26._kd_visc, tmp2, -(tmp1 + tmp3))
   end subroutine calc_tau_cross

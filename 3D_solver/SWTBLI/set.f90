@@ -1,4 +1,5 @@
 module set
+  use mod_precision
   use cudafor
   use mpi
   use mod_globals, only : ny1, nre2, gamma, R, Cp, Pr, u0, p0, T0, M0, blt, beta, &
@@ -84,9 +85,9 @@ contains
 
   subroutine set_bc_Gaussian(nx, ny, nz, nxg, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     integer, intent(in), value     :: nx, ny, nz, nxg
-    real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
-    real(8), device :: tmp(4)
+    real(kd_arr), intent(in), device    :: Jacobian(nx,ny)
+    real(kd_arr), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(kd_arr), device :: tmp(4)
     integer i, k
     ! y direction one-sided
     !$cuf kernel do(1)<<<*,*>>>
@@ -123,15 +124,15 @@ contains
 
   subroutine set_bc(myrank, nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Qre_1, Qre_2, Qre_3, Qre_4, Qre_5)
     integer, intent(in), value     :: myrank, nx, ny, nz
-    real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz) ! Q / Jacobian
-    real(8), intent(in), device, optional :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
+    real(kd_arr), intent(in), device    :: Jacobian(nx,ny)
+    real(kd_arr), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz) ! Q / Jacobian
+    real(kd_arr), intent(in), device, optional :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
     integer i, j, k, offset, ireq, ierr, istat(MPI_STATUS_SIZE)
     real(8) :: p_wall, pre, rho, rhou, rhov, rhow, p, e
     ! Riemann invariants
     real(8) :: rhoin, pin, cin, vin, Rp, Rm, rhob, ub, vb, cb, pb, v0 = 0.d0
     ! parallel
-    real(8), device :: Q1d(3*(ny1-2)*(nz-6)*5)
+    real(kd_arr), device :: Q1d(3*(ny1-2)*(nz-6)*5)
     ! cache
     real(8) Jacobian_tmp
     ! temperature and density at top
@@ -196,9 +197,9 @@ contains
       endif
       call flatten_rescale(nx, ny1, nz, nre2, 3, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q1d)
       !Q_cpu = Q1d ! This is safe but very slow
-      call MPI_ISEND(Q1d, 5*3*(ny1-2)*(nz-6), MPI_REAL8, myrank+2, 0, MPI_COMM_WORLD, ireq, ierr)
+      call MPI_ISEND(Q1d, 5*3*(ny1-2)*(nz-6), MPI_KD_ARR, myrank+2, 0, MPI_COMM_WORLD, ireq, ierr)
     else
-      call MPI_IRECV(Q1d, 5*3*(ny1-2)*(nz-6), MPI_REAL8, myrank-2, 0, MPI_COMM_WORLD, ireq, ierr)
+      call MPI_IRECV(Q1d, 5*3*(ny1-2)*(nz-6), MPI_KD_ARR, myrank-2, 0, MPI_COMM_WORLD, ireq, ierr)
       call MPI_WAIT(ireq, istat, ierr)
       !Q1d = Q_cpu ! This is safe but very slow
       ! inlet boundary layer
@@ -303,7 +304,7 @@ contains
 
   subroutine set_bc_mut(nx,ny,nz,mut,qc2)
     integer, intent(in), value      :: nx, ny, nz
-    real(8), intent(inout), device  :: mut(nx,ny,nz), qc2(nx,ny,nz)
+    real(kd_arr), intent(inout), device  :: mut(nx,ny,nz), qc2(nx,ny,nz)
     integer i, j, k
     !$cuf kernel do(2) <<<*,*>>>
     do k = 4, nz-3

@@ -1,4 +1,5 @@
 module load_smem_visc2
+  use mod_precision
   use mod_globals, only : threadsEv, threadsFv
   implicit none
   private
@@ -11,12 +12,12 @@ contains
     integer, intent(in), value              :: idx        !< index for shared memory
     integer, intent(in), value              :: nx         !< number of grid points in x direction
     integer, intent(in), value              :: ny         !< number of grid points in y direction
-    real(8), intent(in), device, contiguous :: Q_2(nx,ny) !< u
-    real(8), intent(in), device, contiguous :: Q_3(nx,ny) !< v
+    real(kd_arr), intent(in), device, contiguous :: Q_2(nx,ny) !< u
+    real(kd_arr), intent(in), device, contiguous :: Q_3(nx,ny) !< v
     integer, parameter :: sx = threadsEv%x + 1
     integer, parameter :: sy = threadsEv%y
-    real(8), intent(inout) :: u(0:sx*sy-1) !< attribute(shared)
-    real(8), intent(inout) :: v(0:sx*sy-1) !< attribute(shared)
+    real(kd_visc), intent(inout) :: u(0:sx*sy-1) !< attribute(shared)
+    real(kd_visc), intent(inout) :: v(0:sx*sy-1) !< attribute(shared)
     integer i_base, ii, i, idx_l, offset_y
     i_base   = (blockIdx%x-1)*blockDim%x
     offset_y = (jt-1)*sx
@@ -27,8 +28,8 @@ contains
         u(idx_l) = Q_2(i,j)
         v(idx_l) = Q_3(i,j)
       else
-        u(idx_l) = 0.d0
-        v(idx_l) = 0.d0
+        u(idx_l) = 0._kd_visc
+        v(idx_l) = 0._kd_visc
       endif
     enddo
     call syncthreads()
@@ -42,12 +43,12 @@ contains
     integer, intent(in), value              :: idx        !< index for shared memory
     integer, intent(in), value              :: nx         !< number of grid points in x direction
     integer, intent(in), value              :: ny         !< number of grid points in y direction
-    real(8), intent(in), device, contiguous :: Q_2(nx,ny) !< u
-    real(8), intent(in), device, contiguous :: Q_3(nx,ny) !< v
+    real(kd_arr), intent(in), device, contiguous :: Q_2(nx,ny) !< u
+    real(kd_arr), intent(in), device, contiguous :: Q_3(nx,ny) !< v
     integer, parameter :: sx = threadsFv%x
     integer, parameter :: sy = threadsFv%y + 1
-    real(8), intent(inout) :: u(0:sx*sy-1) !< attribute(shared)
-    real(8), intent(inout) :: v(0:sx*sy-1) !< attribute(shared)
+    real(kd_visc), intent(inout) :: u(0:sx*sy-1) !< attribute(shared)
+    real(kd_visc), intent(inout) :: v(0:sx*sy-1) !< attribute(shared)
     integer j_base, jj, j, idx_l, offset_x
     j_base   = (blockIdx%y-1)*blockDim%y
     offset_x = (it-1)*sy
@@ -58,8 +59,8 @@ contains
         u(idx_l) = Q_2(i,j)
         v(idx_l) = Q_3(i,j)
       else
-        u(idx_l) = 0.d0
-        v(idx_l) = 0.d0
+        u(idx_l) = 0._kd_visc
+        v(idx_l) = 0._kd_visc
       endif
     enddo
     call syncthreads()

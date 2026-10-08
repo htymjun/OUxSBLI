@@ -43,6 +43,8 @@ _ALIAS = {
     "bc_y":       "BC_Y",
     "commz":      "COMMZ",
     "output_precision": "OUTPUT_PRECISION",
+    "conv_precision":   "CONV_PRECISION",
+    "visc_precision":   "VISC_PRECISION",
 }
 
 # ---------------------------------------------------------------------------

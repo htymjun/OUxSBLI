@@ -1,4 +1,5 @@
 module set
+  use mod_precision
   use cudafor
   use mod_globals, only : gamma, rho0, u0, p0, rho2, p2, ux, uy, beta, Lx, Ly, Lz, x_in, Xsh, i_LE, nx, dt
   use mod_constant, only : gamma_1, over_gamma_1
@@ -103,8 +104,8 @@ contains
   subroutine set_bc(myrank, nx, ny, nz, xs, zs, phi_l_gpu, phi_m_gpu, t_now, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     integer, intent(in), value     :: myrank, nx, ny, nz
     real(8), intent(in)  :: xs(nx), zs(nz)
-    real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(kd_arr), intent(in), device    :: Jacobian(nx,ny)
+    real(kd_arr), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8) Jacobian_tmp
     integer i, j, k
     real(8) :: p_wall
@@ -123,9 +124,9 @@ contains
     integer :: l, m
     real(8), parameter :: beta_force = 75000 !(Hz)
     real(8) :: Z_l(l_max), T_m(m_max)
-    real(8), intent(in), device ::phi_l_gpu(l_max), phi_m_gpu(m_max)
-    real(8), device :: Z_l_gpu(l_max), T_m_gpu(m_max)
-    real(8), device :: xs_gpu(nx), zs_gpu(nz)
+    real(kd_arr), intent(in), device ::phi_l_gpu(l_max), phi_m_gpu(m_max)
+    real(kd_arr), device :: Z_l_gpu(l_max), T_m_gpu(m_max)
+    real(kd_arr), device :: xs_gpu(nx), zs_gpu(nz)
     integer t_now
     real(8) r, theta, t_now_local
     real(8), parameter :: pi = 4.0d0 * atan(1.0d0)
@@ -269,7 +270,7 @@ contains
 
   subroutine set_bc_mut(nx,ny,nz,mut,qc2)
     integer, intent(in), value      :: nx, ny, nz
-    real(8), intent(inout), device  :: mut(nx,ny,nz), qc2(nx,ny,nz)
+    real(kd_arr), intent(inout), device  :: mut(nx,ny,nz), qc2(nx,ny,nz)
     integer i, j, k
     !$cuf kernel do(2) <<<*,*>>>
     do k = 4, nz-3

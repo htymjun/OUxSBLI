@@ -1,4 +1,5 @@
 module set_bc_tbl_sbli
+  use mod_precision
   use mod_globals, only : R, gamma
   use mod_constant, only : gamma_1, over_gamma, over_gamma_1, Cp
   implicit none
@@ -6,8 +7,8 @@ contains
   subroutine set_bc_Neumann_tbl_top_down(nx, ny, nz, offset, istart, iend, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     use mod_globals, only : Taw, rf, u0, p0
     integer, intent(in), value     :: nx, ny, nz, offset, istart, iend
-    real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(kd_arr), intent(in), device    :: Jacobian(nx,ny)
+    real(kd_arr), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8) :: Jacobian_tmp, over_QJ1, p_wall, rhob, ub, vb, wb, pb
     integer i, k
     !$cuf kernel do(2)<<<*,*>>>
@@ -39,8 +40,8 @@ contains
   subroutine set_bc_Riemann_tbl_top_down(nx, ny, nz, offset, istart, iend, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     use mod_globals, only : Taw, rf, u0, p0
     integer, intent(in), value     :: nx, ny, nz, offset, istart, iend
-    real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(kd_arr), intent(in), device    :: Jacobian(nx,ny)
+    real(kd_arr), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8), parameter :: T       = Taw - rf * u0**2 / (2.d0 * Cp)
     real(8), parameter :: rho0    = p0 / (R * T)
     real(8), parameter :: c0      = sqrt(gamma * p0 / rho0)

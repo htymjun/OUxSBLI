@@ -1,4 +1,5 @@
 module set_bc_common
+  use mod_precision
   use mod_globals, only : nx, ny, nz
   implicit none
   interface set_bc_cyclic
@@ -101,7 +102,7 @@ contains
   subroutine set_bc_cyclic2(id_accuracy, nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5)
     integer(kind=2), intent(in), value :: id_accuracy
     integer, intent(in), value         :: nx, ny, nz
-    real(8), intent(inout), device     :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    real(kd_arr), intent(inout), device     :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     integer i, j, k
     !$cuf kernel do(2)<<<*,*>>>
     do k = 2, nz-1
@@ -150,7 +151,7 @@ contains
   subroutine set_bc_cyclic4(id_accuracy, nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5)
     integer(kind=4), intent(in), value :: id_accuracy
     integer, intent(in), value         :: nx, ny, nz
-    real(8), intent(inout), device     :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    real(kd_arr), intent(inout), device     :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     integer i, j, k
     !$cuf kernel do(2) <<<*,*>>>
     do k = 3, nz-2
@@ -213,7 +214,7 @@ contains
   subroutine set_bc_cyclic6(id_accuracy, nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5)
     integer(kind=8), intent(in), value :: id_accuracy
     integer, intent(in), value         :: nx, ny, nz
-    real(8), intent(inout), device     :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    real(kd_arr), intent(inout), device     :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     integer i, j, k
     !$cuf kernel do(2)<<<*,*>>>
     do k = 4, nz-3
@@ -330,7 +331,7 @@ contains
   !> Executed on GPU during main time-stepping loop
   subroutine set_bc_cyclic_z(nx, ny, nz, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     integer, intent(in), value     :: nx, ny, nz
-    real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(kd_arr), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     integer i, j
     !$cuf kernel do(2)<<<*,*>>>
     do j = 1, ny
@@ -352,7 +353,7 @@ contains
   !> Executed on GPU during main time-stepping loop
   subroutine set_bc_mut_common(nx, ny, nz, mut, qc2)
     integer, intent(in), value     :: nx, ny, nz
-    real(8), intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
+    real(kd_arr), intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
     integer i, j, k
     !$cuf kernel do(2) <<<*,*>>>
     do k = 2, nz-1

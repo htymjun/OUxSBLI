@@ -38,6 +38,7 @@ module mod_globals
   real(8), parameter :: gamma   = 1.4d0    ! heat capacity ratio
   real(8), parameter :: R       = 287.03d0 ! gas constant (non-dimensional)
   real(8), parameter :: Pr      = 0.72d0   ! Prandtl number
+  real(8), parameter :: Prt     = 0.9d0    ! turbulent Prandtl number (LES branch of calc_visc2_curv)
   real(8), parameter :: Ma_inf  = 0.8d0    ! Mach number (subsonic)
   real(8), parameter :: p_inf   = 101.3d3
   real(8), parameter :: T_inf   = 288.15d0

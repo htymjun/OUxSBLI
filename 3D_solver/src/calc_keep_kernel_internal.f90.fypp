@@ -7,8 +7,11 @@
 #! reaches a z ghost plane after the halo exchange has landed.
 #:set KOFF_VARIANTS = [False, True] if COMMZ else [False]
 module calc_keep_kernel_internal
-  use mod_globals, only : gamma, threadsE, threadsF, threadsG
-  use mod_constant, only : R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
+  use mod_precision
+  ! constants referenced by the included calc_scheme_math.f90
+  use mod_constant, only : gamma_conv, over_gamma_1_conv, R_over_gamma_1_conv, one_third_conv, one_sixth_conv, one_twelfth_conv, two_third_conv, &
+                           one_24_conv, one_48_conv, one_60_conv, one_120_conv, one_240_conv, seven_twelfth_conv
+  use mod_globals, only : threadsE, threadsF, threadsG
   use libm
   implicit none
   private
@@ -16,12 +19,6 @@ module calc_keep_kernel_internal
   #:if COMMZ
   public calc_keep_x_in_koff, calc_keep_y_in_koff
   #:endif
-  real(8), parameter :: one_24        = 1.d0 / 24.d0
-  real(8), parameter :: one_48        = 1.d0 / 48.d0
-  real(8), parameter :: one_60        = 1.d0 / 60.d0
-  real(8), parameter :: one_120       = 1.d0 / 120.d0
-  real(8), parameter :: one_240       = 1.d0 / 240.d0
-  real(8), parameter :: seven_twelfth = 7.d0 / 12.d0
   integer, parameter :: io = ${ORDER_IO}$
 
 #:if ORDER == 6
@@ -42,17 +39,17 @@ contains
 #:set sfx  = '_koff' if is_koff else ''
 #:set karg = ', k_lo, k_hi' if is_koff else ''
   attributes(global) subroutine calc_keep_x_in${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, E${karg}$)
-    use mod_constant, only : Normal_x
+    use mod_constant, only : Normal_x => Normal_x_conv
     integer, intent(in), value                :: nx, ny, nz${karg}$
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
+    real(kd_arr), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    real(kd_arr), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
     integer i, j, k, it, jt, kt
     integer :: ii, i_base, idx, offset_yz
     logical :: jk_in_range
     integer, parameter :: sx = threadsE%x + 2*io + 1
     integer, parameter :: sy = threadsE%y
     integer, parameter :: sz = threadsE%z
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
+    real(kd_conv), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -90,17 +87,17 @@ contains
 #:set sfx  = '_koff' if is_koff else ''
 #:set karg = ', k_lo, k_hi' if is_koff else ''
   attributes(global) subroutine calc_keep_y_in${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, F${karg}$)
-    use mod_constant, only : Normal_y
+    use mod_constant, only : Normal_y => Normal_y_conv
     integer, intent(in), value                :: nx, ny, nz${karg}$
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
+    real(kd_arr), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    real(kd_arr), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
     integer i, j, k, it, jt, kt
     integer :: jj, j_base, idx, offset_xz
     logical :: ik_in_range
     integer, parameter :: sx = threadsF%x
     integer, parameter :: sy = threadsF%y + 2*io + 1
     integer, parameter :: sz = threadsF%z
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
+    real(kd_conv), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -135,17 +132,17 @@ contains
 
 
   attributes(global) subroutine calc_keep_z_in(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, G)
-    use mod_constant, only : Normal_z
+    use mod_constant, only : Normal_z => Normal_z_conv
     integer, intent(in), value                :: nx, ny, nz
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: G(nx-2,ny-2,nz-1,5)
+    real(kd_arr), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    real(kd_arr), intent(out), device, contiguous  :: G(nx-2,ny-2,nz-1,5)
     integer i, j, k, it, jt, kt
     integer :: kk, k_base, idx, offset_xy
     logical :: ij_in_range
     integer, parameter :: sx = threadsG%x
     integer, parameter :: sy = threadsG%y
     integer, parameter :: sz = threadsG%z + 2*io + 1
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
+    real(kd_conv), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -179,17 +176,17 @@ contains
 
 
   attributes(global) subroutine calc_keep_z_in_koff(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, G, k_lo, k_hi)
-    use mod_constant, only : Normal_z
+    use mod_constant, only : Normal_z => Normal_z_conv
     integer, intent(in), value                :: nx, ny, nz, k_lo, k_hi
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    real(kd_arr), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     integer i, j, k, it, jt, kt
     integer :: kk, k_base, idx, offset_xy
     logical :: ij_in_range
     integer, parameter :: sx = threadsG%x
     integer, parameter :: sy = threadsG%y
     integer, parameter :: sz = threadsG%z + 2*io + 1
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
+    real(kd_conv), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z

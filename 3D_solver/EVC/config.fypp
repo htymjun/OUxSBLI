@@ -12,3 +12,5 @@
 #:set COMMZ         = False
 #:set ORDER_IO = ORDER // 2 - 1
 #:set OUTPUT_PRECISION = 8
+#:set CONV_PRECISION = 8
+#:set VISC_PRECISION = 8

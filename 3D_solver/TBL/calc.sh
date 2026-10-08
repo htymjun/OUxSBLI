@@ -17,5 +17,7 @@ bash ./stage.sh "$STAGE"
 
 mkdir -p data recal
 cp mod_globals.f90 set.f90 config.fypp ./data/
-nohup mpiexec -n 2 ./build/a.out > "stage${STAGE}.log" 2>&1 &
+# run_retry.sh restarts the run if nvfortran's -Mchkptr aborts it with its spurious
+# "Null pointer for" message (see tools/run_retry.sh)
+nohup bash ../../tools/run_retry.sh mpiexec 2 ./build/a.out > "stage${STAGE}.log" 2>&1 &
 echo "stage $STAGE running, pid $!  --  tail -f stage${STAGE}.log"

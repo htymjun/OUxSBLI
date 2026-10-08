@@ -26,9 +26,11 @@ macro(add_ouxsbli_case)
   else()
     set(_CASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
   endif()
-  set(FYPP_FLAGS "-I${_CASE_DIR}" "-I${CMAKE_CURRENT_SOURCE_DIR}/../src" "-DDIM=3")
+  set(FYPP_FLAGS "-I${_CASE_DIR}" "-I${CMAKE_CURRENT_SOURCE_DIR}/../../src" "-I${CMAKE_CURRENT_SOURCE_DIR}/../src" "-DDIM=3")
+  # every template includes precision.fypp (CONV_PRECISION / VISC_PRECISION -> kinds)
+  set(_PRECISION_FYPP "${CMAKE_CURRENT_SOURCE_DIR}/../../src/precision.fypp")
 
-  set(_PARENT_FYPP "mod_constant" "calc_muscl" "print")
+  set(_PARENT_FYPP "mod_precision" "mod_constant" "calc_muscl" "print")
   set(_SHARED_FYPP
       "calc_visc2"
       "calc_visc_high"
@@ -55,7 +57,7 @@ macro(add_ouxsbli_case)
   set(_SCHEME_MATH_OUT "${CMAKE_CURRENT_BINARY_DIR}/calc_scheme_math.f90")
   add_custom_command(OUTPUT ${_SCHEME_MATH_OUT}
     COMMAND ${FYPP_EXE} ${FYPP_FLAGS} ${_SCHEME_MATH_IN} ${_SCHEME_MATH_OUT}
-    DEPENDS ${_SCHEME_MATH_IN} "${_CASE_DIR}/config.fypp"
+    DEPENDS ${_SCHEME_MATH_IN} "${_CASE_DIR}/config.fypp" "${_PRECISION_FYPP}"
     COMMENT "fypp ../../src: calc_scheme_math (include-only)")
 
   set(_GEN "")
@@ -64,7 +66,7 @@ macro(add_ouxsbli_case)
     set(_out "${CMAKE_CURRENT_BINARY_DIR}/${_f}.f90")
     add_custom_command(OUTPUT ${_out}
       COMMAND ${FYPP_EXE} ${FYPP_FLAGS} ${_in} ${_out}
-      DEPENDS ${_in} "${_CASE_DIR}/config.fypp"
+      DEPENDS ${_in} "${_CASE_DIR}/config.fypp" "${_PRECISION_FYPP}"
       COMMENT "fypp ../../src: ${_f}")
     list(APPEND _GEN ${_out})
   endforeach()
@@ -74,7 +76,7 @@ macro(add_ouxsbli_case)
     set(_out "${CMAKE_CURRENT_BINARY_DIR}/${_f}.f90")
     add_custom_command(OUTPUT ${_out}
       COMMAND ${FYPP_EXE} ${FYPP_FLAGS} ${_in} ${_out}
-      DEPENDS ${_in} "${_CASE_DIR}/config.fypp"
+      DEPENDS ${_in} "${_CASE_DIR}/config.fypp" "${_PRECISION_FYPP}"
       COMMENT "fypp ../src: ${_f}")
     list(APPEND _GEN ${_out})
   endforeach()

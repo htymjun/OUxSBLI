@@ -1,5 +1,7 @@
 #!/bin/bash
 mkdir -p data
-nohup mpirun -n 2 a.out &
 cp ./set.f90 ./data
 cp ./mod_globals.f90 ./data
+# run_retry.sh restarts the run if nvfortran's -Mchkptr aborts it with its spurious
+# "Null pointer for" message (see tools/run_retry.sh); output still goes to nohup.out
+nohup bash "$(dirname "$0")/../../tools/run_retry.sh" mpirun 2 ./build/a.out &

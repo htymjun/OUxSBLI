@@ -2,6 +2,7 @@
 !> Curvilinear flux dispatcher (Euler + NS support).
 !> Provides calc_EFG_curv with KEEP/SLAU/Hybrid dispatch via id_scheme kind.
 module calc_flux_base_curv
+  use mod_precision
   use cudafor
   use mod_globals, only : sp, blocks, threads, &
                           blocksE, blocksF, blocksG, threadsE, threadsF, threadsG, &
@@ -49,17 +50,17 @@ contains
     use mod_constant, only : id_accuracy
     implicit none
     integer, intent(in), value               :: nx, ny, nz
-    real(8), intent(in), value               :: dz
-    real(8), intent(in), device, contiguous  :: n_xi_x(nx-1,ny-2), n_xi_y(nx-1,ny-2)
-    real(8), intent(in), device, contiguous  :: n_eta_x(nx-2,ny-1), n_eta_y(nx-2,ny-1)
-    real(8), intent(in), device, contiguous  :: xi_x(nx,ny), xi_y(nx,ny)
-    real(8), intent(in), device, contiguous  :: eta_x(nx,ny), eta_y(nx,ny)
-    real(8), intent(in), device, contiguous  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous  :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
-    real(8), intent(in), device, contiguous  :: T(nx,ny,nz)
-    real(8), intent(out), device, contiguous :: E(nx-1,ny-2,nz-2,5)
-    real(8), intent(out), device, contiguous :: F(nx-2,ny-1,nz-2,5)
-    real(8), intent(out), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    real(kd_arr), intent(in), value          :: dz
+    real(kd_arr), intent(in), device, contiguous  :: n_xi_x(nx-1,ny-2), n_xi_y(nx-1,ny-2)
+    real(kd_arr), intent(in), device, contiguous  :: n_eta_x(nx-2,ny-1), n_eta_y(nx-2,ny-1)
+    real(kd_arr), intent(in), device, contiguous  :: xi_x(nx,ny), xi_y(nx,ny)
+    real(kd_arr), intent(in), device, contiguous  :: eta_x(nx,ny), eta_y(nx,ny)
+    real(kd_arr), intent(in), device, contiguous  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous  :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous  :: T(nx,ny,nz)
+    real(kd_arr), intent(out), device, contiguous :: E(nx-1,ny-2,nz-2,5)
+    real(kd_arr), intent(out), device, contiguous :: F(nx-2,ny-1,nz-2,5)
+    real(kd_arr), intent(out), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     ! shock sensor
     #:if SCHEME in ('SLAU', 'Hybrid')
     call calc_Ducros_curv<<<blocks,threads>>>(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, Q_2, Q_3, Q_4, sensor)
@@ -77,21 +78,21 @@ contains
       xi_x, xi_y, eta_x, eta_y, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, &
       Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, E, F, G)
     integer, intent(in), value               :: nx, ny, nz
-    real(8), intent(in), value               :: dz
-    real(8), intent(in), device, contiguous  :: n_xi_x(nx-1,ny-2), n_xi_y(nx-1,ny-2)
-    real(8), intent(in), device, contiguous  :: n_eta_x(nx-2,ny-1), n_eta_y(nx-2,ny-1)
-    real(8), intent(in), device, contiguous  :: xi_x(nx,ny), xi_y(nx,ny)
-    real(8), intent(in), device, contiguous  :: eta_x(nx,ny), eta_y(nx,ny)
-    real(8), intent(in), device, contiguous  :: Jacobian(nx,ny)
-    real(8), intent(in), device, contiguous  :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous  :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
-    real(8), intent(out), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
-    real(8), intent(out), device, contiguous :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
-    real(8), intent(out), device, contiguous :: T(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: mu(1,1,1)
-    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
-    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
-    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    real(kd_arr), intent(in), value          :: dz
+    real(kd_arr), intent(in), device, contiguous  :: n_xi_x(nx-1,ny-2), n_xi_y(nx-1,ny-2)
+    real(kd_arr), intent(in), device, contiguous  :: n_eta_x(nx-2,ny-1), n_eta_y(nx-2,ny-1)
+    real(kd_arr), intent(in), device, contiguous  :: xi_x(nx,ny), xi_y(nx,ny)
+    real(kd_arr), intent(in), device, contiguous  :: eta_x(nx,ny), eta_y(nx,ny)
+    real(kd_arr), intent(in), device, contiguous  :: Jacobian(nx,ny)
+    real(kd_arr), intent(in), device, contiguous  :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous  :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(kd_arr), intent(out), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
+    real(kd_arr), intent(out), device, contiguous :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    real(kd_arr), intent(out), device, contiguous :: T(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: mu(1,1,1)
+    real(kd_arr), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
+    real(kd_arr), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
+    real(kd_arr), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     call calc_quantities_3D(nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, 1, nz)
     call calc_conv_curv(nx, ny, nz, dz, &
         n_xi_x, n_xi_y, n_eta_x, n_eta_y, xi_x, xi_y, eta_x, eta_y, &
@@ -103,30 +104,30 @@ contains
       xi_x, xi_y, eta_x, eta_y, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, &
       Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, E, F, G)
     integer, intent(in), value               :: nx, ny, nz
-    real(8), intent(in), value               :: dz
-    real(8), intent(in), device, contiguous  :: n_xi_x(nx-1,ny-2), n_xi_y(nx-1,ny-2)
-    real(8), intent(in), device, contiguous  :: n_eta_x(nx-2,ny-1), n_eta_y(nx-2,ny-1)
-    real(8), intent(in), device, contiguous  :: xi_x(nx,ny), xi_y(nx,ny)
-    real(8), intent(in), device, contiguous  :: eta_x(nx,ny), eta_y(nx,ny)
-    real(8), intent(in), device, contiguous  :: Jacobian(nx,ny)
-    real(8), intent(in), device, contiguous  :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous  :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
-    real(8), intent(out), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
-    real(8), intent(out), device, contiguous :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
-    real(8), intent(out), device, contiguous :: T(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: mu(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
-    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
-    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    real(kd_arr), intent(in), value          :: dz
+    real(kd_arr), intent(in), device, contiguous  :: n_xi_x(nx-1,ny-2), n_xi_y(nx-1,ny-2)
+    real(kd_arr), intent(in), device, contiguous  :: n_eta_x(nx-2,ny-1), n_eta_y(nx-2,ny-1)
+    real(kd_arr), intent(in), device, contiguous  :: xi_x(nx,ny), xi_y(nx,ny)
+    real(kd_arr), intent(in), device, contiguous  :: eta_x(nx,ny), eta_y(nx,ny)
+    real(kd_arr), intent(in), device, contiguous  :: Jacobian(nx,ny)
+    real(kd_arr), intent(in), device, contiguous  :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous  :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(kd_arr), intent(out), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
+    real(kd_arr), intent(out), device, contiguous :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    real(kd_arr), intent(out), device, contiguous :: T(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: mu(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
+    real(kd_arr), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
+    real(kd_arr), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     call calc_quantities_T_3D(nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, 1, nz)
     call calc_conv_curv(nx, ny, nz, dz, &
         n_xi_x, n_xi_y, n_eta_x, n_eta_y, xi_x, xi_y, eta_x, eta_y, &
         Q_1, Q_2, Q_3, Q_4, Q_5, T, E, F, G)
-    call calc_Ev2_curv<<<blocksEv,threadsEv>>>(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, &
+    call calc_Ev2_curv<<<blocksEv,threadsEv>>>(nx, ny, nz, real(dz, kd_visc), xi_x, xi_y, eta_x, eta_y, &
         n_xi_x, n_xi_y, Q_2, Q_3, Q_4, T, mu, E)
-    call calc_Fv2_curv<<<blocksFv,threadsFv>>>(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, &
+    call calc_Fv2_curv<<<blocksFv,threadsFv>>>(nx, ny, nz, real(dz, kd_visc), xi_x, xi_y, eta_x, eta_y, &
         n_eta_x, n_eta_y, Q_2, Q_3, Q_4, T, mu, F)
-    call calc_Gv2_curv<<<blocksGv,threadsGv>>>(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, &
+    call calc_Gv2_curv<<<blocksGv,threadsGv>>>(nx, ny, nz, real(dz, kd_visc), xi_x, xi_y, eta_x, eta_y, &
         Q_2, Q_3, Q_4, T, mu, G)
   end subroutine calc_EFG_curv
   #:endif

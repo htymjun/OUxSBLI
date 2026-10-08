@@ -1,4 +1,5 @@
 module set_bc_common
+  use mod_precision
   use mod_globals, only : nx, ny
   implicit none
   interface set_bc_cyclic
@@ -74,7 +75,7 @@ contains
   subroutine set_bc_cyclic2(id_accuracy, nx, ny, Q_1, Q_2, Q_3, Q_4)
     integer(kind=2), intent(in), value :: id_accuracy
     integer, intent(in), value         :: nx, ny
-    real(8), intent(inout), device     :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
+    real(kd_arr), intent(inout), device     :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
     integer i, j
     !$cuf kernel do(1)<<<*,*>>>
     do j = 2, ny-1
@@ -100,7 +101,7 @@ contains
   subroutine set_bc_cyclic4(id_accuracy, nx, ny, Q_1, Q_2, Q_3, Q_4)
     integer(kind=4), intent(in), value :: id_accuracy
     integer, intent(in), value         :: nx, ny
-    real(8), intent(inout), device     :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
+    real(kd_arr), intent(inout), device     :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
     integer i, j
     !$cuf kernel do(1) <<<*,*>>>
     do j = 3, ny-2
@@ -142,7 +143,7 @@ contains
   subroutine set_bc_cyclic6(id_accuracy, nx, ny, Q_1, Q_2, Q_3, Q_4)
     integer(kind=8), intent(in), value :: id_accuracy
     integer, intent(in), value         :: nx, ny
-    real(8), intent(inout), device     :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
+    real(kd_arr), intent(inout), device     :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
     integer i, j
     !$cuf kernel do(1)<<<*,*>>>
     do j = 4, ny-3

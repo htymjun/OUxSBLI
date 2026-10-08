@@ -1,4 +1,5 @@
 module set
+  use mod_precision
   use cudafor
   use mod_globals, only : nx, ny, nz, Lz, chord, aoa, far_r, Ma_inf, gamma, R, Pr
   use set_coordinate, only : set_metrics_curv
@@ -193,9 +194,9 @@ contains
   subroutine set_bc(myrank, nx, ny, nz, Jacobian, eta_x, eta_y, Q_1, Q_2, Q_3, Q_4, Q_5)
     use mod_globals, only : Ma_inf, rho_inf, p_inf, T_inf
     integer, intent(in) :: myrank, nx, ny, nz
-    real(8), intent(in),    device :: Jacobian(nx,ny)
-    real(8), intent(in),    device :: eta_x(nx,ny), eta_y(nx,ny)
-    real(8), intent(inout), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    real(kd_arr), intent(in),    device :: Jacobian(nx,ny)
+    real(kd_arr), intent(in),    device :: eta_x(nx,ny), eta_y(nx,ny)
+    real(kd_arr), intent(inout), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     integer :: i, j, k
     real(8) :: u_inf, v_inf, E_inf
     real(8) :: nxw, nyw, nmag, u_int, v_int, u_n, Jratio

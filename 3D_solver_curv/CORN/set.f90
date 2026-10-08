@@ -1,4 +1,5 @@
 module set
+  use mod_precision
   use cudafor
   use mod_globals, only : nx, ny, nz, Lx, Ly, Lz, theta, x_corner, Ma_inf, gamma, R, Pr, &
                           rho_inf, u_inf, v_inf, p_inf
@@ -188,9 +189,9 @@ contains
   !> (e) z-periodic
   subroutine set_bc(myrank, nx, ny, nz, Jacobian, eta_x, eta_y, Q_1, Q_2, Q_3, Q_4, Q_5)
     integer, intent(in) :: myrank, nx, ny, nz
-    real(8), intent(in), device :: Jacobian(nx,ny)
-    real(8), intent(in), device :: eta_x(nx,ny), eta_y(nx,ny)
-    real(8), intent(inout), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    real(kd_arr), intent(in), device :: Jacobian(nx,ny)
+    real(kd_arr), intent(in), device :: eta_x(nx,ny), eta_y(nx,ny)
+    real(kd_arr), intent(inout), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     integer :: i, j, k
     real(8) :: nxw, nyw, nmag, u_int, v_int, u_n, Jratio
     real(8) :: E_inf = p_inf / (gamma - 1.d0) + 0.5d0 * rho_inf * (u_inf**2 + v_inf**2)

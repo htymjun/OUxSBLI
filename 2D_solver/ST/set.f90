@@ -1,4 +1,5 @@
 module set
+  use mod_precision
   use mod_globals, only : nx, ny, gamma, R, rho0, p0, rho1, p1
   use mod_constant, only : id_accuracy, gamma_1, over_gamma_1
   use set_bc_common
@@ -50,8 +51,8 @@ contains
 
   subroutine set_bc(myrank, nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4)
     integer, intent(in), value     :: myrank, nx, ny
-    real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
+    real(kd_arr), intent(in), device    :: Jacobian(nx,ny)
+    real(kd_arr), intent(inout), device :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
     real(8) p_wall
     integer i, j
     ! inlet outlet

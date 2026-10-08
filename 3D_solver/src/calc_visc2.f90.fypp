@@ -1,10 +1,13 @@
 #:include 'config.fypp'
+#:include 'precision.fypp'
 #:set is_les = (VISC == 'LES')
 #:set base_suf = ""
 module calc_visc2
+  use mod_precision
   use libm
-  use mod_globals, only : gamma, R, Pr, Prt, dt, threadsEv, threadsFv, threadsGv
-  use mod_constant, only : Cp, gamma_1, Cp_over_Pr, one_third, two_third
+  use mod_globals, only : threadsEv, threadsFv, threadsGv
+  use mod_constant, only : gamma => gamma_visc, R => R_visc, Pr => Pr_visc, Prt => Prt_visc, dt => dt_visc
+  use mod_constant, only : Cp => Cp_visc, gamma_1 => gamma_1_visc, Cp_over_Pr => Cp_over_Pr_visc, one_third => one_third_visc, two_third => two_third_visc
   use load_smem_visc2
   use libm
   implicit none
@@ -27,19 +30,19 @@ contains
     integer, intent(in), value                 :: nx
     integer, intent(in), value                 :: ny
     integer, intent(in), value                 :: nz
-    real(8), intent(in), device, contiguous    :: dx(nx-1)
-    real(8), intent(in), device, contiguous    :: dy(ny-1)
-    real(8), intent(in), device, contiguous    :: dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: T(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: dx(nx-1)
+    real(kd_arr), intent(in), device, contiguous    :: dy(ny-1)
+    real(kd_arr), intent(in), device, contiguous    :: dz(nz-1)
+    real(kd_arr), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: T(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: mu(nx,ny,nz)
     #:if is_les
-    real(8), intent(in), device, contiguous    :: mut(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: qc2(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: mut(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: qc2(nx,ny,nz)
     #:endif
-    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
+    real(kd_arr), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
     #:if is_koff
     integer, intent(in), value                 :: k_lo !< z lower bound (global, 1-based)
     integer, intent(in), value                 :: k_hi !< z upper bound (global, 1-based)
@@ -47,16 +50,16 @@ contains
     integer, parameter :: sx = threadsEv%x + 1
     integer, parameter :: sy = threadsEv%y
     integer, parameter :: sz = threadsEv%z
-    real(8), dimension(0:sx*sy*sz-1), shared :: u, v, w
+    real(kd_visc), dimension(0:sx*sy*sz-1), shared :: u, v, w
     integer i, j, k, it, jt, kt, idx
-    real(8) viscous_work, txx, txy, txz
-    real(8) mux, mvx, mwx, muy, mvy, muz, mwz
-    real(8) mu_c, mu_e
-    real(8) T_c, T_e, mudx
+    real(kd_visc) viscous_work, txx, txy, txz
+    real(kd_visc) mux, mvx, mwx, muy, mvy, muz, mwz
+    real(kd_visc) mu_c, mu_e
+    real(kd_visc) T_c, T_e, mudx
     #:if is_les
-    real(8) muxsgs, mvxsgs, mwxsgs, Hsgs
-    real(8) muysgs, mvysgs, muzsgs, mwzsgs
-    real(8) mut_c, mut_e
+    real(kd_visc) muxsgs, mvxsgs, mwxsgs, Hsgs
+    real(kd_visc) muysgs, mvysgs, muzsgs, mwzsgs
+    real(kd_visc) mut_c, mut_e
     #:endif
     it = threadIdx%x
     jt = threadIdx%y
@@ -80,7 +83,7 @@ contains
     mu_e   = mu(i+1,j,  k)
     T_c = T(i,  j,k)
     T_e = T(i+1,j,k)
-    mudx         = 0.5d0 * (mu_c + mu_e) * dx(i)
+    mudx         = 0.5_kd_visc * (mu_c + mu_e) * real(dx(i), kd_visc)
     viscous_work = Cp_over_Pr * mudx * (T_e - T_c)
     mux          = mudx * (-u(idx) + u(idx+1))
     mvx          = mudx * (-v(idx) + v(idx+1))
@@ -89,12 +92,12 @@ contains
     mut_c   = mut(i,  j,  k)
     mut_e   = mut(i+1,j,  k)
     block
-      real(8) mxsgsdx, H1, H2, qc2_c, qc2_e
-      mxsgsdx = 0.5d0 * (mut_c + mut_e) * dx(i)
+      real(kd_visc) mxsgsdx, H1, H2, qc2_c, qc2_e
+      mxsgsdx = 0.5_kd_visc * (mut_c + mut_e) * real(dx(i), kd_visc)
       qc2_c = qc2(i,  j,k)
       qc2_e = qc2(i+1,j,k)
-      H1 = Cp * T_c + 0.5d0 * (u(idx)**2   + v(idx)**2   + w(idx)**2)   + qc2_c
-      H2 = Cp * T_e + 0.5d0 * (u(idx+1)**2 + v(idx+1)**2 + w(idx+1)**2) + qc2_e
+      H1 = Cp * T_c + 0.5_kd_visc * (u(idx)**2   + v(idx)**2   + w(idx)**2)   + qc2_c
+      H2 = Cp * T_e + 0.5_kd_visc * (u(idx+1)**2 + v(idx+1)**2 + w(idx+1)**2) + qc2_e
       Hsgs = -mxsgsdx * (-H1 + H2) / Prt
       muxsgs = mxsgsdx * (-u(idx) + u(idx+1))
       mvxsgs = mxsgsdx * (-v(idx) + v(idx+1))
@@ -102,19 +105,19 @@ contains
     end block
     #:endif
     block
-      real(8) my1, my2
-      real(8) mu_cjm, mu_cjp, mu_ejm, mu_ejp
-      real(8) q2jm, q2ejm, q2jp, q2ejp, q3jm, q3ejm, q3jp, q3ejp
+      real(kd_visc) my1, my2
+      real(kd_visc) mu_cjm, mu_cjp, mu_ejm, mu_ejp
+      real(kd_visc) q2jm, q2ejm, q2jp, q2ejp, q3jm, q3ejm, q3jp, q3ejp
       #:if is_les
-      real(8) mut_cjm, mut_cjp, mut_ejm, mut_ejp, mysgs1, mysgs2
+      real(kd_visc) mut_cjm, mut_cjp, mut_ejm, mut_ejp, mysgs1, mysgs2
       #:endif
       ! corner neighbours below are each read exactly once by this thread: __ldcs
       mu_cjm = __ldcs(mu(i,  j-1,k))
       mu_cjp = __ldcs(mu(i,  j+1,k))
       mu_ejm = __ldcs(mu(i+1,j-1,k))
       mu_ejp = __ldcs(mu(i+1,j+1,k))
-      my1 = 0.0625d0 * (mu_cjm + mu_c + mu_ejm + mu_e)
-      my2 = 0.0625d0 * (mu_c + mu_cjp + mu_e + mu_ejp)
+      my1 = 0.0625_kd_visc * (mu_cjm + mu_c + mu_ejm + mu_e)
+      my2 = 0.0625_kd_visc * (mu_c + mu_cjp + mu_e + mu_ejp)
       ! each Q neighbour below is read exactly once by this thread: __ldcs
       q2jm  = __ldcs(Q_2(i,j-1,k))
       q2ejm = __ldcs(Q_2(i+1,j-1,k))
@@ -124,36 +127,36 @@ contains
       q3ejm = __ldcs(Q_3(i+1,j-1,k))
       q3jp  = __ldcs(Q_3(i,j+1,k))
       q3ejp = __ldcs(Q_3(i+1,j+1,k))
-      muy = dy(j) * fma(my2, q2jp + q2ejp, fma(my1, -(q2jm + q2ejm), (my1 - my2) * (u(idx) + u(idx+1))))
-      mvy = dy(j) * fma(my2, q3jp + q3ejp, fma(my1, -(q3jm + q3ejm), (my1 - my2) * (v(idx) + v(idx+1))))
+      muy = real(dy(j), kd_visc) * fma(my2, q2jp + q2ejp, fma(my1, -(q2jm + q2ejm), (my1 - my2) * (u(idx) + u(idx+1))))
+      mvy = real(dy(j), kd_visc) * fma(my2, q3jp + q3ejp, fma(my1, -(q3jm + q3ejm), (my1 - my2) * (v(idx) + v(idx+1))))
       #:if is_les
       ! corner neighbours below are each read exactly once by this thread: __ldcs
       mut_cjm = __ldcs(mut(i,  j-1,k))
       mut_cjp = __ldcs(mut(i,  j+1,k))
       mut_ejm = __ldcs(mut(i+1,j-1,k))
       mut_ejp = __ldcs(mut(i+1,j+1,k))
-      mysgs1 = 0.0625d0 * (mut_cjm + mut_c + mut_ejm + mut_e)
-      mysgs2 = 0.0625d0 * (mut_c + mut_cjp + mut_e + mut_ejp)
+      mysgs1 = 0.0625_kd_visc * (mut_cjm + mut_c + mut_ejm + mut_e)
+      mysgs2 = 0.0625_kd_visc * (mut_c + mut_cjp + mut_e + mut_ejp)
       muysgs = (mysgs1 * (-q2jm - q2ejm) + (mysgs1 - mysgs2) * (u(idx) + u(idx+1)) &
-              + mysgs2 * ( q2jp + q2ejp)) * dy(j)
+              + mysgs2 * ( q2jp + q2ejp)) * real(dy(j), kd_visc)
       mvysgs = (mysgs1 * (-q3jm - q3ejm) + (mysgs1 - mysgs2) * (v(idx) + v(idx+1)) &
-              + mysgs2 * ( q3jp + q3ejp)) * dy(j)
+              + mysgs2 * ( q3jp + q3ejp)) * real(dy(j), kd_visc)
       #:endif
     end block
     block
-      real(8) mz1, mz2
-      real(8) mu_ckm, mu_ckp, mu_ekm, mu_ekp
-      real(8) q2km, q2ekm, q2kp, q2ekp, q4km, q4ekm, q4kp, q4ekp
+      real(kd_visc) mz1, mz2
+      real(kd_visc) mu_ckm, mu_ckp, mu_ekm, mu_ekp
+      real(kd_visc) q2km, q2ekm, q2kp, q2ekp, q4km, q4ekm, q4kp, q4ekp
       #:if is_les
-      real(8) mut_ckm, mut_ckp, mut_ekm, mut_ekp, mzsgs1, mzsgs2
+      real(kd_visc) mut_ckm, mut_ckp, mut_ekm, mut_ekp, mzsgs1, mzsgs2
       #:endif
       ! corner neighbours below are each read exactly once by this thread: __ldcs
       mu_ckm = __ldcs(mu(i,  j,  k-1))
       mu_ckp = __ldcs(mu(i,  j,  k+1))
       mu_ekm = __ldcs(mu(i+1,j,  k-1))
       mu_ekp = __ldcs(mu(i+1,j,  k+1))
-      mz1 = 0.0625d0 * (mu_ckm + mu_c + mu_ekm + mu_e)
-      mz2 = 0.0625d0 * (mu_c + mu_ckp + mu_e + mu_ekp)
+      mz1 = 0.0625_kd_visc * (mu_ckm + mu_c + mu_ekm + mu_e)
+      mz2 = 0.0625_kd_visc * (mu_c + mu_ckp + mu_e + mu_ekp)
       ! each Q neighbour below is read exactly once by this thread: __ldcs
       q2km  = __ldcs(Q_2(i,j,k-1))
       q2ekm = __ldcs(Q_2(i+1,j,k-1))
@@ -163,33 +166,33 @@ contains
       q4ekm = __ldcs(Q_4(i+1,j,k-1))
       q4kp  = __ldcs(Q_4(i,j,k+1))
       q4ekp = __ldcs(Q_4(i+1,j,k+1))
-      muz = dz(k) * fma(mz2, q2kp + q2ekp, fma(mz1, -(q2km + q2ekm), (mz1 - mz2) * (u(idx) + u(idx+1))))
-      mwz = dz(k) * fma(mz2, q4kp + q4ekp, fma(mz1, -(q4km + q4ekm), (mz1 - mz2) * (w(idx) + w(idx+1))))
+      muz = real(dz(k), kd_visc) * fma(mz2, q2kp + q2ekp, fma(mz1, -(q2km + q2ekm), (mz1 - mz2) * (u(idx) + u(idx+1))))
+      mwz = real(dz(k), kd_visc) * fma(mz2, q4kp + q4ekp, fma(mz1, -(q4km + q4ekm), (mz1 - mz2) * (w(idx) + w(idx+1))))
       #:if is_les
       ! corner neighbours below are each read exactly once by this thread: __ldcs
       mut_ckm = __ldcs(mut(i,  j,  k-1))
       mut_ckp = __ldcs(mut(i,  j,  k+1))
       mut_ekm = __ldcs(mut(i+1,j,  k-1))
       mut_ekp = __ldcs(mut(i+1,j,  k+1))
-      mzsgs1 = 0.0625d0 * (mut_ckm + mut_c + mut_ekm + mut_e)
-      mzsgs2 = 0.0625d0 * (mut_c + mut_ckp + mut_e + mut_ekp)
+      mzsgs1 = 0.0625_kd_visc * (mut_ckm + mut_c + mut_ekm + mut_e)
+      mzsgs2 = 0.0625_kd_visc * (mut_c + mut_ckp + mut_e + mut_ekp)
       muzsgs = (mzsgs1 * (-q2km - q2ekm) + (mzsgs1 - mzsgs2) * (u(idx) + u(idx+1)) &
-              + mzsgs2 * ( q2kp + q2ekp)) * dz(k)
+              + mzsgs2 * ( q2kp + q2ekp)) * real(dz(k), kd_visc)
       mwzsgs = (mzsgs1 * (-q4km - q4ekm) + (mzsgs1 - mzsgs2) * (w(idx) + w(idx+1)) &
-              + mzsgs2 * ( q4kp + q4ekp)) * dz(k)
+              + mzsgs2 * ( q4kp + q4ekp)) * real(dz(k), kd_visc)
       #:endif
     end block
-    txx = two_third * fma(2.d0, mux, -(mvy + mwz))
+    txx = two_third * fma(2._kd_visc, mux, -(mvy + mwz))
     txy = muy + mvx
     txz = mwx + muz
-    viscous_work = fma(0.5d0, fma(u(idx) + u(idx+1), txx, fma(v(idx) + v(idx+1), txy, (w(idx) + w(idx+1)) * txz)), viscous_work)
+    viscous_work = fma(0.5_kd_visc, fma(u(idx) + u(idx+1), txx, fma(v(idx) + v(idx+1), txy, (w(idx) + w(idx+1)) * txz)), viscous_work)
     #:if is_les
-    txx = fma(two_third, fma(2.d0, muxsgs, -(mvysgs + mwzsgs)), txx)
+    txx = fma(two_third, fma(2._kd_visc, muxsgs, -(mvysgs + mwzsgs)), txx)
     txy = txy + muysgs + mvxsgs
     txz = txz + mwxsgs + muzsgs
     #:endif
     block
-      real(8) :: e2v, e3v, e4v, e5v
+      real(kd_arr)  :: e2v, e3v, e4v, e5v  ! value loaded from the kd_arr flux array
       ! no other thread reads this address before the paired store below overwrites it: __ldlu
       e2v = __ldlu(E(i,j-1,k-1,2))
       call __stcg(E(i,j-1,k-1,2), e2v - txx)
@@ -224,19 +227,19 @@ contains
     integer, intent(in), value                 :: nx
     integer, intent(in), value                 :: ny
     integer, intent(in), value                 :: nz
-    real(8), intent(in), device, contiguous    :: dx(nx-1)
-    real(8), intent(in), device, contiguous    :: dy(ny-1)
-    real(8), intent(in), device, contiguous    :: dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: T(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: dx(nx-1)
+    real(kd_arr), intent(in), device, contiguous    :: dy(ny-1)
+    real(kd_arr), intent(in), device, contiguous    :: dz(nz-1)
+    real(kd_arr), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: T(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: mu(nx,ny,nz)
     #:if is_les
-    real(8), intent(in), device, contiguous    :: mut(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: qc2(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: mut(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: qc2(nx,ny,nz)
     #:endif
-    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
+    real(kd_arr), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
     #:if is_koff
     integer, intent(in), value                 :: k_lo !< z lower bound (global, 1-based)
     integer, intent(in), value                 :: k_hi !< z upper bound (global, 1-based)
@@ -244,15 +247,15 @@ contains
     integer, parameter :: sx = threadsFv%x
     integer, parameter :: sy = threadsFv%y + 1
     integer, parameter :: sz = threadsFv%z
-    real(8), dimension(0:sx*sy*sz-1), shared :: u, v, w
+    real(kd_visc), dimension(0:sx*sy*sz-1), shared :: u, v, w
     integer i, j, k, it, jt, kt, idx
-    real(8) viscous_work, tyx, tyy, tyz
-    real(8) muy, mvy, mwy, mvz, mwz, mux, mvx
-    real(8) mu_c, mu_n
-    real(8) T_c, T_n, mudy
+    real(kd_visc) viscous_work, tyx, tyy, tyz
+    real(kd_visc) muy, mvy, mwy, mvz, mwz, mux, mvx
+    real(kd_visc) mu_c, mu_n
+    real(kd_visc) T_c, T_n, mudy
     #:if is_les
-    real(8) muysgs, mvysgs, mwysgs, mvzsgs, mwzsgs, muxsgs, mvxsgs, Hsgs
-    real(8) mut_c, mut_n
+    real(kd_visc) muysgs, mvysgs, mwysgs, mvzsgs, mwzsgs, muxsgs, mvxsgs, Hsgs
+    real(kd_visc) mut_c, mut_n
     #:endif
     it = threadIdx%x
     jt = threadIdx%y
@@ -276,7 +279,7 @@ contains
     mu_n   = mu(i,  j+1,k)
     T_c = T(i,j,  k)
     T_n = T(i,j+1,k)
-    mudy         = 0.5d0 * (mu_c + mu_n) * dy(j)
+    mudy         = 0.5_kd_visc * (mu_c + mu_n) * real(dy(j), kd_visc)
     viscous_work = Cp_over_Pr * mudy * (T_n - T_c)
     muy          = mudy * (-u(idx) + u(idx+1))
     mvy          = mudy * (-v(idx) + v(idx+1))
@@ -285,12 +288,12 @@ contains
     mut_c   = mut(i,  j,  k)
     mut_n   = mut(i,  j+1,k)
     block
-      real(8) mysgsdy, H1, H2, qc2_c, qc2_n
-      mysgsdy  = 0.5d0 * (mut_c + mut_n) * dy(j)
+      real(kd_visc) mysgsdy, H1, H2, qc2_c, qc2_n
+      mysgsdy  = 0.5_kd_visc * (mut_c + mut_n) * real(dy(j), kd_visc)
       qc2_c = qc2(i,j,  k)
       qc2_n = qc2(i,j+1,k)
-      H1 = Cp * T_c + 0.5d0 * (u(idx)**2   + v(idx)**2   + w(idx)**2)   + qc2_c
-      H2 = Cp * T_n + 0.5d0 * (u(idx+1)**2 + v(idx+1)**2 + w(idx+1)**2) + qc2_n
+      H1 = Cp * T_c + 0.5_kd_visc * (u(idx)**2   + v(idx)**2   + w(idx)**2)   + qc2_c
+      H2 = Cp * T_n + 0.5_kd_visc * (u(idx+1)**2 + v(idx+1)**2 + w(idx+1)**2) + qc2_n
       Hsgs = -mysgsdy * (-H1 + H2) / Prt
       muysgs = mysgsdy * (-u(idx) + u(idx+1))
       mvysgs = mysgsdy * (-v(idx) + v(idx+1))
@@ -298,19 +301,19 @@ contains
     end block
     #:endif
     block
-      real(8) mx1, mx2
-      real(8) mu_wc, mu_wn, mu_ec, mu_en
-      real(8) q2wc, q2wn, q2ec, q2en, q3wc, q3wn, q3ec, q3en
+      real(kd_visc) mx1, mx2
+      real(kd_visc) mu_wc, mu_wn, mu_ec, mu_en
+      real(kd_visc) q2wc, q2wn, q2ec, q2en, q3wc, q3wn, q3ec, q3en
       #:if is_les
-      real(8) mut_wc, mut_wn, mut_ec, mut_en, mxsgs1, mxsgs2
+      real(kd_visc) mut_wc, mut_wn, mut_ec, mut_en, mxsgs1, mxsgs2
       #:endif
       ! corner neighbours below are each read exactly once by this thread: __ldcs
       mu_wc  = __ldcs(mu(i-1,j,  k))
       mu_wn  = __ldcs(mu(i-1,j+1,k))
       mu_ec  = __ldcs(mu(i+1,j,  k))
       mu_en  = __ldcs(mu(i+1,j+1,k))
-      mx1 = 0.0625d0 * (mu_wc + mu_c + mu_wn + mu_n)
-      mx2 = 0.0625d0 * (mu_c + mu_ec + mu_n + mu_en)
+      mx1 = 0.0625_kd_visc * (mu_wc + mu_c + mu_wn + mu_n)
+      mx2 = 0.0625_kd_visc * (mu_c + mu_ec + mu_n + mu_en)
       ! each Q neighbour below is read exactly once by this thread: __ldcs
       q2wc = __ldcs(Q_2(i-1,j,k))
       q2wn = __ldcs(Q_2(i-1,j+1,k))
@@ -320,36 +323,36 @@ contains
       q3wn = __ldcs(Q_3(i-1,j+1,k))
       q3ec = __ldcs(Q_3(i+1,j,k))
       q3en = __ldcs(Q_3(i+1,j+1,k))
-      mux = dx(i) * fma(mx2, q2ec + q2en, fma(mx1, -(q2wc + q2wn), (mx1 - mx2) * (u(idx) + u(idx+1))))
-      mvx = dx(i) * fma(mx2, q3ec + q3en, fma(mx1, -(q3wc + q3wn), (mx1 - mx2) * (v(idx) + v(idx+1))))
+      mux = real(dx(i), kd_visc) * fma(mx2, q2ec + q2en, fma(mx1, -(q2wc + q2wn), (mx1 - mx2) * (u(idx) + u(idx+1))))
+      mvx = real(dx(i), kd_visc) * fma(mx2, q3ec + q3en, fma(mx1, -(q3wc + q3wn), (mx1 - mx2) * (v(idx) + v(idx+1))))
       #:if is_les
       ! corner neighbours below are each read exactly once by this thread: __ldcs
       mut_wc  = __ldcs(mut(i-1,j,  k))
       mut_wn  = __ldcs(mut(i-1,j+1,k))
       mut_ec  = __ldcs(mut(i+1,j,  k))
       mut_en  = __ldcs(mut(i+1,j+1,k))
-      mxsgs1 = 0.0625d0 * (mut_wc + mut_c + mut_wn + mut_n)
-      mxsgs2 = 0.0625d0 * (mut_c + mut_ec + mut_n + mut_en)
+      mxsgs1 = 0.0625_kd_visc * (mut_wc + mut_c + mut_wn + mut_n)
+      mxsgs2 = 0.0625_kd_visc * (mut_c + mut_ec + mut_n + mut_en)
       muxsgs = (mxsgs1 * (-q2wc - q2wn) + (mxsgs1 - mxsgs2) * (u(idx) + u(idx+1)) &
-              + mxsgs2 * ( q2ec + q2en)) * dx(i)
+              + mxsgs2 * ( q2ec + q2en)) * real(dx(i), kd_visc)
       mvxsgs = (mxsgs1 * (-q3wc - q3wn) + (mxsgs1 - mxsgs2) * (v(idx) + v(idx+1)) &
-              + mxsgs2 * ( q3ec + q3en)) * dx(i)
+              + mxsgs2 * ( q3ec + q3en)) * real(dx(i), kd_visc)
       #:endif
     end block
     block
-      real(8) mz1, mz2
-      real(8) mu_ckm, mu_ckp, mu_nkm, mu_nkp
-      real(8) q3km, q3nkm, q3kp, q3nkp, q4km, q4nkm, q4kp, q4nkp
+      real(kd_visc) mz1, mz2
+      real(kd_visc) mu_ckm, mu_ckp, mu_nkm, mu_nkp
+      real(kd_visc) q3km, q3nkm, q3kp, q3nkp, q4km, q4nkm, q4kp, q4nkp
       #:if is_les
-      real(8) mut_ckm, mut_ckp, mut_nkm, mut_nkp, mzsgs1, mzsgs2
+      real(kd_visc) mut_ckm, mut_ckp, mut_nkm, mut_nkp, mzsgs1, mzsgs2
       #:endif
       ! corner neighbours below are each read exactly once by this thread: __ldcs
       mu_ckm = __ldcs(mu(i,  j,  k-1))
       mu_ckp = __ldcs(mu(i,  j,  k+1))
       mu_nkm = __ldcs(mu(i,  j+1,k-1))
       mu_nkp = __ldcs(mu(i,  j+1,k+1))
-      mz1 = 0.0625d0 * (mu_ckm + mu_c + mu_nkm + mu_n)
-      mz2 = 0.0625d0 * (mu_c + mu_ckp + mu_n + mu_nkp)
+      mz1 = 0.0625_kd_visc * (mu_ckm + mu_c + mu_nkm + mu_n)
+      mz2 = 0.0625_kd_visc * (mu_c + mu_ckp + mu_n + mu_nkp)
       ! each Q neighbour below is read exactly once by this thread: __ldcs
       q3km  = __ldcs(Q_3(i,j,k-1))
       q3nkm = __ldcs(Q_3(i,j+1,k-1))
@@ -359,33 +362,33 @@ contains
       q4nkm = __ldcs(Q_4(i,j+1,k-1))
       q4kp  = __ldcs(Q_4(i,j,k+1))
       q4nkp = __ldcs(Q_4(i,j+1,k+1))
-      mvz = dz(k) * fma(mz2, q3kp + q3nkp, fma(mz1, -(q3km + q3nkm), (mz1 - mz2) * (v(idx) + v(idx+1))))
-      mwz = dz(k) * fma(mz2, q4kp + q4nkp, fma(mz1, -(q4km + q4nkm), (mz1 - mz2) * (w(idx) + w(idx+1))))
+      mvz = real(dz(k), kd_visc) * fma(mz2, q3kp + q3nkp, fma(mz1, -(q3km + q3nkm), (mz1 - mz2) * (v(idx) + v(idx+1))))
+      mwz = real(dz(k), kd_visc) * fma(mz2, q4kp + q4nkp, fma(mz1, -(q4km + q4nkm), (mz1 - mz2) * (w(idx) + w(idx+1))))
       #:if is_les
       ! corner neighbours below are each read exactly once by this thread: __ldcs
       mut_ckm = __ldcs(mut(i,  j,  k-1))
       mut_ckp = __ldcs(mut(i,  j,  k+1))
       mut_nkm = __ldcs(mut(i,  j+1,k-1))
       mut_nkp = __ldcs(mut(i,  j+1,k+1))
-      mzsgs1 = 0.0625d0 * (mut_ckm + mut_c + mut_nkm + mut_n)
-      mzsgs2 = 0.0625d0 * (mut_c + mut_ckp + mut_n + mut_nkp)
+      mzsgs1 = 0.0625_kd_visc * (mut_ckm + mut_c + mut_nkm + mut_n)
+      mzsgs2 = 0.0625_kd_visc * (mut_c + mut_ckp + mut_n + mut_nkp)
       mvzsgs = (mzsgs1 * (-q3km - q3nkm) + (mzsgs1 - mzsgs2) * (v(idx) + v(idx+1)) &
-              + mzsgs2 * ( q3kp + q3nkp)) * dz(k)
+              + mzsgs2 * ( q3kp + q3nkp)) * real(dz(k), kd_visc)
       mwzsgs = (mzsgs1 * (-q4km - q4nkm) + (mzsgs1 - mzsgs2) * (w(idx) + w(idx+1)) &
-              + mzsgs2 * ( q4kp + q4nkp)) * dz(k)
+              + mzsgs2 * ( q4kp + q4nkp)) * real(dz(k), kd_visc)
       #:endif
     end block
     tyx = muy + mvx
-    tyy = two_third * fma(2.d0, mvy, -(mwz + mux))
+    tyy = two_third * fma(2._kd_visc, mvy, -(mwz + mux))
     tyz = mvz + mwy
-    viscous_work = fma(0.5d0, fma(u(idx) + u(idx+1), tyx, fma(v(idx) + v(idx+1), tyy, (w(idx) + w(idx+1)) * tyz)), viscous_work)
+    viscous_work = fma(0.5_kd_visc, fma(u(idx) + u(idx+1), tyx, fma(v(idx) + v(idx+1), tyy, (w(idx) + w(idx+1)) * tyz)), viscous_work)
     #:if is_les
     tyx = tyx + muysgs + mvxsgs
-    tyy = fma(two_third, fma(2.d0, mvysgs, -(mwzsgs + muxsgs)), tyy)
+    tyy = fma(two_third, fma(2._kd_visc, mvysgs, -(mwzsgs + muxsgs)), tyy)
     tyz = tyz + mvzsgs + mwysgs
     #:endif
     block
-      real(8) :: f2v, f3v, f4v, f5v
+      real(kd_arr)  :: f2v, f3v, f4v, f5v  ! value loaded from the kd_arr flux array
       ! no other thread reads this address before the paired store below overwrites it: __ldlu
       f2v = __ldlu(F(i-1,j,k-1,2))
       call __stcg(F(i-1,j,k-1,2), f2v - tyx)
@@ -420,19 +423,19 @@ contains
     integer, intent(in), value                 :: nx
     integer, intent(in), value                 :: ny
     integer, intent(in), value                 :: nz
-    real(8), intent(in), device, contiguous    :: dx(nx-1)
-    real(8), intent(in), device, contiguous    :: dy(ny-1)
-    real(8), intent(in), device, contiguous    :: dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: T(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: dx(nx-1)
+    real(kd_arr), intent(in), device, contiguous    :: dy(ny-1)
+    real(kd_arr), intent(in), device, contiguous    :: dz(nz-1)
+    real(kd_arr), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: T(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: mu(nx,ny,nz)
     #:if is_les
-    real(8), intent(in), device, contiguous    :: mut(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: qc2(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: mut(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: qc2(nx,ny,nz)
     #:endif
-    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    real(kd_arr), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     #:if is_koff
     integer, intent(in), value                 :: k_lo !< z lower bound (global, 1-based)
     integer, intent(in), value                 :: k_hi !< z upper bound (global, 1-based)
@@ -440,15 +443,15 @@ contains
     integer, parameter :: sx = threadsGv%x
     integer, parameter :: sy = threadsGv%y
     integer, parameter :: sz = threadsGv%z + 1
-    real(8), dimension(0:sx*sy*sz-1), shared :: u, v, w
+    real(kd_visc), dimension(0:sx*sy*sz-1), shared :: u, v, w
     integer i, j, k, it, jt, kt, idx
-    real(8) viscous_work, tzx, tzy, tzz
-    real(8) muz, mvz, mwz, mwx, mux, mvy, mwy
-    real(8) mu_c, mu_t
-    real(8) T_c, T_t, mudz
+    real(kd_visc) viscous_work, tzx, tzy, tzz
+    real(kd_visc) muz, mvz, mwz, mwx, mux, mvy, mwy
+    real(kd_visc) mu_c, mu_t
+    real(kd_visc) T_c, T_t, mudz
     #:if is_les
-    real(8) muzsgs, mvzsgs, mwzsgs, muxsgs, mwxsgs, mvysgs, mwysgs, Hsgs
-    real(8) mut_c, mut_t
+    real(kd_visc) muzsgs, mvzsgs, mwzsgs, muxsgs, mwxsgs, mvysgs, mwysgs, Hsgs
+    real(kd_visc) mut_c, mut_t
     #:endif
     it = threadIdx%x
     jt = threadIdx%y
@@ -476,7 +479,7 @@ contains
     mu_t  = mu(i,  j,  k+1)
     T_c = T(i,j,k  )
     T_t = T(i,j,k+1)
-    mudz         = 0.5d0 * (mu_c + mu_t) * dz(k)
+    mudz         = 0.5_kd_visc * (mu_c + mu_t) * real(dz(k), kd_visc)
     viscous_work = Cp_over_Pr * mudz * (T_t - T_c)
     muz          = mudz * (-u(idx) + u(idx+1))
     mvz          = mudz * (-v(idx) + v(idx+1))
@@ -485,12 +488,12 @@ contains
     mut_c  = mut(i,  j,  k)
     mut_t  = mut(i,  j,  k+1)
     block
-      real(8) mzsgsdz, H1, H2, qc2_c, qc2_t
-      mzsgsdz  = 0.5d0 * (mut_c + mut_t) * dz(k)
+      real(kd_visc) mzsgsdz, H1, H2, qc2_c, qc2_t
+      mzsgsdz  = 0.5_kd_visc * (mut_c + mut_t) * real(dz(k), kd_visc)
       qc2_c = qc2(i,j,k  )
       qc2_t = qc2(i,j,k+1)
-      H1 = Cp * T_c + 0.5d0 * (u(idx)**2   + v(idx)**2   + w(idx)**2)   + qc2_c
-      H2 = Cp * T_t + 0.5d0 * (u(idx+1)**2 + v(idx+1)**2 + w(idx+1)**2) + qc2_t
+      H1 = Cp * T_c + 0.5_kd_visc * (u(idx)**2   + v(idx)**2   + w(idx)**2)   + qc2_c
+      H2 = Cp * T_t + 0.5_kd_visc * (u(idx+1)**2 + v(idx+1)**2 + w(idx+1)**2) + qc2_t
       Hsgs = -mzsgsdz * (-H1 + H2) / Prt
       muzsgs = mzsgsdz * (-u(idx) + u(idx+1))
       mvzsgs = mzsgsdz * (-v(idx) + v(idx+1))
@@ -498,19 +501,19 @@ contains
     end block
     #:endif
     block
-      real(8) mx1, mx2
-      real(8) mu_wc, mu_wt, mu_ec, mu_et
-      real(8) q2wc, q2wt, q2ec, q2et, q4wc, q4wt, q4ec, q4et
+      real(kd_visc) mx1, mx2
+      real(kd_visc) mu_wc, mu_wt, mu_ec, mu_et
+      real(kd_visc) q2wc, q2wt, q2ec, q2et, q4wc, q4wt, q4ec, q4et
       #:if is_les
-      real(8) mut_wc, mut_wt, mut_ec, mut_et, mxsgs1, mxsgs2
+      real(kd_visc) mut_wc, mut_wt, mut_ec, mut_et, mxsgs1, mxsgs2
       #:endif
       ! corner neighbours below are each read exactly once by this thread: __ldcs
       mu_wc = __ldcs(mu(i-1,j,  k))
       mu_wt = __ldcs(mu(i-1,j,  k+1))
       mu_ec = __ldcs(mu(i+1,j,  k))
       mu_et = __ldcs(mu(i+1,j,  k+1))
-      mx1 = 0.0625d0 * (mu_wc + mu_c + mu_wt + mu_t)
-      mx2 = 0.0625d0 * (mu_c + mu_ec + mu_t + mu_et)
+      mx1 = 0.0625_kd_visc * (mu_wc + mu_c + mu_wt + mu_t)
+      mx2 = 0.0625_kd_visc * (mu_c + mu_ec + mu_t + mu_et)
       ! each Q neighbour below is read exactly once by this thread: __ldcs
       q2wc = __ldcs(Q_2(i-1,j,k))
       q2wt = __ldcs(Q_2(i-1,j,k+1))
@@ -520,36 +523,36 @@ contains
       q4wt = __ldcs(Q_4(i-1,j,k+1))
       q4ec = __ldcs(Q_4(i+1,j,k))
       q4et = __ldcs(Q_4(i+1,j,k+1))
-      mux = dx(i) * fma(mx2, q2ec + q2et, fma(mx1, -(q2wc + q2wt), (mx1 - mx2) * (u(idx) + u(idx+1))))
-      mwx = dx(i) * fma(mx2, q4ec + q4et, fma(mx1, -(q4wc + q4wt), (mx1 - mx2) * (w(idx) + w(idx+1))))
+      mux = real(dx(i), kd_visc) * fma(mx2, q2ec + q2et, fma(mx1, -(q2wc + q2wt), (mx1 - mx2) * (u(idx) + u(idx+1))))
+      mwx = real(dx(i), kd_visc) * fma(mx2, q4ec + q4et, fma(mx1, -(q4wc + q4wt), (mx1 - mx2) * (w(idx) + w(idx+1))))
       #:if is_les
       ! corner neighbours below are each read exactly once by this thread: __ldcs
       mut_wc = __ldcs(mut(i-1,j,  k))
       mut_wt = __ldcs(mut(i-1,j,  k+1))
       mut_ec = __ldcs(mut(i+1,j,  k))
       mut_et = __ldcs(mut(i+1,j,  k+1))
-      mxsgs1 = 0.0625d0 * (mut_wc + mut_c + mut_wt + mut_t)
-      mxsgs2 = 0.0625d0 * (mut_c + mut_ec + mut_t + mut_et)
+      mxsgs1 = 0.0625_kd_visc * (mut_wc + mut_c + mut_wt + mut_t)
+      mxsgs2 = 0.0625_kd_visc * (mut_c + mut_ec + mut_t + mut_et)
       muxsgs = (mxsgs1 * (-q2wc - q2wt) + (mxsgs1 - mxsgs2) * (u(idx) + u(idx+1)) &
-              + mxsgs2 * ( q2ec + q2et)) * dx(i)
+              + mxsgs2 * ( q2ec + q2et)) * real(dx(i), kd_visc)
       mwxsgs = (mxsgs1 * (-q4wc - q4wt) + (mxsgs1 - mxsgs2) * (w(idx) + w(idx+1)) &
-              + mxsgs2 * ( q4ec + q4et)) * dx(i)
+              + mxsgs2 * ( q4ec + q4et)) * real(dx(i), kd_visc)
       #:endif
     end block
     block
-      real(8) my1, my2
-      real(8) mu_sc, mu_st, mu_nc, mu_nt
-      real(8) q3sc, q3st, q3nc, q3nt, q4sc, q4st, q4nc, q4nt
+      real(kd_visc) my1, my2
+      real(kd_visc) mu_sc, mu_st, mu_nc, mu_nt
+      real(kd_visc) q3sc, q3st, q3nc, q3nt, q4sc, q4st, q4nc, q4nt
       #:if is_les
-      real(8) mut_sc, mut_st, mut_nc, mut_nt, mysgs1, mysgs2
+      real(kd_visc) mut_sc, mut_st, mut_nc, mut_nt, mysgs1, mysgs2
       #:endif
       ! corner neighbours below are each read exactly once by this thread: __ldcs
       mu_sc = __ldcs(mu(i,  j-1,k))
       mu_st = __ldcs(mu(i,  j-1,k+1))
       mu_nc = __ldcs(mu(i,  j+1,k))
       mu_nt = __ldcs(mu(i,  j+1,k+1))
-      my1 = 0.0625d0 * (mu_sc + mu_c + mu_st + mu_t)
-      my2 = 0.0625d0 * (mu_c + mu_nc + mu_t + mu_nt)
+      my1 = 0.0625_kd_visc * (mu_sc + mu_c + mu_st + mu_t)
+      my2 = 0.0625_kd_visc * (mu_c + mu_nc + mu_t + mu_nt)
       ! each Q neighbour below is read exactly once by this thread: __ldcs
       q3sc = __ldcs(Q_3(i,j-1,k))
       q3st = __ldcs(Q_3(i,j-1,k+1))
@@ -559,33 +562,33 @@ contains
       q4st = __ldcs(Q_4(i,j-1,k+1))
       q4nc = __ldcs(Q_4(i,j+1,k))
       q4nt = __ldcs(Q_4(i,j+1,k+1))
-      mvy = dy(j) * fma(my2, q3nc + q3nt, fma(my1, -(q3sc + q3st), (my1 - my2) * (v(idx) + v(idx+1))))
-      mwy = dy(j) * fma(my2, q4nc + q4nt, fma(my1, -(q4sc + q4st), (my1 - my2) * (w(idx) + w(idx+1))))
+      mvy = real(dy(j), kd_visc) * fma(my2, q3nc + q3nt, fma(my1, -(q3sc + q3st), (my1 - my2) * (v(idx) + v(idx+1))))
+      mwy = real(dy(j), kd_visc) * fma(my2, q4nc + q4nt, fma(my1, -(q4sc + q4st), (my1 - my2) * (w(idx) + w(idx+1))))
       #:if is_les
       ! corner neighbours below are each read exactly once by this thread: __ldcs
       mut_sc = __ldcs(mut(i,  j-1,k))
       mut_st = __ldcs(mut(i,  j-1,k+1))
       mut_nc = __ldcs(mut(i,  j+1,k))
       mut_nt = __ldcs(mut(i,  j+1,k+1))
-      mysgs1 = 0.0625d0 * (mut_sc + mut_c + mut_st + mut_t)
-      mysgs2 = 0.0625d0 * (mut_c + mut_nc + mut_t + mut_nt)
+      mysgs1 = 0.0625_kd_visc * (mut_sc + mut_c + mut_st + mut_t)
+      mysgs2 = 0.0625_kd_visc * (mut_c + mut_nc + mut_t + mut_nt)
       mvysgs = (mysgs1 * (-q3sc - q3st) + (mysgs1 - mysgs2) * (v(idx) + v(idx+1)) &
-              + mysgs2 * ( q3nc + q3nt)) * dy(j)
+              + mysgs2 * ( q3nc + q3nt)) * real(dy(j), kd_visc)
       mwysgs = (mysgs1 * (-q4sc - q4st) + (mysgs1 - mysgs2) * (w(idx) + w(idx+1)) &
-              + mysgs2 * ( q4nc + q4nt)) * dy(j)
+              + mysgs2 * ( q4nc + q4nt)) * real(dy(j), kd_visc)
       #:endif
     end block
     tzx = mwx + muz
     tzy = mvz + mwy
-    tzz = two_third * fma(2.d0, mwz, -(mux + mvy))
-    viscous_work = fma(0.5d0, fma(u(idx) + u(idx+1), tzx, fma(v(idx) + v(idx+1), tzy, (w(idx) + w(idx+1)) * tzz)), viscous_work)
+    tzz = two_third * fma(2._kd_visc, mwz, -(mux + mvy))
+    viscous_work = fma(0.5_kd_visc, fma(u(idx) + u(idx+1), tzx, fma(v(idx) + v(idx+1), tzy, (w(idx) + w(idx+1)) * tzz)), viscous_work)
     #:if is_les
     tzx = tzx + mwxsgs + muzsgs
     tzy = tzy + mvzsgs + mwysgs
-    tzz = fma(two_third, fma(2.d0, mwzsgs, -(muxsgs + mvysgs)), tzz)
+    tzz = fma(two_third, fma(2._kd_visc, mwzsgs, -(muxsgs + mvysgs)), tzz)
     #:endif
     block
-      real(8) :: g2v, g3v, g4v, g5v
+      real(kd_arr)  :: g2v, g3v, g4v, g5v  ! value loaded from the kd_arr flux array
       ! no other thread reads this address before the paired store below overwrites it: __ldlu
       g2v = __ldlu(G(i-1,j-1,k,2))
       call __stcg(G(i-1,j-1,k,2), g2v - tzx)

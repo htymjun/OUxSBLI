@@ -49,6 +49,8 @@ cmake -B build && cmake --build build -j   # fypp preprocess + compile
 cd build && mpirun -n 1 ./a.out            # run simulation
 ```
 
+**`calc.sh` runs through `tools/run_retry.sh`.** The shared CMake flags build with `-Mchkptr`, whose runtime check (`pgf90_ptrchk`, nvfortran 24.3) looks at only the low 32 bits of a 64-bit pointer: a device array that happens to be allocated at a multiple of 4 GiB aborts the run with `Null pointer for <array>` although it is valid. It strikes at the first use of an array (before the time loop), at a random array and in roughly 1 of 6 starts, and a re-run gives bit-identical results (verified with `compute-sanitizer`: no invalid access). `tools/run_retry.sh <launcher> <nranks> <exe>` restarts the run when, and only when, that message appears (at most `MAXTRY`=10 times, logged in `retry.log`), after truncating the files the failed attempt appended to under `data/` and `recal/`. Batch scripts (`job_*.sh`) call `mpiexec` directly and are not covered. Independently of that, `data/entropy.d` and `data/kinetic_energy.d` are recreated at step 0 of a fresh run (`RESTART=False`) and appended to on a restart (`print_entropy` / `print_KE` in `src/print.f90.fypp`), so a start that was aborted and re-run by hand does not leave a duplicate t=0 row; a clean run has exactly `np + 1` rows, one per `Q*.vtr`.
+
 **Compiler requirement:** NVIDIA HPC SDK (`mpif90` with `-cuda -acc -fast -gpu=ptxinfo,rdc,lto`). Versions 24.* and 25.* are confirmed working.
 
 **Output format:** XML VTK files, readable with ParaView.
@@ -76,6 +78,8 @@ Each case directory contains a **`config.fypp`** file that declares all compile-
 #:set SLAU_VARIANT = 'HRSLAU2'  # 'SLAU' or 'HRSLAU2'
 #:set VISC_ORDER   = 6     # viscous stencil order (defaults to ORDER if omitted)
 #:set ORDER_IO = ORDER // 2 - 1  # ghost-cell count for I/O interpolation
+#:set CONV_PRECISION = 8  # 4 or 8: real kind of the convective kernels
+#:set VISC_PRECISION = 8  # 4 or 8: real kind of the viscous kernels
 ```
 
 Source files with the `.f90.fypp` extension are **templates**; CMake runs `fypp -I<case-dir> <template>.f90.fypp <output>.f90` for each one. The generated `.f90` files land in `<CASE>/build/`. Per-solver template listings and source layouts live in the nested docs: `3D_solver/CLAUDE.md`, `2D_solver/CLAUDE.md`, `3D_solver_curv/CLAUDE.md`.
@@ -118,6 +122,61 @@ All compile-time scheme/method choices live in `<CASE>/config.fypp`. The fypp pr
 | `BC_Z` | `True`, `False` | Same for z |
 | `MPI` | `'CPU'`, `'GPU'` | COMMZ z-halo transport: stage through pinned host buffers (`'CPU'`, default, verified) or hand device buffers straight to a CUDA-aware MPI (`'GPU'` — only where a real multi-rank device-pointer exchange has been checked; see the COMMZ section of `3D_solver/CLAUDE.md`) |
 | `BC_FORCING` | `True`, `False` | `set_bc` takes extra `(x, z, phi_l_gpu, phi_m_gpu, t_now)` arguments for a time-dependent blowing/suction strip (SWLBLI only; default `False`; RK=3 and RK=4, with or without COMMZ; `RESCALE=True` unsupported) |
+| `CONV_PRECISION` | `4`, `8` | Real kind of the convective-kernel arithmetic (default `8`) |
+| `VISC_PRECISION` | `4`, `8` | Real kind of the viscous-kernel arithmetic (default `8`) |
+
+### Precision (`CONV_PRECISION` / `VISC_PRECISION`)
+
+`src/precision.fypp` (included by every template after `config.fypp`) derives three fypp
+flags from the two settings, and `src/mod_precision.f90.fypp` turns them into kinds:
+
+| kind | fypp | used for |
+|------|------|----------|
+| `kd_conv` | `CONV_PRECISION` | everything inside the convective kernels (tiles, reconstruction, flux functions) |
+| `kd_visc` | `VISC_PRECISION` | everything inside the viscous kernels, `calc_div`, `calc_les` |
+| `kd_arr` | `ARR` | device arrays, RK update, BCs, MPI buffers (`MPI_KD_ARR`) |
+| `kd_host` | — | always 8: grid, initial condition, `recal/*.dat` |
+
+`ARR` is the common value when both terms agree and 8 otherwise, so:
+
+| CONV | VISC | arrays / RK | casts |
+|------|------|-------------|-------|
+| 8 | 8 | double | none (bit-identical to the pre-precision code) |
+| 4 | 4 | single | none on the device; host images are converted at `pre_calc` / print |
+| 4 | 8 | double | convective kernels only (`CONV_CAST`) |
+| 8 | 4 | double | viscous kernels only (`VISC_CAST`) |
+
+Rules that keep this correct — follow them in any new kernel code:
+
+* **No `real(8)`, no `d0` literal and no `dble()` in device code.** A `0.5d0 * x` silently
+  promotes the whole expression to double. Use `real(kd_*)`, `0.5_kd_*`, `real(x, kd_*)`.
+  Host code (`main*.f90`, `set_coordinate.f90`, `set_grid`/`set_init`, the host half of
+  `calc_rescale.f90`) stays `real(8)`.
+* **Constants come from `mod_constant` in the kind of the consumer**: `<name>_arr`,
+  `<name>_conv`, `<name>_visc` (each is the `real(8)` master rounded once). Modules rename
+  them back on import (`use mod_constant, only : one_third => one_third_conv`); the two
+  include-only fragments (`calc_scheme_math.f90.fypp`, `calc_visc_cent.f90.fypp`) spell
+  the suffix out because the fused kernels include both into one module. This also covers
+  `gamma`, `R`, `Pr`, `Prt`, `dt` — device code must not take them from `mod_globals`.
+* **A term casts where it reads and where it stores, nowhere else.** Tile loads convert by
+  assignment; a `kd_arr` array read inside an expression is written
+  `real(mu(i,j,k), kd_visc)` (a no-op when the kinds agree); a value loaded from E/F/G
+  (`__ldlu`) is kept in a `kd_arr` local so the flux accumulates in the array kind.
+* **Device code cannot pass `real(a(i1:i2), kd)` as an actual argument** (it needs a
+  temporary), and an `intent(out)` dummy cannot be an element of a different kind. Those
+  calls have a `#:if CONV_CAST` / `#:if VISC_CAST` branch that copies through locals of
+  the term kind; the `#:else` branch is the original call, untouched.
+* **Address-based copies cannot convert**: `pipelineMemcpyAsync` (`load_smem_visc2_curv`)
+  must keep a plain global-memory source and is replaced by an assignment under
+  `VISC_CAST`; `cudaMemcpy` needs host and device buffers of the same kind.
+* The sensor kind `sp` (`mod_globals.f90`) and the VTK kind `OUTPUT_PRECISION` are
+  independent of these settings.
+* BC kernels in the case `set.f90` files take `kd_arr` device arrays but keep `real(8)`
+  locals and `mod_globals` constants: with single-precision arrays a BC value is
+  evaluated in double and rounded on store.
+
+Verify a change with all four combinations, not just 8/8: a kind mismatch only shows up
+as a compile error in the mixed builds.
 
 ### mod_globals.f90 (grid, physical parameters, thread blocks)
 
@@ -139,6 +198,8 @@ This file is **not** preprocessed by fypp. It holds:
 | `id_rescale` (integer) | off | on | — |
 | `id_scheme` | integer(2)=KEEP | real(2)=SLAU | real(8)=Hybrid |
 | `id_bc_x/y/z` (integer) | periodic | wall/inflow | — |
+
+`mod_constant` also holds the physical/stencil constants: `real(8)` masters for host code and `_arr` / `_conv` / `_visc` copies for device code (see Precision above).
 
 The **value** of these parameters is always 0; only the **type kind** matters for compile-time dispatch. `id_recal` (restart flag) is a Fortran `logical` (`.true.`/`.false.`).
 

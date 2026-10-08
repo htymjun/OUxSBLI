@@ -1,7 +1,8 @@
 module calc_steps
+  use mod_precision
   use cudafor
-  use mod_globals, only : dt
-  use mod_constant, only : one_sixth
+  use mod_constant, only : dt => dt_arr
+  use mod_constant, only : one_sixth => one_sixth_arr
   use libm
   implicit none
 contains
@@ -11,14 +12,14 @@ contains
     integer, intent(in), value              :: ny                  !< number of grid points in y direction
     integer, intent(in), value              :: nz                  !< number of grid points in z direction
     integer, intent(in), value              :: i, j, k             !< index
-    real(8), intent(in), value              :: dtdxdy              !< dt * Sxy
-    real(8), intent(in), value              :: dtdydz              !< dt * Syz
-    real(8), intent(in), value              :: dtdzdx              !< dt * Szx
-    real(8), intent(in), device, contiguous :: E(nx-1,ny-2,nz-2,5) !< Flux in x direction
-    real(8), intent(in), device, contiguous :: F(nx-2,ny-1,nz-2,5) !< Flux in y direction
-    real(8), intent(in), device, contiguous :: G(nx-2,ny-2,nz-1,5) !< Flux in z direction
-    real(8), intent(out), contiguous        :: R(5)
-    real(8) v0, v1
+    real(kd_arr), intent(in), value              :: dtdxdy              !< dt * Sxy
+    real(kd_arr), intent(in), value              :: dtdydz              !< dt * Syz
+    real(kd_arr), intent(in), value              :: dtdzdx              !< dt * Szx
+    real(kd_arr), intent(in), device, contiguous :: E(nx-1,ny-2,nz-2,5) !< Flux in x direction
+    real(kd_arr), intent(in), device, contiguous :: F(nx-2,ny-1,nz-2,5) !< Flux in y direction
+    real(kd_arr), intent(in), device, contiguous :: G(nx-2,ny-2,nz-1,5) !< Flux in z direction
+    real(kd_arr), intent(out), contiguous        :: R(5)
+    real(kd_arr) v0, v1
     ! x direction
     !R(1) = dtdydz * (-E(i,j,k,1) + E(i+1,j,k,1))
     v0 = E(i,j,k,1); v1 = E(i+1,j,k,1); R(1) = dtdydz * (v1 - v0)
@@ -49,18 +50,18 @@ contains
     integer, intent(in), value               :: nx                  !< number of grid points in x direction
     integer, intent(in), value               :: ny                  !< number of grid points in y direction
     integer, intent(in), value               :: nz                  !< number of grid points in z direction
-    real(8), intent(in), value               :: coef                !< coefficient for Runge-Kutta
-    real(8), intent(in), device, contiguous  :: dtdxdy(nx-2,ny-2)   !< dt * Sxy
-    real(8), intent(in), device, contiguous  :: dtdydz(ny-2,nz-2)   !< dt * Syz
-    real(8), intent(in), device, contiguous  :: dtdzdx(nx-2,nz-2)   !< dt * Szx
-    real(8), intent(in), device, contiguous  :: E(nx-1,ny-2,nz-2,5) !< Flux in x direction
-    real(8), intent(in), device, contiguous  :: F(nx-2,ny-1,nz-2,5) !< Flux in y direction
-    real(8), intent(in), device, contiguous  :: G(nx-2,ny-2,nz-1,5) !< Flux in z direction
-    real(8), intent(in), device, contiguous  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)  !< present Q(rho, rhou, rhov, rhow, E) / Jacobian
-    real(8), intent(in), device, contiguous  :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
-    real(8), intent(out), device, contiguous :: Q2_1(nx,ny,nz), Q2_2(nx,ny,nz), Q2_3(nx,ny,nz) !< next    Q(rho, rhou, rhov, rhow, E) / Jacobian
-    real(8), intent(out), device, contiguous :: Q2_4(nx,ny,nz), Q2_5(nx,ny,nz)
-    real(8) R(5), coef_dtdxdy, coef_dtdydz, coef_dtdzdx
+    real(kd_arr), intent(in), value               :: coef                !< coefficient for Runge-Kutta
+    real(kd_arr), intent(in), device, contiguous  :: dtdxdy(nx-2,ny-2)   !< dt * Sxy
+    real(kd_arr), intent(in), device, contiguous  :: dtdydz(ny-2,nz-2)   !< dt * Syz
+    real(kd_arr), intent(in), device, contiguous  :: dtdzdx(nx-2,nz-2)   !< dt * Szx
+    real(kd_arr), intent(in), device, contiguous  :: E(nx-1,ny-2,nz-2,5) !< Flux in x direction
+    real(kd_arr), intent(in), device, contiguous  :: F(nx-2,ny-1,nz-2,5) !< Flux in y direction
+    real(kd_arr), intent(in), device, contiguous  :: G(nx-2,ny-2,nz-1,5) !< Flux in z direction
+    real(kd_arr), intent(in), device, contiguous  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)  !< present Q(rho, rhou, rhov, rhow, E) / Jacobian
+    real(kd_arr), intent(in), device, contiguous  :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    real(kd_arr), intent(out), device, contiguous :: Q2_1(nx,ny,nz), Q2_2(nx,ny,nz), Q2_3(nx,ny,nz) !< next    Q(rho, rhou, rhov, rhow, E) / Jacobian
+    real(kd_arr), intent(out), device, contiguous :: Q2_4(nx,ny,nz), Q2_5(nx,ny,nz)
+    real(kd_arr) R(5), coef_dtdxdy, coef_dtdydz, coef_dtdzdx
     integer i, j, k
     i = (blockIdx%x-1)*blockDim%x + threadIdx%x
     j = (blockIdx%y-1)*blockDim%y + threadIdx%y
@@ -87,20 +88,20 @@ contains
     integer, intent(in), value                 :: nx                   !< number of grid points in x direction
     integer, intent(in), value                 :: ny                   !< number of grid points in y direction
     integer, intent(in), value                 :: nz                   !< number of grid points in z direction
-    real(8), intent(in), value                 :: coef1                !< coefficient for Runge-Kutta
-    real(8), intent(in), value                 :: coef2                !< coefficient for Runge-Kutta
-    real(8), intent(in), device, contiguous    :: dtdxdy(nx-2,ny-2)    !< dt * Sxy
-    real(8), intent(in), device, contiguous    :: dtdydz(ny-2,nz-2)    !< dt * Syz
-    real(8), intent(in), device, contiguous    :: dtdzdx(nx-2,nz-2)    !< dt * Szx
-    real(8), intent(in), device, contiguous    :: E(nx-1,ny-2,nz-2,5)  !< Flux in x direction
-    real(8), intent(in), device, contiguous    :: F(nx-2,ny-1,nz-2,5)  !< Flux in y direction
-    real(8), intent(in), device, contiguous    :: G(nx-2,ny-2,nz-1,5)  !< Flux in z direction
-    real(8), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)   !< present Q(rho, rhou, rhov, rhow, E) / Jacobian
-    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
-    real(8), intent(out), device, contiguous   :: Q2_1(nx,ny,nz), Q2_2(nx,ny,nz), Q2_3(nx,ny,nz) !< next    Q(rho, rhou, rhov, rhow, E) / Jacobian
-    real(8), intent(out), device, contiguous   :: Q2_4(nx,ny,nz), Q2_5(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: Rs(nx-2,ny-2,nz-2,5) !< accumulation for 4-4 Runge-Kutta
-    real(8) R(5), dtdxdy_tmp, dtdydz_tmp, dtdzdx_tmp
+    real(kd_arr), intent(in), value                 :: coef1                !< coefficient for Runge-Kutta
+    real(kd_arr), intent(in), value                 :: coef2                !< coefficient for Runge-Kutta
+    real(kd_arr), intent(in), device, contiguous    :: dtdxdy(nx-2,ny-2)    !< dt * Sxy
+    real(kd_arr), intent(in), device, contiguous    :: dtdydz(ny-2,nz-2)    !< dt * Syz
+    real(kd_arr), intent(in), device, contiguous    :: dtdzdx(nx-2,nz-2)    !< dt * Szx
+    real(kd_arr), intent(in), device, contiguous    :: E(nx-1,ny-2,nz-2,5)  !< Flux in x direction
+    real(kd_arr), intent(in), device, contiguous    :: F(nx-2,ny-1,nz-2,5)  !< Flux in y direction
+    real(kd_arr), intent(in), device, contiguous    :: G(nx-2,ny-2,nz-1,5)  !< Flux in z direction
+    real(kd_arr), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)   !< present Q(rho, rhou, rhov, rhow, E) / Jacobian
+    real(kd_arr), intent(in), device, contiguous    :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    real(kd_arr), intent(out), device, contiguous   :: Q2_1(nx,ny,nz), Q2_2(nx,ny,nz), Q2_3(nx,ny,nz) !< next    Q(rho, rhou, rhov, rhow, E) / Jacobian
+    real(kd_arr), intent(out), device, contiguous   :: Q2_4(nx,ny,nz), Q2_5(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: Rs(nx-2,ny-2,nz-2,5) !< accumulation for 4-4 Runge-Kutta
+    real(kd_arr) R(5), dtdxdy_tmp, dtdydz_tmp, dtdzdx_tmp
     integer i, j, k
     i = (blockIdx%x-1)*blockDim%x + threadIdx%x
     j = (blockIdx%y-1)*blockDim%y + threadIdx%y
@@ -134,21 +135,21 @@ contains
     integer, intent(in), value                 :: nx                  !< number of grid points in x direction
     integer, intent(in), value                 :: ny                  !< number of grid points in y direction
     integer, intent(in), value                 :: nz                  !< number of grid points in z direction
-    real(8), intent(in), value                 :: coef1               !< α coefficient (weight of original Q^n)
-    real(8), intent(in), value                 :: coef2               !< β coefficient (weight of Q^(*))
-    real(8), intent(in), value                 :: coef3               !< γ coefficient (weight of flux residual)
-    real(8), intent(in), value                 :: coef4_inv           !< 1/(α+β) normalization factor
-    real(8), intent(in), device, contiguous    :: dtdxdy(nx-2,ny-2)   !< dt * Sxy
-    real(8), intent(in), device, contiguous    :: dtdydz(ny-2,nz-2)   !< dt * Syz
-    real(8), intent(in), device, contiguous    :: dtdzdx(nx-2,nz-2)   !< dt * Szx
-    real(8), intent(in), device, contiguous    :: E(nx-1,ny-2,nz-2,5) !< Flux in x direction
-    real(8), intent(in), device, contiguous    :: F(nx-2,ny-1,nz-2,5) !< Flux in y direction
-    real(8), intent(in), device, contiguous    :: G(nx-2,ny-2,nz-1,5) !< Flux in z direction
-    real(8), intent(in), device, contiguous    :: Qin_1(nx,ny,nz), Qin_2(nx,ny,nz), Qin_3(nx,ny,nz)    !< Q^n (original from previous step)
-    real(8), intent(in), device, contiguous    :: Qin_4(nx,ny,nz), Qin_5(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: Qout_1(nx,ny,nz), Qout_2(nx,ny,nz), Qout_3(nx,ny,nz)  !< Q^(*) on input, Q^(n+1) on output
-    real(8), intent(inout), device, contiguous :: Qout_4(nx,ny,nz), Qout_5(nx,ny,nz)
-    real(8) R(5), coef3_dtdxdy, coef3_dtdydz, coef3_dtdzdx
+    real(kd_arr), intent(in), value                 :: coef1               !< α coefficient (weight of original Q^n)
+    real(kd_arr), intent(in), value                 :: coef2               !< β coefficient (weight of Q^(*))
+    real(kd_arr), intent(in), value                 :: coef3               !< γ coefficient (weight of flux residual)
+    real(kd_arr), intent(in), value                 :: coef4_inv           !< 1/(α+β) normalization factor
+    real(kd_arr), intent(in), device, contiguous    :: dtdxdy(nx-2,ny-2)   !< dt * Sxy
+    real(kd_arr), intent(in), device, contiguous    :: dtdydz(ny-2,nz-2)   !< dt * Syz
+    real(kd_arr), intent(in), device, contiguous    :: dtdzdx(nx-2,nz-2)   !< dt * Szx
+    real(kd_arr), intent(in), device, contiguous    :: E(nx-1,ny-2,nz-2,5) !< Flux in x direction
+    real(kd_arr), intent(in), device, contiguous    :: F(nx-2,ny-1,nz-2,5) !< Flux in y direction
+    real(kd_arr), intent(in), device, contiguous    :: G(nx-2,ny-2,nz-1,5) !< Flux in z direction
+    real(kd_arr), intent(in), device, contiguous    :: Qin_1(nx,ny,nz), Qin_2(nx,ny,nz), Qin_3(nx,ny,nz)    !< Q^n (original from previous step)
+    real(kd_arr), intent(in), device, contiguous    :: Qin_4(nx,ny,nz), Qin_5(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: Qout_1(nx,ny,nz), Qout_2(nx,ny,nz), Qout_3(nx,ny,nz)  !< Q^(*) on input, Q^(n+1) on output
+    real(kd_arr), intent(inout), device, contiguous :: Qout_4(nx,ny,nz), Qout_5(nx,ny,nz)
+    real(kd_arr) R(5), coef3_dtdxdy, coef3_dtdydz, coef3_dtdzdx
     integer i, j, k
     i = (blockIdx%x-1)*blockDim%x + threadIdx%x
     j = (blockIdx%y-1)*blockDim%y + threadIdx%y
@@ -165,7 +166,7 @@ contains
     ! Convex combination: weighted average of Qin and Qout minus scaled residual
     ! Qout is write-once here, not re-read until the next kernel launch: __stcs
     block
-      real(8) qin_val, qout_val, val
+      real(kd_arr) qin_val, qout_val, val
       qin_val  = Qin_1(i+1,j+1,k+1)
       qout_val = Qout_1(i+1,j+1,k+1)
       val      = fma(coef1, qin_val, fma(coef2, qout_val, -R(1))) * coef4_inv
@@ -197,16 +198,16 @@ contains
     integer, intent(in), value                 :: nx                   !< number of grid points in x direction
     integer, intent(in), value                 :: ny                   !< number of grid points in y direction
     integer, intent(in), value                 :: nz                   !< number of grid points in z direction
-    real(8), intent(in), device, contiguous    :: dtdxdy(nx-2,ny-2)    !< dt * Sxy
-    real(8), intent(in), device, contiguous    :: dtdydz(ny-2,nz-2)    !< dt * Syz
-    real(8), intent(in), device, contiguous    :: dtdzdx(nx-2,nz-2)    !< dt * Szx
-    real(8), intent(in), device, contiguous    :: E(nx-1,ny-2,nz-2,5)  !< Flux in x direction
-    real(8), intent(in), device, contiguous    :: F(nx-2,ny-1,nz-2,5)  !< Flux in y direction
-    real(8), intent(in), device, contiguous    :: G(nx-2,ny-2,nz-1,5)  !< Flux in z direction
-    real(8), intent(inout), device, contiguous :: Rs(nx-2,ny-2,nz-2,5) !< accumulated residuals from stages 1-3
-    real(8), intent(inout), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)  !< Q^n on input, Q^n+1 on output
-    real(8), intent(inout), device, contiguous :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
-    real(8) R(5), dtdxdy_tmp, dtdydz_tmp, dtdzdx_tmp
+    real(kd_arr), intent(in), device, contiguous    :: dtdxdy(nx-2,ny-2)    !< dt * Sxy
+    real(kd_arr), intent(in), device, contiguous    :: dtdydz(ny-2,nz-2)    !< dt * Syz
+    real(kd_arr), intent(in), device, contiguous    :: dtdzdx(nx-2,nz-2)    !< dt * Szx
+    real(kd_arr), intent(in), device, contiguous    :: E(nx-1,ny-2,nz-2,5)  !< Flux in x direction
+    real(kd_arr), intent(in), device, contiguous    :: F(nx-2,ny-1,nz-2,5)  !< Flux in y direction
+    real(kd_arr), intent(in), device, contiguous    :: G(nx-2,ny-2,nz-1,5)  !< Flux in z direction
+    real(kd_arr), intent(inout), device, contiguous :: Rs(nx-2,ny-2,nz-2,5) !< accumulated residuals from stages 1-3
+    real(kd_arr), intent(inout), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)  !< Q^n on input, Q^n+1 on output
+    real(kd_arr), intent(inout), device, contiguous :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    real(kd_arr) R(5), dtdxdy_tmp, dtdydz_tmp, dtdzdx_tmp
     integer i, j, k
     i = (blockIdx%x-1)*blockDim%x + threadIdx%x
     j = (blockIdx%y-1)*blockDim%y + threadIdx%y
@@ -224,18 +225,18 @@ contains
     R(1) = Rs(i,j,k,1) + R(1)
     ! Q is write-once here, not re-read until the next kernel launch: __stcs
     call __stcs(Q_1(i+1,j+1,k+1), fma(-one_sixth, R(1), Q_1(i+1,j+1,k+1)))
-    Rs(i,j,k,1) = 0.d0
+    Rs(i,j,k,1) = 0._kd_arr
     R(2) = Rs(i,j,k,2) + R(2)
     call __stcs(Q_2(i+1,j+1,k+1), fma(-one_sixth, R(2), Q_2(i+1,j+1,k+1)))
-    Rs(i,j,k,2) = 0.d0
+    Rs(i,j,k,2) = 0._kd_arr
     R(3) = Rs(i,j,k,3) + R(3)
     call __stcs(Q_3(i+1,j+1,k+1), fma(-one_sixth, R(3), Q_3(i+1,j+1,k+1)))
-    Rs(i,j,k,3) = 0.d0
+    Rs(i,j,k,3) = 0._kd_arr
     R(4) = Rs(i,j,k,4) + R(4)
     call __stcs(Q_4(i+1,j+1,k+1), fma(-one_sixth, R(4), Q_4(i+1,j+1,k+1)))
-    Rs(i,j,k,4) = 0.d0
+    Rs(i,j,k,4) = 0._kd_arr
     R(5) = Rs(i,j,k,5) + R(5)
     call __stcs(Q_5(i+1,j+1,k+1), fma(-one_sixth, R(5), Q_5(i+1,j+1,k+1)))
-    Rs(i,j,k,5) = 0.d0
+    Rs(i,j,k,5) = 0._kd_arr
   end subroutine calc_step4
 end module calc_steps

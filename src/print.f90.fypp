@@ -1,11 +1,13 @@
 #:include 'config.fypp'
+#:include 'precision.fypp'
 #:if not defined('OUTPUT_PRECISION')
   #:set OUTPUT_PRECISION = 4
 #:endif
 module print
+  use mod_precision
   use mpi
   use mod_globals, only : nt, np, dt, step_offset, gamma, R, dimension
-  use mod_constant, only : id_accuracy
+  use mod_constant, only : id_accuracy, id_recal
   implicit none
   integer, parameter :: io = ${OUTPUT_PRECISION}$
   integer, parameter :: IO_UNIT_VTK = 10
@@ -51,6 +53,7 @@ contains
     real(4), intent(inout)        :: entropy0
     integer, intent(in), optional :: myrank
     real(io) entropy, t
+    character(len=8) file_status, file_position
     character(len=40) filename
     integer i, j, k, l, accuracy, offset
     if (kind(id_accuracy) == 8) then
@@ -75,11 +78,19 @@ contains
       entropy0 = entropy
     endif
     t = nt * step * dt
+    ! A fresh run (step 0, not a restart) starts the log anew. Appending would keep the
+    ! step-0 row of every earlier start that was aborted (e.g. by a spurious -Mchkptr
+    ! abort) and duplicate it. A restart continues the existing log.
+    if (step == 0 .and. .not. id_recal) then
+      file_status = "replace"; file_position = "asis"
+    else
+      file_status = "unknown"; file_position = "append"
+    endif
     if (present(myrank)) then
       write(filename, "(a, i0, a)") "data/",int(myrank),"/entropy.d"
-      open(IO_UNIT_VTK,file=filename, position="append")
+      open(IO_UNIT_VTK,file=filename, status=file_status, position=file_position)
     else
-      open(IO_UNIT_VTK,file="data/entropy.d", position="append")
+      open(IO_UNIT_VTK,file="data/entropy.d", status=file_status, position=file_position)
     endif
     write(IO_UNIT_VTK,"(2e12.4)") t, (entropy0 - entropy) / entropy0
     close(IO_UNIT_VTK)
@@ -92,6 +103,7 @@ contains
     real(4), intent(inout)        :: ke0
     integer, intent(in), optional :: myrank
     real(io) ke, t
+    character(len=8) file_status, file_position
     character(len=40) filename
     integer i, j, k, l, m, accuracy, offset
     if (kind(id_accuracy) == 8) then
@@ -117,11 +129,19 @@ contains
       ke0 = ke
     endif
     t = nt * step * dt
+    ! A fresh run (step 0, not a restart) starts the log anew. Appending would keep the
+    ! step-0 row of every earlier start that was aborted (e.g. by a spurious -Mchkptr
+    ! abort) and duplicate it. A restart continues the existing log.
+    if (step == 0 .and. .not. id_recal) then
+      file_status = "replace"; file_position = "asis"
+    else
+      file_status = "unknown"; file_position = "append"
+    endif
     if (present(myrank)) then
       write(filename, "(a, i0, a)") "data/",int(myrank),"/kinetic_energy.d"
-      open(IO_UNIT_VTK,file=filename, position="append")
+      open(IO_UNIT_VTK,file=filename, status=file_status, position=file_position)
     else
-      open(IO_UNIT_VTK,file="data/kinetic_energy.d", position="append")
+      open(IO_UNIT_VTK,file="data/kinetic_energy.d", status=file_status, position=file_position)
     endif
     write(IO_UNIT_VTK,"(3e12.4)") t, ke, ke / ke0
     close(IO_UNIT_VTK)
@@ -253,15 +273,28 @@ contains
                                        QJ_1, QJ_2, QJ_3, QJ_4, Q, ke0, entropy0)
     integer, intent(in)         :: myrank, nranks, step, nx, ny
     real(8), intent(in)         :: x(nx), y(ny), Jacobian_cpu(nx,ny)
-    real(8), intent(in), device :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
+    real(kd_arr), intent(in), device :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
     real(8), intent(inout)      :: Q(nx,ny,4)
     real(4), intent(inout)      :: ke0, entropy0
     integer ireq3(3), istat3(MPI_STATUS_SIZE,3), ierr
     real(io) rho_flat(nx*ny), p_flat(nx*ny), vel_flat(nx*ny*3)
+    #:if ARR != 8
+    real(kd_arr), allocatable :: Q_arr(:,:)
+    #:endif
+    #:if ARR == 8
     Q(:,:,1) = QJ_1
     Q(:,:,2) = QJ_2
     Q(:,:,3) = QJ_3
     Q(:,:,4) = QJ_4
+    #:else
+    ! device arrays are kd_arr, the host image is real(8): stage through a kd_arr host buffer
+    allocate(Q_arr(nx,ny))
+    #:for l in range(1, 5)
+    Q_arr = QJ_${l}$
+    Q(:,:,${l}$) = Q_arr
+    #:endfor
+    deallocate(Q_arr)
+    #:endif
     call make_1d_for_print(nx, ny, Jacobian_cpu, Q, rho_flat, p_flat, vel_flat)
     if (io == 4) then
       call MPI_ISEND(rho_flat, nx*ny,   MPI_REAL4, myrank+1, 3*(myrank+1)-2, MPI_COMM_WORLD, ireq3(1), ierr)
@@ -280,16 +313,29 @@ contains
                                        QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q, ke0, entropy0)
     integer, intent(in)         :: myrank, nranks, step, nx, ny, nz
     real(8), intent(in)         :: x(nx), y(ny), z(nz), Jacobian_cpu(nx,ny)
-    real(8), intent(in), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(kd_arr), intent(in), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8), intent(inout)      :: Q(nx,ny,nz,5)
     real(4), intent(inout)      :: ke0, entropy0
     integer ireq3(3), istat3(MPI_STATUS_SIZE,3), ierr
     real(io) rho_flat(nx*ny*nz), p_flat(nx*ny*nz), vel_flat(nx*ny*nz*3)
+    #:if ARR != 8
+    real(kd_arr), allocatable :: Q_arr(:,:,:)
+    #:endif
+    #:if ARR == 8
     Q(:,:,:,1) = QJ_1
     Q(:,:,:,2) = QJ_2
     Q(:,:,:,3) = QJ_3
     Q(:,:,:,4) = QJ_4
     Q(:,:,:,5) = QJ_5
+    #:else
+    ! device arrays are kd_arr, the host image is real(8): stage through a kd_arr host buffer
+    allocate(Q_arr(nx,ny,nz))
+    #:for l in range(1, 6)
+    Q_arr = QJ_${l}$
+    Q(:,:,:,${l}$) = Q_arr
+    #:endfor
+    deallocate(Q_arr)
+    #:endif
     call make_1d_for_print(nx, ny, nz, Jacobian_cpu, Q, rho_flat, p_flat, vel_flat)
     if (io == 4) then
       call MPI_ISEND(rho_flat, nx*ny*nz,   MPI_REAL4, myrank+1, 3*(myrank+1)-2, MPI_COMM_WORLD, ireq3(1), ierr)

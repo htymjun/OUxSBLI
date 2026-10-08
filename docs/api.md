@@ -54,6 +54,8 @@ These are patched into the copied `config.fypp`:
 | `commz` | `COMMZ` | bool | `True`, `False` |
 | `gpumpi` | `GPUMPI` | bool | `True`, `False` |
 | `output_precision` | `OUTPUT_PRECISION` | int | `4`, `8` |
+| `conv_precision` | `CONV_PRECISION` | int | `4`, `8` |
+| `visc_precision` | `VISC_PRECISION` | int | `4`, `8` |
 
 String values for `scheme` and `visc` are case-insensitive (`'slau'` → `'SLAU'`, `'ns'` → `'NS'`).
 

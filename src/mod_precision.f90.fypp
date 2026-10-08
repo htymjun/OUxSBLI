@@ -1,0 +1,12 @@
+#:include 'config.fypp'
+#:include 'precision.fypp'
+!> Real kinds selected by CONV_PRECISION / VISC_PRECISION in config.fypp.
+module mod_precision
+  use mpi, only : MPI_REAL4, MPI_REAL8
+  implicit none
+  integer, parameter :: kd_host = 8                    !< host side: grid, initial condition, restart files
+  integer, parameter :: kd_conv = ${CONV_PRECISION}$                    !< arithmetic inside the convective kernels
+  integer, parameter :: kd_visc = ${VISC_PRECISION}$                    !< arithmetic inside the viscous kernels
+  integer, parameter :: kd_arr  = ${ARR}$                    !< device arrays, RK update, BCs (8 unless both terms are 4)
+  integer, parameter :: MPI_KD_ARR = MPI_REAL${ARR}$   !< MPI datatype of kd_arr buffers
+end module mod_precision

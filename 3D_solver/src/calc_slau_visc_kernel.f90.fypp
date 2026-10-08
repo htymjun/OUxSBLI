@@ -1,4 +1,5 @@
 #:include 'config.fypp'
+#:include 'precision.fypp'
 #:if not defined('VISC_ORDER')
   #:set VISC_ORDER = ORDER
 #:endif
@@ -33,21 +34,20 @@
 !    instead, mirroring calc_visc_cent.f90.fypp's own scalar-read helpers.
 #:if SCHEME == 'SLAU' and VISC == 'NS' and ORDER == 6 and VISC_ORDER == 6 and not BC_X and not BC_Y and not BC_Z and not COMMZ
 module calc_slau_visc_kernel_internal
-  use mod_globals, only : gamma, threadsE, threadsF, threadsG
-  use mod_constant, only : id_slau, over_gamma_1, R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third, &
-                            Cp_over_Pr, one_sixty
+  use mod_precision
+  use mod_globals, only : threadsE, threadsF, threadsG
+  ! constants referenced by the included calc_scheme_math.f90
+  use mod_constant, only : gamma_conv, over_gamma_1_conv, R_over_gamma_1_conv, one_third_conv, one_sixth_conv, one_twelfth_conv, two_third_conv, &
+                           one_24_conv, one_48_conv, one_60_conv, one_120_conv, one_240_conv, seven_twelfth_conv
+  ! constants referenced by the included calc_visc_cent.f90.fypp
+  use mod_constant, only : two_third_visc, one_24_visc
+  use mod_constant, only : id_slau, Cp_over_Pr => Cp_over_Pr_visc, one_sixty => one_sixty_visc
   use calc_muscl
   use calc_hybrid
   use libm
   implicit none
   private
   public calc_slauv_x_in, calc_slauv_y_in, calc_slauv_z_in
-  real(8), parameter :: one_24        = 1.d0 / 24.d0
-  real(8), parameter :: one_48        = 1.d0 / 48.d0
-  real(8), parameter :: one_60        = 1.d0 / 60.d0
-  real(8), parameter :: one_120       = 1.d0 / 120.d0
-  real(8), parameter :: one_240       = 1.d0 / 240.d0
-  real(8), parameter :: seven_twelfth = 7.d0 / 12.d0
   integer, parameter :: io   = ${ORDER_IO}$
   integer, parameter :: io_v = 2
 
@@ -69,9 +69,9 @@ contains
                                                     rhol, ul, vl, wl, pl, &
                                                     rhor, ur, vr, wr, pr, fd)
     integer(8), intent(in), value :: id_accuracy
-    real(8), intent(in), contiguous :: rho(6), u(6), v(6), w(6), p(6)
-    real(8), intent(out)            :: rhol, ul, vl, wl, pl
-    real(8), intent(out)            :: rhor, ur, vr, wr, pr
+    real(kd_conv), intent(in), contiguous :: rho(6), u(6), v(6), w(6), p(6)
+    real(kd_conv), intent(out)            :: rhol, ul, vl, wl, pl
+    real(kd_conv), intent(out)            :: rhor, ur, vr, wr, pr
     real(sp), intent(inout)         :: fd
     call delta6(fd, rho(:), rhol, rhor)
     call delta6(fd,   u(:),   ul,   ur)
@@ -87,9 +87,9 @@ contains
                                                     rhol, ul, vl, wl, pl, &
                                                     rhor, ur, vr, wr, pr, fd)
     integer(4), intent(in), value :: id_accuracy
-    real(8), intent(in), contiguous :: rho(4), u(4), v(4), w(4), p(4)
-    real(8), intent(out)            :: rhol, ul, vl, wl, pl
-    real(8), intent(out)            :: rhor, ur, vr, wr, pr
+    real(kd_conv), intent(in), contiguous :: rho(4), u(4), v(4), w(4), p(4)
+    real(kd_conv), intent(out)            :: rhol, ul, vl, wl, pl
+    real(kd_conv), intent(out)            :: rhor, ur, vr, wr, pr
     real(sp), intent(inout)         :: fd
     call delta4(fd, rho(:), rhol, rhor)
     call delta4(fd,   u(:),   ul,   ur)
@@ -105,9 +105,9 @@ contains
                                                     rhol, ul, vl, wl, pl, &
                                                     rhor, ur, vr, wr, pr, fd)
     integer(2), intent(in), value :: id_accuracy
-    real(8), intent(in), contiguous :: rho(2), u(2), v(2), w(2), p(2)
-    real(8), intent(out)            :: rhol, ul, vl, wl, pl
-    real(8), intent(out)            :: rhor, ur, vr, wr, pr
+    real(kd_conv), intent(in), contiguous :: rho(2), u(2), v(2), w(2), p(2)
+    real(kd_conv), intent(out)            :: rhol, ul, vl, wl, pl
+    real(kd_conv), intent(out)            :: rhor, ur, vr, wr, pr
     real(sp), intent(inout)         :: fd
     rhol = rho(1); rhor = rho(2)
       ul =   u(1);   ur =   u(2)
@@ -119,15 +119,15 @@ contains
 
 
   attributes(global) subroutine calc_slauv_x_in(nx, ny, nz, dx, dy, dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, sensor, vy, wz, E)
-    use mod_constant, only : Normal_x
+    use mod_constant, only : Normal_x => Normal_x_conv
     integer, intent(in), value                 :: nx, ny, nz
-    real(8), intent(in), device, contiguous    :: dx(nx-1), dy(ny-1), dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: T(nx,ny,nz), mu(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: dx(nx-1), dy(ny-1), dz(nz-1)
+    real(kd_arr), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: T(nx,ny,nz), mu(nx,ny,nz)
     real(sp), intent(in), device, contiguous   :: sensor(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: vy(nx,ny,nz) !< dv/dy at cell-center, precomputed by calc_div
-    real(8), intent(in), device, contiguous    :: wz(nx,ny,nz) !< dw/dz at cell-center, precomputed by calc_div
-    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
+    real(kd_arr), intent(in), device, contiguous    :: vy(nx,ny,nz) !< dv/dy at cell-center, precomputed by calc_div
+    real(kd_arr), intent(in), device, contiguous    :: wz(nx,ny,nz) !< dw/dz at cell-center, precomputed by calc_div
+    real(kd_arr), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
     integer i, j, k, it, jt, kt
     integer ii, i_base, idx, idx_r, offset_yz, offset_yzr, i1, i2
     logical :: jk_in_range, jk_in_range_grad_y, jk_in_range_grad_z, interior
@@ -135,10 +135,12 @@ contains
     integer, parameter :: sxr = threadsE%x
     integer, parameter :: sy  = threadsE%y
     integer, parameter :: sz  = threadsE%z
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, uy, uz
-    real(8), dimension(sxr*sy*sz), shared           :: rhor, ur, vr, wr, pr
-    real(8) rhol, ul, vl, wl, pl
-    real(8) :: flux(5), mui
+    real(kd_arr), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p  ! read by both terms
+    real(kd_visc), dimension(-(io-1):sx*sy*sz-io), shared :: uy, uz
+    real(kd_conv), dimension(sxr*sy*sz), shared           :: rhor, ur, vr, wr, pr
+    real(kd_conv) rhol, ul, vl, wl, pl
+    real(kd_arr)  :: flux(5)
+    real(kd_visc) :: mui
     real(sp) fdx  ! sp intentional: sensor interpolation does not need double precision
     it = threadIdx%x
     jt = threadIdx%y
@@ -158,10 +160,10 @@ contains
         rho(idx) = Q_1(i,j,k); u(idx) = Q_2(i,j,k); v(idx) = Q_3(i,j,k)
           w(idx) = Q_4(i,j,k); p(idx) = Q_5(i,j,k)
         if (jk_in_range_grad_y) then
-          uy(idx) = (one_sixty * (-Q_2(i,j-3,k) + Q_2(i,j+3,k)) + 0.15d0 * (Q_2(i,j-2,k) - Q_2(i,j+2,k)) + 0.75d0 * (-Q_2(i,j-1,k) + Q_2(i,j+1,k))) * dy(j)
+          uy(idx) = (one_sixty * (-real(Q_2(i,j-3,k), kd_visc) + real(Q_2(i,j+3,k), kd_visc)) + 0.15_kd_visc * (real(Q_2(i,j-2,k), kd_visc) - real(Q_2(i,j+2,k), kd_visc)) + 0.75_kd_visc * (-real(Q_2(i,j-1,k), kd_visc) + real(Q_2(i,j+1,k), kd_visc))) * real(dy(j), kd_visc)
         endif
         if (jk_in_range_grad_z) then
-          uz(idx) = (one_sixty * (-Q_2(i,j,k-3) + Q_2(i,j,k+3)) + 0.15d0 * (Q_2(i,j,k-2) - Q_2(i,j,k+2)) + 0.75d0 * (-Q_2(i,j,k-1) + Q_2(i,j,k+1))) * dz(k)
+          uz(idx) = (one_sixty * (-real(Q_2(i,j,k-3), kd_visc) + real(Q_2(i,j,k+3), kd_visc)) + 0.15_kd_visc * (real(Q_2(i,j,k-2), kd_visc) - real(Q_2(i,j,k+2), kd_visc)) + 0.75_kd_visc * (-real(Q_2(i,j,k-1), kd_visc) + real(Q_2(i,j,k+1), kd_visc))) * real(dz(k), kd_visc)
         endif
       endif
     enddo
@@ -172,47 +174,85 @@ contains
       idx_r = it + offset_yzr
       i1    = idx - io
       i2    = idx + io + 1
-      flux = 0.d0
+      flux = 0._kd_arr
       ! narrower than the convective validity above: vy/wz are only valid
       ! where calc_div_vy_6_in/calc_div_wz_6_in's own y/z-margin covers them
       interior = (4 <= j .and. j <= ny-3 .and. 4 <= k .and. k <= nz-3)
       if (interior) then
-        mui = interp6_s(mu(i-2,j,k)+mu(i+3,j,k), mu(i-1,j,k)+mu(i+2,j,k), mu(i,j,k)+mu(i+1,j,k))
+        mui = interp6_s(real(mu(i-2,j,k), kd_visc)+real(mu(i+3,j,k), kd_visc), real(mu(i-1,j,k), kd_visc)+real(mu(i+2,j,k), kd_visc), real(mu(i,j,k), kd_visc)+real(mu(i+1,j,k), kd_visc))
         block
-          real(8) :: tau, utau
-          call calc_tau_straight(mui, u(idx-io_v:idx+io_v+1), vy(i-io_v:i+io_v+1,j,k), wz(i-io_v:i+io_v+1,j,k), dx(i), tau, utau)
+          real(kd_visc) :: tau, utau
+          #:if VISC_CAST
+          block
+            real(kd_visc) :: s1(2*io_v+2), s2(2*io_v+2), s3(2*io_v+2)
+            s1 = u(idx-io_v:idx+io_v+1)
+            s2 = vy(i-io_v:i+io_v+1,j,k)
+            s3 = wz(i-io_v:i+io_v+1,j,k)
+            call calc_tau_straight(mui, s1, s2, s3, real(dx(i), kd_visc), tau, utau)
+          end block
+          #:else
+          call calc_tau_straight(mui, u(idx-io_v:idx+io_v+1), vy(i-io_v:i+io_v+1,j,k), wz(i-io_v:i+io_v+1,j,k), real(dx(i), kd_visc), tau, utau)
+          #:endif
           flux(2) = flux(2) - tau
           flux(5) = flux(5) - utau
         end block
         block
-          real(8) :: tau, utau
-          call calc_tau_cross(mui, v(idx-io_v:idx+io_v+1), uy(idx-io_v:idx+io_v+1), dx(i), tau, utau)
+          real(kd_visc) :: tau, utau
+          #:if VISC_CAST
+          block
+            real(kd_visc) :: s1(2*io_v+2)
+            s1 = v(idx-io_v:idx+io_v+1)
+            call calc_tau_cross(mui, s1, uy(idx-io_v:idx+io_v+1), real(dx(i), kd_visc), tau, utau)
+          end block
+          #:else
+          call calc_tau_cross(mui, v(idx-io_v:idx+io_v+1), uy(idx-io_v:idx+io_v+1), real(dx(i), kd_visc), tau, utau)
+          #:endif
           flux(3) = flux(3) - tau
           flux(5) = flux(5) - utau
         end block
         block
-          real(8) :: tau, utau
-          call calc_tau_cross(mui, w(idx-io_v:idx+io_v+1), uz(idx-io_v:idx+io_v+1), dx(i), tau, utau)
+          real(kd_visc) :: tau, utau
+          #:if VISC_CAST
+          block
+            real(kd_visc) :: s1(2*io_v+2)
+            s1 = w(idx-io_v:idx+io_v+1)
+            call calc_tau_cross(mui, s1, uz(idx-io_v:idx+io_v+1), real(dx(i), kd_visc), tau, utau)
+          end block
+          #:else
+          call calc_tau_cross(mui, w(idx-io_v:idx+io_v+1), uz(idx-io_v:idx+io_v+1), real(dx(i), kd_visc), tau, utau)
+          #:endif
           flux(4) = flux(4) - tau
           flux(5) = flux(5) - utau
         end block
         block
-          real(8) :: Tx, kTx
-          Tx  = diff6_s(dx(i), -T(i-2,j,k)+T(i+3,j,k), T(i-1,j,k)-T(i+2,j,k), -T(i,j,k)+T(i+1,j,k))
+          real(kd_visc) :: Tx, kTx
+          Tx  = diff6_s(real(dx(i), kd_visc), -real(T(i-2,j,k), kd_visc)+real(T(i+3,j,k), kd_visc), real(T(i-1,j,k), kd_visc)-real(T(i+2,j,k), kd_visc), -real(T(i,j,k), kd_visc)+real(T(i+1,j,k), kd_visc))
           kTx = Cp_over_Pr * mui * Tx
           flux(5) = flux(5) - kTx
         end block
       endif
       fdx = 0.50_sp * (sensor(i,j,k) + sensor(i+1,j,k))
+      #:if CONV_CAST
+      block
+        real(kd_conv) :: s1(2*io+2), s2(2*io+2), s3(2*io+2), s4(2*io+2), s5(2*io+2)
+        s1 = rho(i1:i2)
+        s2 = u(i1:i2)
+        s3 = v(i1:i2)
+        s4 = w(i1:i2)
+        s5 = p(i1:i2)
+        call recon(id_acc, s1, s2, s3, s4, s5, rhol,        ul,        vl,        wl,        pl, rhor(idx_r), ur(idx_r), vr(idx_r), wr(idx_r), pr(idx_r), fdx)
+      end block
+      #:else
       call recon(id_acc, &
                  rho(i1:i2),  u(i1:i2),  v(i1:i2),  w(i1:i2),  p(i1:i2), &
                  rhol,        ul,        vl,        wl,        pl, &
                  rhor(idx_r), ur(idx_r), vr(idx_r), wr(idx_r), pr(idx_r), fdx)
+      #:endif
     endif
     call syncthreads()
     if (io+1 <= i .and. i <= nx-(io+1) .and. j <= ny-1 .and. k <= nz-1) then
       block
-        real(8) :: e1, e2, e3, e4, e5
+        real(kd_conv) :: e1, e2, e3, e4, e5
         associate(un1 => ul, un2 => ur(idx_r))
           call SLAU(id_slau, rhol, rhor(idx_r), ul, ur(idx_r), vl, vr(idx_r), &
                     wl, wr(idx_r), un1, un2, pl, pr(idx_r), Normal_x, fdx, &
@@ -229,15 +269,15 @@ contains
 
 
   attributes(global) subroutine calc_slauv_y_in(nx, ny, nz, dx, dy, dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, sensor, ux, wz, F)
-    use mod_constant, only : Normal_y
+    use mod_constant, only : Normal_y => Normal_y_conv
     integer, intent(in), value                 :: nx, ny, nz
-    real(8), intent(in), device, contiguous    :: dx(nx-1), dy(ny-1), dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: T(nx,ny,nz), mu(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: dx(nx-1), dy(ny-1), dz(nz-1)
+    real(kd_arr), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: T(nx,ny,nz), mu(nx,ny,nz)
     real(sp), intent(in), device, contiguous   :: sensor(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: ux(nx,ny,nz) !< du/dx at cell-center, precomputed by calc_div
-    real(8), intent(in), device, contiguous    :: wz(nx,ny,nz) !< dw/dz at cell-center, precomputed by calc_div
-    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
+    real(kd_arr), intent(in), device, contiguous    :: ux(nx,ny,nz) !< du/dx at cell-center, precomputed by calc_div
+    real(kd_arr), intent(in), device, contiguous    :: wz(nx,ny,nz) !< dw/dz at cell-center, precomputed by calc_div
+    real(kd_arr), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
     integer i, j, k, it, jt, kt
     integer jj, j_base, idx, idx_r, offset_xz, offset_xzr, i1, i2
     logical :: ik_in_range, ik_in_range_grad_x, ik_in_range_grad_z, interior
@@ -245,10 +285,12 @@ contains
     integer, parameter :: sy  = threadsF%y + 2*io + 1
     integer, parameter :: syr = threadsF%y
     integer, parameter :: sz  = threadsF%z
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, vx, vz
-    real(8), dimension(sx*syr*sz), shared           :: rhor, ur, vr, wr, pr
-    real(8) rhol, ul, vl, wl, pl
-    real(8) :: flux(5), mui
+    real(kd_arr), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p  ! read by both terms
+    real(kd_visc), dimension(-(io-1):sx*sy*sz-io), shared :: vx, vz
+    real(kd_conv), dimension(sx*syr*sz), shared           :: rhor, ur, vr, wr, pr
+    real(kd_conv) rhol, ul, vl, wl, pl
+    real(kd_arr)  :: flux(5)
+    real(kd_visc) :: mui
     real(sp) fdy  ! sp intentional: sensor interpolation does not need double precision
     it = threadIdx%x
     jt = threadIdx%y
@@ -268,10 +310,10 @@ contains
         rho(idx) = Q_1(i,j,k); u(idx) = Q_2(i,j,k); v(idx) = Q_3(i,j,k)
           w(idx) = Q_4(i,j,k); p(idx) = Q_5(i,j,k)
         if (ik_in_range_grad_x) then
-          vx(idx) = (one_sixty * (-Q_3(i-3,j,k) + Q_3(i+3,j,k)) + 0.15d0 * (Q_3(i-2,j,k) - Q_3(i+2,j,k)) + 0.75d0 * (-Q_3(i-1,j,k) + Q_3(i+1,j,k))) * dx(i)
+          vx(idx) = (one_sixty * (-real(Q_3(i-3,j,k), kd_visc) + real(Q_3(i+3,j,k), kd_visc)) + 0.15_kd_visc * (real(Q_3(i-2,j,k), kd_visc) - real(Q_3(i+2,j,k), kd_visc)) + 0.75_kd_visc * (-real(Q_3(i-1,j,k), kd_visc) + real(Q_3(i+1,j,k), kd_visc))) * real(dx(i), kd_visc)
         endif
         if (ik_in_range_grad_z) then
-          vz(idx) = (one_sixty * (-Q_3(i,j,k-3) + Q_3(i,j,k+3)) + 0.15d0 * (Q_3(i,j,k-2) - Q_3(i,j,k+2)) + 0.75d0 * (-Q_3(i,j,k-1) + Q_3(i,j,k+1))) * dz(k)
+          vz(idx) = (one_sixty * (-real(Q_3(i,j,k-3), kd_visc) + real(Q_3(i,j,k+3), kd_visc)) + 0.15_kd_visc * (real(Q_3(i,j,k-2), kd_visc) - real(Q_3(i,j,k+2), kd_visc)) + 0.75_kd_visc * (-real(Q_3(i,j,k-1), kd_visc) + real(Q_3(i,j,k+1), kd_visc))) * real(dz(k), kd_visc)
         endif
       endif
     enddo
@@ -282,49 +324,85 @@ contains
       idx_r = jt + offset_xzr
       i1    = idx - io
       i2    = idx + io + 1
-      flux = 0.d0
+      flux = 0._kd_arr
       interior = (4 <= i .and. i <= nx-3 .and. 4 <= k .and. k <= nz-3)
       if (interior) then
-        mui = interp6_s(mu(i,j-2,k)+mu(i,j+3,k), mu(i,j-1,k)+mu(i,j+2,k), mu(i,j,k)+mu(i,j+1,k))
+        mui = interp6_s(real(mu(i,j-2,k), kd_visc)+real(mu(i,j+3,k), kd_visc), real(mu(i,j-1,k), kd_visc)+real(mu(i,j+2,k), kd_visc), real(mu(i,j,k), kd_visc)+real(mu(i,j+1,k), kd_visc))
         block
-          real(8) :: tau, utau
+          real(kd_visc) :: tau, utau
+          #:if VISC_CAST
+          block
+            real(kd_visc) :: s1(2*io_v+2)
+            s1 = v(idx-io_v:idx+io_v+1)
+            call calc_tau_straight_s(mui, s1, real(wz(i,j-2,k), kd_visc)+real(wz(i,j+3,k), kd_visc), real(ux(i,j-2,k), kd_visc)+real(ux(i,j+3,k), kd_visc), real(wz(i,j-1,k), kd_visc)+real(wz(i,j+2,k), kd_visc), real(ux(i,j-1,k), kd_visc)+real(ux(i,j+2,k), kd_visc), real(wz(i,j,  k), kd_visc)+real(wz(i,j+1,k), kd_visc), real(ux(i,j,  k), kd_visc)+real(ux(i,j+1,k), kd_visc), real(dy(j), kd_visc), tau, utau)
+          end block
+          #:else
           call calc_tau_straight_s(mui, v(idx-io_v:idx+io_v+1), &
-               wz(i,j-2,k)+wz(i,j+3,k), ux(i,j-2,k)+ux(i,j+3,k), &
-               wz(i,j-1,k)+wz(i,j+2,k), ux(i,j-1,k)+ux(i,j+2,k), &
-               wz(i,j,  k)+wz(i,j+1,k), ux(i,j,  k)+ux(i,j+1,k), &
-               dy(j), tau, utau)
+               real(wz(i,j-2,k), kd_visc)+real(wz(i,j+3,k), kd_visc), real(ux(i,j-2,k), kd_visc)+real(ux(i,j+3,k), kd_visc), &
+               real(wz(i,j-1,k), kd_visc)+real(wz(i,j+2,k), kd_visc), real(ux(i,j-1,k), kd_visc)+real(ux(i,j+2,k), kd_visc), &
+               real(wz(i,j,  k), kd_visc)+real(wz(i,j+1,k), kd_visc), real(ux(i,j,  k), kd_visc)+real(ux(i,j+1,k), kd_visc), &
+               real(dy(j), kd_visc), tau, utau)
+          #:endif
           flux(3) = flux(3) - tau
           flux(5) = flux(5) - utau
         end block
         block
-          real(8) :: tau, utau
-          call calc_tau_cross(mui, u(idx-io_v:idx+io_v+1), vx(idx-io_v:idx+io_v+1), dy(j), tau, utau)
+          real(kd_visc) :: tau, utau
+          #:if VISC_CAST
+          block
+            real(kd_visc) :: s1(2*io_v+2)
+            s1 = u(idx-io_v:idx+io_v+1)
+            call calc_tau_cross(mui, s1, vx(idx-io_v:idx+io_v+1), real(dy(j), kd_visc), tau, utau)
+          end block
+          #:else
+          call calc_tau_cross(mui, u(idx-io_v:idx+io_v+1), vx(idx-io_v:idx+io_v+1), real(dy(j), kd_visc), tau, utau)
+          #:endif
           flux(2) = flux(2) - tau
           flux(5) = flux(5) - utau
         end block
         block
-          real(8) :: tau, utau
-          call calc_tau_cross(mui, w(idx-io_v:idx+io_v+1), vz(idx-io_v:idx+io_v+1), dy(j), tau, utau)
+          real(kd_visc) :: tau, utau
+          #:if VISC_CAST
+          block
+            real(kd_visc) :: s1(2*io_v+2)
+            s1 = w(idx-io_v:idx+io_v+1)
+            call calc_tau_cross(mui, s1, vz(idx-io_v:idx+io_v+1), real(dy(j), kd_visc), tau, utau)
+          end block
+          #:else
+          call calc_tau_cross(mui, w(idx-io_v:idx+io_v+1), vz(idx-io_v:idx+io_v+1), real(dy(j), kd_visc), tau, utau)
+          #:endif
           flux(4) = flux(4) - tau
           flux(5) = flux(5) - utau
         end block
         block
-          real(8) :: Ty, kTy
-          Ty  = diff6_s(dy(j), -T(i,j-2,k)+T(i,j+3,k), T(i,j-1,k)-T(i,j+2,k), -T(i,j,k)+T(i,j+1,k))
+          real(kd_visc) :: Ty, kTy
+          Ty  = diff6_s(real(dy(j), kd_visc), -real(T(i,j-2,k), kd_visc)+real(T(i,j+3,k), kd_visc), real(T(i,j-1,k), kd_visc)-real(T(i,j+2,k), kd_visc), -real(T(i,j,k), kd_visc)+real(T(i,j+1,k), kd_visc))
           kTy = Cp_over_Pr * mui * Ty
           flux(5) = flux(5) - kTy
         end block
       endif
       fdy = 0.50_sp * (sensor(i,j,k) + sensor(i,j+1,k))
+      #:if CONV_CAST
+      block
+        real(kd_conv) :: s1(2*io+2), s2(2*io+2), s3(2*io+2), s4(2*io+2), s5(2*io+2)
+        s1 = rho(i1:i2)
+        s2 = u(i1:i2)
+        s3 = v(i1:i2)
+        s4 = w(i1:i2)
+        s5 = p(i1:i2)
+        call recon(id_acc, s1, s2, s3, s4, s5, rhol,        ul,        vl,        wl,        pl, rhor(idx_r), ur(idx_r), vr(idx_r), wr(idx_r), pr(idx_r), fdy)
+      end block
+      #:else
       call recon(id_acc, &
                  rho(i1:i2),  u(i1:i2),  v(i1:i2),  w(i1:i2),  p(i1:i2), &
                  rhol,        ul,        vl,        wl,        pl, &
                  rhor(idx_r), ur(idx_r), vr(idx_r), wr(idx_r), pr(idx_r), fdy)
+      #:endif
     endif
     call syncthreads()
     if (io+1 <= j .and. j <= ny-(io+1) .and. k <= nz-1 .and. i <= nx-1) then
       block
-        real(8) :: e1, e2, e3, e4, e5
+        real(kd_conv) :: e1, e2, e3, e4, e5
         associate(un1 => vl, un2 => vr(idx_r))
           call SLAU(id_slau, rhol, rhor(idx_r), ul, ur(idx_r), vl, vr(idx_r), &
                     wl, wr(idx_r), un1, un2, pl, pr(idx_r), Normal_y, fdy, &
@@ -341,15 +419,15 @@ contains
 
 
   attributes(global) subroutine calc_slauv_z_in(nx, ny, nz, dx, dy, dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, sensor, ux, vy, G)
-    use mod_constant, only : Normal_z
+    use mod_constant, only : Normal_z => Normal_z_conv
     integer, intent(in), value                 :: nx, ny, nz
-    real(8), intent(in), device, contiguous    :: dx(nx-1), dy(ny-1), dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: T(nx,ny,nz), mu(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: dx(nx-1), dy(ny-1), dz(nz-1)
+    real(kd_arr), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: T(nx,ny,nz), mu(nx,ny,nz)
     real(sp), intent(in), device, contiguous   :: sensor(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: ux(nx,ny,nz) !< du/dx at cell-center, precomputed by calc_div
-    real(8), intent(in), device, contiguous    :: vy(nx,ny,nz) !< dv/dy at cell-center, precomputed by calc_div
-    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    real(kd_arr), intent(in), device, contiguous    :: ux(nx,ny,nz) !< du/dx at cell-center, precomputed by calc_div
+    real(kd_arr), intent(in), device, contiguous    :: vy(nx,ny,nz) !< dv/dy at cell-center, precomputed by calc_div
+    real(kd_arr), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     integer i, j, k, it, jt, kt
     integer kk, k_base, idx, idx_r, offset_xy, offset_xyr, i1, i2
     logical :: ij_in_range, ij_in_range_grad_x, ij_in_range_grad_y, interior
@@ -357,10 +435,12 @@ contains
     integer, parameter :: sy  = threadsG%y
     integer, parameter :: sz  = threadsG%z + 2*io + 1
     integer, parameter :: szr = threadsG%z
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, wx, wy
-    real(8), dimension(sx*sy*szr), shared           :: rhor, ur, vr, wr, pr
-    real(8) rhol, ul, vl, wl, pl
-    real(8) :: flux(5), mui
+    real(kd_arr), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p  ! read by both terms
+    real(kd_visc), dimension(-(io-1):sx*sy*sz-io), shared :: wx, wy
+    real(kd_conv), dimension(sx*sy*szr), shared           :: rhor, ur, vr, wr, pr
+    real(kd_conv) rhol, ul, vl, wl, pl
+    real(kd_arr)  :: flux(5)
+    real(kd_visc) :: mui
     real(sp) fdz  ! sp intentional: sensor interpolation does not need double precision
     it = threadIdx%x
     jt = threadIdx%y
@@ -380,10 +460,10 @@ contains
         rho(idx) = Q_1(i,j,k); u(idx) = Q_2(i,j,k); v(idx) = Q_3(i,j,k)
           w(idx) = Q_4(i,j,k); p(idx) = Q_5(i,j,k)
         if (ij_in_range_grad_x) then
-          wx(idx) = (one_sixty * (-Q_4(i-3,j,k) + Q_4(i+3,j,k)) + 0.15d0 * (Q_4(i-2,j,k) - Q_4(i+2,j,k)) + 0.75d0 * (-Q_4(i-1,j,k) + Q_4(i+1,j,k))) * dx(i)
+          wx(idx) = (one_sixty * (-real(Q_4(i-3,j,k), kd_visc) + real(Q_4(i+3,j,k), kd_visc)) + 0.15_kd_visc * (real(Q_4(i-2,j,k), kd_visc) - real(Q_4(i+2,j,k), kd_visc)) + 0.75_kd_visc * (-real(Q_4(i-1,j,k), kd_visc) + real(Q_4(i+1,j,k), kd_visc))) * real(dx(i), kd_visc)
         endif
         if (ij_in_range_grad_y) then
-          wy(idx) = (one_sixty * (-Q_4(i,j-3,k) + Q_4(i,j+3,k)) + 0.15d0 * (Q_4(i,j-2,k) - Q_4(i,j+2,k)) + 0.75d0 * (-Q_4(i,j-1,k) + Q_4(i,j+1,k))) * dy(j)
+          wy(idx) = (one_sixty * (-real(Q_4(i,j-3,k), kd_visc) + real(Q_4(i,j+3,k), kd_visc)) + 0.15_kd_visc * (real(Q_4(i,j-2,k), kd_visc) - real(Q_4(i,j+2,k), kd_visc)) + 0.75_kd_visc * (-real(Q_4(i,j-1,k), kd_visc) + real(Q_4(i,j+1,k), kd_visc))) * real(dy(j), kd_visc)
         endif
       endif
     enddo
@@ -394,49 +474,85 @@ contains
       idx_r = kt + offset_xyr
       i1    = idx - io
       i2    = idx + io + 1
-      flux = 0.d0
+      flux = 0._kd_arr
       interior = (4 <= i .and. i <= nx-3 .and. 4 <= j .and. j <= ny-3)
       if (interior) then
-        mui = interp6_s(mu(i,j,k-2)+mu(i,j,k+3), mu(i,j,k-1)+mu(i,j,k+2), mu(i,j,k)+mu(i,j,k+1))
+        mui = interp6_s(real(mu(i,j,k-2), kd_visc)+real(mu(i,j,k+3), kd_visc), real(mu(i,j,k-1), kd_visc)+real(mu(i,j,k+2), kd_visc), real(mu(i,j,k), kd_visc)+real(mu(i,j,k+1), kd_visc))
         block
-          real(8) :: tau, utau
+          real(kd_visc) :: tau, utau
+          #:if VISC_CAST
+          block
+            real(kd_visc) :: s1(2*io_v+2)
+            s1 = w(idx-io_v:idx+io_v+1)
+            call calc_tau_straight_s(mui, s1, real(ux(i,j,k-2), kd_visc)+real(ux(i,j,k+3), kd_visc), real(vy(i,j,k-2), kd_visc)+real(vy(i,j,k+3), kd_visc), real(ux(i,j,k-1), kd_visc)+real(ux(i,j,k+2), kd_visc), real(vy(i,j,k-1), kd_visc)+real(vy(i,j,k+2), kd_visc), real(ux(i,j,k  ), kd_visc)+real(ux(i,j,k+1), kd_visc), real(vy(i,j,k  ), kd_visc)+real(vy(i,j,k+1), kd_visc), real(dz(k), kd_visc), tau, utau)
+          end block
+          #:else
           call calc_tau_straight_s(mui, w(idx-io_v:idx+io_v+1), &
-               ux(i,j,k-2)+ux(i,j,k+3), vy(i,j,k-2)+vy(i,j,k+3), &
-               ux(i,j,k-1)+ux(i,j,k+2), vy(i,j,k-1)+vy(i,j,k+2), &
-               ux(i,j,k  )+ux(i,j,k+1), vy(i,j,k  )+vy(i,j,k+1), &
-               dz(k), tau, utau)
+               real(ux(i,j,k-2), kd_visc)+real(ux(i,j,k+3), kd_visc), real(vy(i,j,k-2), kd_visc)+real(vy(i,j,k+3), kd_visc), &
+               real(ux(i,j,k-1), kd_visc)+real(ux(i,j,k+2), kd_visc), real(vy(i,j,k-1), kd_visc)+real(vy(i,j,k+2), kd_visc), &
+               real(ux(i,j,k  ), kd_visc)+real(ux(i,j,k+1), kd_visc), real(vy(i,j,k  ), kd_visc)+real(vy(i,j,k+1), kd_visc), &
+               real(dz(k), kd_visc), tau, utau)
+          #:endif
           flux(4) = flux(4) - tau
           flux(5) = flux(5) - utau
         end block
         block
-          real(8) :: tau, utau
-          call calc_tau_cross(mui, u(idx-io_v:idx+io_v+1), wx(idx-io_v:idx+io_v+1), dz(k), tau, utau)
+          real(kd_visc) :: tau, utau
+          #:if VISC_CAST
+          block
+            real(kd_visc) :: s1(2*io_v+2)
+            s1 = u(idx-io_v:idx+io_v+1)
+            call calc_tau_cross(mui, s1, wx(idx-io_v:idx+io_v+1), real(dz(k), kd_visc), tau, utau)
+          end block
+          #:else
+          call calc_tau_cross(mui, u(idx-io_v:idx+io_v+1), wx(idx-io_v:idx+io_v+1), real(dz(k), kd_visc), tau, utau)
+          #:endif
           flux(2) = flux(2) - tau
           flux(5) = flux(5) - utau
         end block
         block
-          real(8) :: tau, utau
-          call calc_tau_cross(mui, v(idx-io_v:idx+io_v+1), wy(idx-io_v:idx+io_v+1), dz(k), tau, utau)
+          real(kd_visc) :: tau, utau
+          #:if VISC_CAST
+          block
+            real(kd_visc) :: s1(2*io_v+2)
+            s1 = v(idx-io_v:idx+io_v+1)
+            call calc_tau_cross(mui, s1, wy(idx-io_v:idx+io_v+1), real(dz(k), kd_visc), tau, utau)
+          end block
+          #:else
+          call calc_tau_cross(mui, v(idx-io_v:idx+io_v+1), wy(idx-io_v:idx+io_v+1), real(dz(k), kd_visc), tau, utau)
+          #:endif
           flux(3) = flux(3) - tau
           flux(5) = flux(5) - utau
         end block
         block
-          real(8) :: Tz, kTz
-          Tz  = diff6_s(dz(k), -T(i,j,k-2)+T(i,j,k+3), T(i,j,k-1)-T(i,j,k+2), -T(i,j,k)+T(i,j,k+1))
+          real(kd_visc) :: Tz, kTz
+          Tz  = diff6_s(real(dz(k), kd_visc), -real(T(i,j,k-2), kd_visc)+real(T(i,j,k+3), kd_visc), real(T(i,j,k-1), kd_visc)-real(T(i,j,k+2), kd_visc), -real(T(i,j,k), kd_visc)+real(T(i,j,k+1), kd_visc))
           kTz = Cp_over_Pr * mui * Tz
           flux(5) = flux(5) - kTz
         end block
       endif
       fdz = 0.50_sp * (sensor(i,j,k) + sensor(i,j,k+1))
+      #:if CONV_CAST
+      block
+        real(kd_conv) :: s1(2*io+2), s2(2*io+2), s3(2*io+2), s4(2*io+2), s5(2*io+2)
+        s1 = rho(i1:i2)
+        s2 = u(i1:i2)
+        s3 = v(i1:i2)
+        s4 = w(i1:i2)
+        s5 = p(i1:i2)
+        call recon(id_acc, s1, s2, s3, s4, s5, rhol,        ul,        vl,        wl,        pl, rhor(idx_r), ur(idx_r), vr(idx_r), wr(idx_r), pr(idx_r), fdz)
+      end block
+      #:else
       call recon(id_acc, &
                  rho(i1:i2),  u(i1:i2),  v(i1:i2),  w(i1:i2),  p(i1:i2), &
                  rhol,        ul,        vl,        wl,        pl, &
                  rhor(idx_r), ur(idx_r), vr(idx_r), wr(idx_r), pr(idx_r), fdz)
+      #:endif
     endif
     call syncthreads()
     if (io+1 <= k .and. k <= nz-(io+1) .and. i <= nx-1 .and. j <= ny-1) then
       block
-        real(8) :: e1, e2, e3, e4, e5
+        real(kd_conv) :: e1, e2, e3, e4, e5
         associate(un1 => wl, un2 => wr(idx_r))
           call SLAU(id_slau, rhol, rhor(idx_r), ul, ur(idx_r), vl, vr(idx_r), &
                     wl, wr(idx_r), un1, un2, pl, pr(idx_r), Normal_z, fdz, &
@@ -453,5 +569,6 @@ contains
 end module calc_slau_visc_kernel_internal
 #:else
 module calc_slau_visc_kernel_internal
+  use mod_precision
 end module calc_slau_visc_kernel_internal
 #:endif

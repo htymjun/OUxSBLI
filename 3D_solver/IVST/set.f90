@@ -1,4 +1,5 @@
 module set
+  use mod_precision
   use mod_globals, only : nx, ny, nz, gamma, R, rhol => rho0, rhor => rho1, pl => p0, pr => p1
   use set_bc_common
   implicit none
@@ -55,11 +56,11 @@ contains
 
   subroutine set_bc(myrank, nx, ny, nz, Jacobian, Q_1, Q_2, Q_3, Q_4, Q_5, Qre_1, Qre_2, Qre_3, Qre_4, Qre_5)
     integer, intent(in), value            :: myrank, nx, ny, nz
-    real(8), intent(in), device           :: Jacobian(ny)
-    real(8), intent(inout), device        :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz) ! Q / J
-    real(8), intent(in), device, optional :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
+    real(kd_arr), intent(in), device           :: Jacobian(ny)
+    real(kd_arr), intent(inout), device        :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz) ! Q / J
+    real(kd_arr), intent(in), device, optional :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
     integer :: i, j, k, jc = 4, kc = 4
-    real(8), device :: Qc_1(nx), Qc_2(nx), Qc_3(nx), Qc_4(nx), Qc_5(nx)
+    real(kd_arr), device :: Qc_1(nx), Qc_2(nx), Qc_3(nx), Qc_4(nx), Qc_5(nx)
     ! inlet and outlet
     !$cuf kernel do(2) <<<*,*>>>
     do k = 4, 4
@@ -118,7 +119,7 @@ contains
 
   subroutine set_bc_mut(nx,ny,nz,mut,qc2)
     integer, intent(in), value     :: nx, ny, nz
-    real(8), intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
+    real(kd_arr), intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
     call set_bc_mut_common(nx, ny, nz, mut, qc2)
   end subroutine set_bc_mut
 end module set

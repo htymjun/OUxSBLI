@@ -1,6 +1,9 @@
+#:include 'config.fypp'
+#:include 'precision.fypp'
 !> VTK output for curvilinear grids (airfoil O-grid)
 !> Outputs StructuredGrid format for visualization in ParaView
 module print_curv
+  use mod_precision
   use mpi
   use mod_globals, only : step_offset, gamma
   implicit none
@@ -112,16 +115,29 @@ contains
       x_phys, y_phys, z, Jacobian_cpu, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q, ke0, entropy0)
     integer, intent(in)         :: myrank, nranks, step, nx, ny, nz
     real(8), intent(in)         :: x_phys(nx,ny), y_phys(nx,ny), z(nz), Jacobian_cpu(nx,ny)
-    real(8), intent(in), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(kd_arr), intent(in), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8), intent(inout)      :: Q(nx,ny,nz,5)
     real(4), intent(inout)      :: ke0, entropy0
     integer ireq3(3), istat3(MPI_STATUS_SIZE,3), ierr
     real(4) rho_flat(nx*ny*nz), p_flat(nx*ny*nz), vel_flat(nx*ny*nz*3)
+    #:if ARR != 8
+    real(kd_arr), allocatable :: Q_arr(:,:,:)
+    #:endif
+    #:if ARR == 8
     Q(:,:,:,1) = QJ_1
     Q(:,:,:,2) = QJ_2
     Q(:,:,:,3) = QJ_3
     Q(:,:,:,4) = QJ_4
     Q(:,:,:,5) = QJ_5
+    #:else
+    ! device arrays are kd_arr, the host image is real(8): stage through a kd_arr host buffer
+    allocate(Q_arr(nx,ny,nz))
+    #:for l in range(1, 6)
+    Q_arr = QJ_${l}$
+    Q(:,:,:,${l}$) = Q_arr
+    #:endfor
+    deallocate(Q_arr)
+    #:endif
     call make_1d_for_print_curv(nx, ny, nz, Jacobian_cpu, Q, rho_flat, p_flat, vel_flat)
     call MPI_ISEND(rho_flat, nx*ny*nz,   MPI_REAL4, myrank+1, 3*(myrank+1)-2, MPI_COMM_WORLD, ireq3(1), ierr)
     call MPI_ISEND(p_flat,   nx*ny*nz,   MPI_REAL4, myrank+1, 3*(myrank+1)-1, MPI_COMM_WORLD, ireq3(2), ierr)

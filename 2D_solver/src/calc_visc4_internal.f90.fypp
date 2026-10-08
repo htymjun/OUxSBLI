@@ -1,16 +1,19 @@
 #:include 'config.fypp'
+#:include 'precision.fypp'
 !> Module containing 4th-order viscous flux computation kernels for interior-only regions
 !> Optimized variants without boundary condition handling for periodic domains
 !> Uses centered difference stencils; assumes all threads execute interior 4th-order path
 module calc_visc4_internal
-  use mod_globals, only : gamma, R, Pr, Prt, dt, threadsEv, threadsFv
-  use mod_constant, only : Cp, gamma_1, Cp_over_Pr, one_third, two_third, one_twelfth, id_visc
+  use mod_precision
+  use mod_globals, only : threadsEv, threadsFv
+  use mod_constant, only : gamma => gamma_visc, R => R_visc, Pr => Pr_visc, Prt => Prt_visc, dt => dt_visc
+  use mod_constant, only : Cp => Cp_visc, gamma_1 => gamma_1_visc, Cp_over_Pr => Cp_over_Pr_visc, one_third => one_third_visc, two_third => two_third_visc, one_twelfth => one_twelfth_visc, id_visc
   use libm
   use load_smem_visc4
   implicit none
   private
   public calc_Ev4_in, calc_Fv4_in
-  real(8), parameter :: one_24 = 1.d0 / 24.d0 !< coefficient for 4th-order flux (1/24)
+  real(kd_visc), parameter :: one_24 = 1._kd_visc / 24._kd_visc !< coefficient for 4th-order flux (1/24)
 contains
   include 'calc_visc_me4_base.f90'
 
@@ -22,22 +25,22 @@ contains
   attributes(global) subroutine calc_Ev4_in(nx, ny, dx, dy, Q_2, Q_3, T, mu, vy_in, E)
     integer, intent(in), value                 :: nx             !< number of grid points in x direction
     integer, intent(in), value                 :: ny             !< number of grid points in y direction
-    real(8), intent(in), device, contiguous    :: dx(nx-1)       !< inverse grid spacing in x (1/dx)
-    real(8), intent(in), device, contiguous    :: dy(ny-1)       !< inverse grid spacing in y (1/dy)
-    real(8), intent(in), device, contiguous    :: Q_2(nx,ny)     !< u
-    real(8), intent(in), device, contiguous    :: Q_3(nx,ny)     !< v
-    real(8), intent(in), device, contiguous    :: T(nx,ny)       !< temperature at grid points
-    real(8), intent(in), device, contiguous    :: mu(nx,ny)      !< molecular viscosity coefficient
-    real(8), intent(in), device, contiguous    :: vy_in(nx,ny)   !< precomputed dv/dy (cell-center)
-    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,4) !< viscous flux components in x direction
+    real(kd_arr), intent(in), device, contiguous    :: dx(nx-1)       !< inverse grid spacing in x (1/dx)
+    real(kd_arr), intent(in), device, contiguous    :: dy(ny-1)       !< inverse grid spacing in y (1/dy)
+    real(kd_arr), intent(in), device, contiguous    :: Q_2(nx,ny)     !< u
+    real(kd_arr), intent(in), device, contiguous    :: Q_3(nx,ny)     !< v
+    real(kd_arr), intent(in), device, contiguous    :: T(nx,ny)       !< temperature at grid points
+    real(kd_arr), intent(in), device, contiguous    :: mu(nx,ny)      !< molecular viscosity coefficient
+    real(kd_arr), intent(in), device, contiguous    :: vy_in(nx,ny)   !< precomputed dv/dy (cell-center)
+    real(kd_arr), intent(inout), device, contiguous :: E(nx-1,ny-2,4) !< viscous flux components in x direction
     integer, parameter :: io_v = 2
     integer, parameter :: sx = threadsEv%x + 2*io_v + 1
     integer, parameter :: sy = threadsEv%y
-    real(8), dimension(-(io_v-1):sx*sy-io_v), shared ::  u
-    real(8), dimension(-(io_v-1):sx*sy-io_v), shared ::  v
-    real(8), dimension(-(io_v-1):sx*sy-io_v), shared :: uy
+    real(kd_visc), dimension(-(io_v-1):sx*sy-io_v), shared ::  u
+    real(kd_visc), dimension(-(io_v-1):sx*sy-io_v), shared ::  v
+    real(kd_visc), dimension(-(io_v-1):sx*sy-io_v), shared :: uy
     integer i, j, it, jt, ii, idx, offset_y
-    real(8) :: txx, txy, utxx, vtxy, kTx
+    real(kd_visc) :: txx, txy, utxx, vtxy, kTx
     it = threadIdx%x
     jt = threadIdx%y
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
@@ -47,25 +50,33 @@ contains
     idx = it + offset_y
     if (3 <= i .and. i <= nx-3 .and. 3 <= j .and. j <= ny-2) then
       block
-        real(8) :: mu3(3), s1, s2
-        s1 = mu(i-1,j) + mu(i,j); s2 = mu(i-2,j) + mu(i+1,j)
-        mu3(1) = 0.0625d0 * fma(9.d0, s1, -s2)
-        s1 = mu(i,j) + mu(i+1,j); s2 = mu(i-1,j) + mu(i+2,j)
-        mu3(2) = 0.0625d0 * fma(9.d0, s1, -s2)
-        s1 = mu(i+1,j) + mu(i+2,j); s2 = mu(i,j) + mu(i+3,j)
-        mu3(3) = 0.0625d0 * fma(9.d0, s1, -s2)
+        real(kd_visc) :: mu3(3), s1, s2
+        s1 = real(mu(i-1,j), kd_visc) + real(mu(i,j), kd_visc); s2 = real(mu(i-2,j), kd_visc) + real(mu(i+1,j), kd_visc)
+        mu3(1) = 0.0625_kd_visc * fma(9._kd_visc, s1, -s2)
+        s1 = real(mu(i,j), kd_visc) + real(mu(i+1,j), kd_visc); s2 = real(mu(i-1,j), kd_visc) + real(mu(i+2,j), kd_visc)
+        mu3(2) = 0.0625_kd_visc * fma(9._kd_visc, s1, -s2)
+        s1 = real(mu(i+1,j), kd_visc) + real(mu(i+2,j), kd_visc); s2 = real(mu(i,j), kd_visc) + real(mu(i+3,j), kd_visc)
+        mu3(3) = 0.0625_kd_visc * fma(9._kd_visc, s1, -s2)
         block ! dQdx
-          real(8) :: kTx3(3), dT
-          dT = fma(1.125d0, T(i,j) - T(i-1,j), -one_24 * (T(i+1,j) - T(i-2,j)))
-          kTx3(1) = Cp_over_Pr * mu3(1) * dT * dx(i)
-          dT = fma(1.125d0, T(i+1,j) - T(i,j), -one_24 * (T(i+2,j) - T(i-1,j)))
-          kTx3(2) = Cp_over_Pr * mu3(2) * dT * dx(i)
-          dT = fma(1.125d0, T(i+2,j) - T(i+1,j), -one_24 * (T(i+3,j) - T(i,j)))
-          kTx3(3) = Cp_over_Pr * mu3(3) * dT * dx(i)
+          real(kd_visc) :: kTx3(3), dT
+          dT = fma(1.125_kd_visc, real(T(i,j), kd_visc) - real(T(i-1,j), kd_visc), -one_24 * (real(T(i+1,j), kd_visc) - real(T(i-2,j), kd_visc)))
+          kTx3(1) = Cp_over_Pr * mu3(1) * dT * real(dx(i), kd_visc)
+          dT = fma(1.125_kd_visc, real(T(i+1,j), kd_visc) - real(T(i,j), kd_visc), -one_24 * (real(T(i+2,j), kd_visc) - real(T(i-1,j), kd_visc)))
+          kTx3(2) = Cp_over_Pr * mu3(2) * dT * real(dx(i), kd_visc)
+          dT = fma(1.125_kd_visc, real(T(i+2,j), kd_visc) - real(T(i+1,j), kd_visc), -one_24 * (real(T(i+3,j), kd_visc) - real(T(i,j), kd_visc)))
+          kTx3(3) = Cp_over_Pr * mu3(3) * dT * real(dx(i), kd_visc)
           kTx     = flux4(kTx3(:))
         end block
-        call calc_tau_straight(mu3, u(idx-2:idx+3), vy_in(i-2:i+3,j), dx(i), txx, utxx)
-        call calc_tau_cross(mu3, v(idx-2:idx+3), uy(idx-2:idx+3), dx(i), txy, vtxy)
+        #:if VISC_CAST
+        block
+          real(kd_visc) :: s1(2*io_v+2)
+          s1 = vy_in(i-2:i+3,j)
+          call calc_tau_straight(mu3, u(idx-2:idx+3), s1, real(dx(i), kd_visc), txx, utxx)
+        end block
+        #:else
+        call calc_tau_straight(mu3, u(idx-2:idx+3), vy_in(i-2:i+3,j), real(dx(i), kd_visc), txx, utxx)
+        #:endif
+        call calc_tau_cross(mu3, v(idx-2:idx+3), uy(idx-2:idx+3), real(dx(i), kd_visc), txy, vtxy)
       end block
       E(i,j-1,2) = E(i,j-1,2) - txx
       E(i,j-1,3) = E(i,j-1,3) - txy
@@ -81,22 +92,22 @@ contains
   attributes(global) subroutine calc_Fv4_in(nx, ny, dy, dx, Q_2, Q_3, T, mu, ux_in, F)
     integer, intent(in), value                 :: nx             !< number of grid points in x direction
     integer, intent(in), value                 :: ny             !< number of grid points in y direction
-    real(8), intent(in), device, contiguous    :: dy(ny-1)       !< inverse grid spacing in y (1/dy)
-    real(8), intent(in), device, contiguous    :: dx(nx-1)       !< inverse grid spacing in x (1/dx)
-    real(8), intent(in), device, contiguous    :: Q_2(nx,ny)     !< u
-    real(8), intent(in), device, contiguous    :: Q_3(nx,ny)     !< v
-    real(8), intent(in), device, contiguous    :: T(nx,ny)       !< temperature at grid points
-    real(8), intent(in), device, contiguous    :: mu(nx,ny)      !< molecular viscosity coefficient
-    real(8), intent(in), device, contiguous    :: ux_in(nx,ny)   !< precomputed du/dx (cell-center)
-    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,4) !< viscous flux components in y direction
+    real(kd_arr), intent(in), device, contiguous    :: dy(ny-1)       !< inverse grid spacing in y (1/dy)
+    real(kd_arr), intent(in), device, contiguous    :: dx(nx-1)       !< inverse grid spacing in x (1/dx)
+    real(kd_arr), intent(in), device, contiguous    :: Q_2(nx,ny)     !< u
+    real(kd_arr), intent(in), device, contiguous    :: Q_3(nx,ny)     !< v
+    real(kd_arr), intent(in), device, contiguous    :: T(nx,ny)       !< temperature at grid points
+    real(kd_arr), intent(in), device, contiguous    :: mu(nx,ny)      !< molecular viscosity coefficient
+    real(kd_arr), intent(in), device, contiguous    :: ux_in(nx,ny)   !< precomputed du/dx (cell-center)
+    real(kd_arr), intent(inout), device, contiguous :: F(nx-2,ny-1,4) !< viscous flux components in y direction
     integer, parameter :: io_v = 2
     integer, parameter :: sx = threadsFv%x
     integer, parameter :: sy = threadsFv%y + 2*io_v + 1
-    real(8), dimension(-(io_v-1):sx*sy-io_v), shared ::  u
-    real(8), dimension(-(io_v-1):sx*sy-io_v), shared ::  v
-    real(8), dimension(-(io_v-1):sx*sy-io_v), shared :: vx
+    real(kd_visc), dimension(-(io_v-1):sx*sy-io_v), shared ::  u
+    real(kd_visc), dimension(-(io_v-1):sx*sy-io_v), shared ::  v
+    real(kd_visc), dimension(-(io_v-1):sx*sy-io_v), shared :: vx
     integer i, j, it, jt, jj, idx, offset_x
-    real(8) :: tyx, tyy, utyx, vtyy, kTy
+    real(kd_visc) :: tyx, tyy, utyx, vtyy, kTy
     it = threadIdx%x
     jt = threadIdx%y
     i  = (blockIdx%x-1)*blockDim%x + it + 1
@@ -106,21 +117,21 @@ contains
     idx = jt + offset_x
     if (3 <= i .and. i <= nx-2 .and. 3 <= j .and. j <= ny-3) then
       block
-        real(8) :: mu3(3), s1, s2
-        s1 = mu(i,j-1) + mu(i,j); s2 = mu(i,j-2) + mu(i,j+1)
-        mu3(1) = 0.0625d0 * fma(9.d0, s1, -s2)
-        s1 = mu(i,j) + mu(i,j+1); s2 = mu(i,j-1) + mu(i,j+2)
-        mu3(2) = 0.0625d0 * fma(9.d0, s1, -s2)
-        s1 = mu(i,j+1) + mu(i,j+2); s2 = mu(i,j) + mu(i,j+3)
-        mu3(3) = 0.0625d0 * fma(9.d0, s1, -s2)
+        real(kd_visc) :: mu3(3), s1, s2
+        s1 = real(mu(i,j-1), kd_visc) + real(mu(i,j), kd_visc); s2 = real(mu(i,j-2), kd_visc) + real(mu(i,j+1), kd_visc)
+        mu3(1) = 0.0625_kd_visc * fma(9._kd_visc, s1, -s2)
+        s1 = real(mu(i,j), kd_visc) + real(mu(i,j+1), kd_visc); s2 = real(mu(i,j-1), kd_visc) + real(mu(i,j+2), kd_visc)
+        mu3(2) = 0.0625_kd_visc * fma(9._kd_visc, s1, -s2)
+        s1 = real(mu(i,j+1), kd_visc) + real(mu(i,j+2), kd_visc); s2 = real(mu(i,j), kd_visc) + real(mu(i,j+3), kd_visc)
+        mu3(3) = 0.0625_kd_visc * fma(9._kd_visc, s1, -s2)
         block ! dQdy
-          real(8) :: kTy3(3), dT
-          dT = fma(1.125d0, T(i,j) - T(i,j-1), -one_24 * (T(i,j+1) - T(i,j-2)))
-          kTy3(1) = Cp_over_Pr * mu3(1) * dT * dy(j)
-          dT = fma(1.125d0, T(i,j+1) - T(i,j), -one_24 * (T(i,j+2) - T(i,j-1)))
-          kTy3(2) = Cp_over_Pr * mu3(2) * dT * dy(j)
-          dT = fma(1.125d0, T(i,j+2) - T(i,j+1), -one_24 * (T(i,j+3) - T(i,j)))
-          kTy3(3) = Cp_over_Pr * mu3(3) * dT * dy(j)
+          real(kd_visc) :: kTy3(3), dT
+          dT = fma(1.125_kd_visc, real(T(i,j), kd_visc) - real(T(i,j-1), kd_visc), -one_24 * (real(T(i,j+1), kd_visc) - real(T(i,j-2), kd_visc)))
+          kTy3(1) = Cp_over_Pr * mu3(1) * dT * real(dy(j), kd_visc)
+          dT = fma(1.125_kd_visc, real(T(i,j+1), kd_visc) - real(T(i,j), kd_visc), -one_24 * (real(T(i,j+2), kd_visc) - real(T(i,j-1), kd_visc)))
+          kTy3(2) = Cp_over_Pr * mu3(2) * dT * real(dy(j), kd_visc)
+          dT = fma(1.125_kd_visc, real(T(i,j+2), kd_visc) - real(T(i,j+1), kd_visc), -one_24 * (real(T(i,j+3), kd_visc) - real(T(i,j), kd_visc)))
+          kTy3(3) = Cp_over_Pr * mu3(3) * dT * real(dy(j), kd_visc)
           kTy     = flux4(kTy3(:))
         end block
         block
@@ -128,12 +139,12 @@ contains
           ! nvfortran rejects passing that directly to a contiguous dummy argument
           ! ("array reshaping is not supported for device subprogram calls"), so
           ! gather it into a contiguous local array first.
-          real(8) :: ux_stencil(6)
+          real(kd_visc) :: ux_stencil(6)
           ux_stencil(1) = ux_in(i,j-2); ux_stencil(2) = ux_in(i,j-1); ux_stencil(3) = ux_in(i,j)
           ux_stencil(4) = ux_in(i,j+1); ux_stencil(5) = ux_in(i,j+2); ux_stencil(6) = ux_in(i,j+3)
-          call calc_tau_straight(mu3, v(idx-2:idx+3), ux_stencil, dy(j), tyy, vtyy)
+          call calc_tau_straight(mu3, v(idx-2:idx+3), ux_stencil, real(dy(j), kd_visc), tyy, vtyy)
         end block
-        call calc_tau_cross(mu3, u(idx-2:idx+3), vx(idx-2:idx+3), dy(j), tyx, utyx)
+        call calc_tau_cross(mu3, u(idx-2:idx+3), vx(idx-2:idx+3), real(dy(j), kd_visc), tyx, utyx)
       end block
       F(i-1,j,2) = F(i-1,j,2) - tyx
       F(i-1,j,3) = F(i-1,j,3) - tyy

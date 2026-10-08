@@ -30,3 +30,15 @@ main_curv.f90
         └─ calc_para()       # MPI ghost-cell exchange
         └─ print()           # VTK output
 ```
+
+## Precision
+
+`CONV_PRECISION` / `VISC_PRECISION` work as in the Cartesian solver (root `CLAUDE.md`,
+Precision). Three files became templates because they need a cast branch:
+`calc_slau_kernel_curv.f90.fypp` (SLAU writes E/F/G through locals under `CONV_CAST`),
+`load_smem_visc2_curv.f90.fypp` (the `pipelineMemcpyAsync` tile load is byte-wise, so it
+is an assignment under `VISC_CAST`) and `src/print_curv.f90.fypp` (host image of the
+device state when `kd_arr` is single). `dz` reaches the kernels as a `kd_arr` scalar
+(`dz_arr` in `calc_time_dev_curv`) and is cast to `kd_visc` at the viscous launches.
+The two case `mod_globals.f90` files define `Prt` (used by the LES branch of
+`calc_visc2_curv` and by `mod_constant`).

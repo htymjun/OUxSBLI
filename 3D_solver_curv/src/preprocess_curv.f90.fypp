@@ -1,9 +1,11 @@
 #:include 'config.fypp'
+#:include 'precision.fypp'
 !> Preprocessing and GPU memory management for curvilinear case.
 !> Contains only the curvilinear routines; rectangular-grid routines
 !> (allocate_device_mem, pre_calc, pre_rescale) are omitted to avoid
 !> pulling in calc_flux_base.mod which is not compiled for this case.
 module preprocess_curv
+  use mod_precision
   use cudafor
   use mpi
   use calc_flux_base_curv, only : init_sensor
@@ -33,18 +35,18 @@ contains
     integer, intent(in)                       :: nx
     integer, intent(in)                       :: ny
     integer, intent(in)                       :: nz
-    real(8), intent(out), allocatable, device :: dt_Szeta(:,:)
-    real(8), intent(out), allocatable, device :: n_xi_x(:,:), n_xi_y(:,:)
-    real(8), intent(out), allocatable, device :: n_eta_x(:,:), n_eta_y(:,:)
-    real(8), intent(out), allocatable, device :: xi_x(:,:), xi_y(:,:)
-    real(8), intent(out), allocatable, device :: eta_x(:,:), eta_y(:,:)
-    real(8), intent(out), allocatable, device :: Jacobian(:,:)
-    real(8), intent(out), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
-    real(8), intent(out), allocatable, device :: T(:,:,:)
-    real(8), intent(out), allocatable, device :: mu(:,:,:)
-    real(8), intent(out), allocatable, device :: E(:,:,:,:)
-    real(8), intent(out), allocatable, device :: F(:,:,:,:)
-    real(8), intent(out), allocatable, device :: G(:,:,:,:)
+    real(kd_arr), intent(out), allocatable, device :: dt_Szeta(:,:)
+    real(kd_arr), intent(out), allocatable, device :: n_xi_x(:,:), n_xi_y(:,:)
+    real(kd_arr), intent(out), allocatable, device :: n_eta_x(:,:), n_eta_y(:,:)
+    real(kd_arr), intent(out), allocatable, device :: xi_x(:,:), xi_y(:,:)
+    real(kd_arr), intent(out), allocatable, device :: eta_x(:,:), eta_y(:,:)
+    real(kd_arr), intent(out), allocatable, device :: Jacobian(:,:)
+    real(kd_arr), intent(out), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
+    real(kd_arr), intent(out), allocatable, device :: T(:,:,:)
+    real(kd_arr), intent(out), allocatable, device :: mu(:,:,:)
+    real(kd_arr), intent(out), allocatable, device :: E(:,:,:,:)
+    real(kd_arr), intent(out), allocatable, device :: F(:,:,:,:)
+    real(kd_arr), intent(out), allocatable, device :: G(:,:,:,:)
     integer ierr
     allocate(Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), &
              E(nx-1,ny-2,nz-2,5), F(nx-2,ny-1,nz-2,5), G(nx-2,ny-2,nz-1,5), stat=ierr)
@@ -94,16 +96,20 @@ contains
     real(8), intent(in)                      :: x_phys(nx,ny), y_phys(nx,ny), z(nz)
     real(8), intent(inout)                   :: Q(nx,ny,nz,5)
     integer, intent(out)                     :: overlap
-    real(8), intent(out), device, contiguous :: dt_Szeta(nx-2,ny-2)
-    real(8), intent(out), device, contiguous :: n_xi_x(nx-1,ny-2), n_xi_y(nx-1,ny-2)
-    real(8), intent(out), device, contiguous :: n_eta_x(nx-2,ny-1), n_eta_y(nx-2,ny-1)
-    real(8), intent(out), device, contiguous :: xi_x(nx,ny), xi_y(nx,ny)
-    real(8), intent(out), device, contiguous :: eta_x(nx,ny), eta_y(nx,ny)
-    real(8), intent(out), device, contiguous :: Jacobian(nx,ny)
-    real(8), intent(out), device, contiguous :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
-    real(8), intent(out), device, contiguous :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(kd_arr), intent(out), device, contiguous :: dt_Szeta(nx-2,ny-2)
+    real(kd_arr), intent(out), device, contiguous :: n_xi_x(nx-1,ny-2), n_xi_y(nx-1,ny-2)
+    real(kd_arr), intent(out), device, contiguous :: n_eta_x(nx-2,ny-1), n_eta_y(nx-2,ny-1)
+    real(kd_arr), intent(out), device, contiguous :: xi_x(nx,ny), xi_y(nx,ny)
+    real(kd_arr), intent(out), device, contiguous :: eta_x(nx,ny), eta_y(nx,ny)
+    real(kd_arr), intent(out), device, contiguous :: Jacobian(nx,ny)
+    real(kd_arr), intent(out), device, contiguous :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
+    real(kd_arr), intent(out), device, contiguous :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(4), intent(inout)                   :: ke0, entropy0
-    real(8) dt_Szeta_cpu(nx-2,ny-2)
+    real(kd_arr) dt_Szeta_cpu(nx-2,ny-2)
+    #:if ARR != 8
+    ! the host keeps the metrics and Q in real(8); kd_arr images are staged for the device copy
+    real(kd_arr), allocatable :: buf2(:,:), Q_arr(:,:,:)
+    #:endif
     real(4) rho_flat(nx*ny*nz), p_flat(nx*ny*nz), vel_flat(nx*ny*nz*3)
     integer i, j, k, l, ierr
     ! 1. Compute QJ = Q / Jacobian_code and dt_Szeta = dt / (Jacobian_code * dz) = dt * J_2D
@@ -120,20 +126,31 @@ contains
     enddo;enddo
     ! 2. Copy metrics to device
     dt_Szeta = dt_Szeta_cpu
-    n_xi_x   = n_xi_x_cpu
-    n_xi_y   = n_xi_y_cpu
-    n_eta_x  = n_eta_x_cpu
-    n_eta_y  = n_eta_y_cpu
-    xi_x     = xi_x_cpu
-    xi_y     = xi_y_cpu
-    eta_x    = eta_x_cpu
-    eta_y    = eta_y_cpu
-    Jacobian = Jac_cpu
-    QJ_1 = Q(:,:,:,1)
-    QJ_2 = Q(:,:,:,2)
-    QJ_3 = Q(:,:,:,3)
-    QJ_4 = Q(:,:,:,4)
-    QJ_5 = Q(:,:,:,5)
+    #:set METRICS = [('n_xi_x', 'n_xi_x_cpu', 'nx-1,ny-2'), ('n_xi_y', 'n_xi_y_cpu', 'nx-1,ny-2'), &
+      & ('n_eta_x', 'n_eta_x_cpu', 'nx-2,ny-1'), ('n_eta_y', 'n_eta_y_cpu', 'nx-2,ny-1'), &
+      & ('xi_x', 'xi_x_cpu', 'nx,ny'), ('xi_y', 'xi_y_cpu', 'nx,ny'), &
+      & ('eta_x', 'eta_x_cpu', 'nx,ny'), ('eta_y', 'eta_y_cpu', 'nx,ny'), ('Jacobian', 'Jac_cpu', 'nx,ny')]
+    #:if ARR == 8
+    #:for dev, cpu, shp in METRICS
+    ${dev}$ = ${cpu}$
+    #:endfor
+    #:for l in range(1, 6)
+    QJ_${l}$ = Q(:,:,:,${l}$)
+    #:endfor
+    #:else
+    #:for dev, cpu, shp in METRICS
+    allocate(buf2(${shp}$))
+    buf2 = real(${cpu}$, kd_arr)
+    ${dev}$ = buf2
+    deallocate(buf2)
+    #:endfor
+    allocate(Q_arr(nx,ny,nz))
+    #:for l in range(1, 6)
+    Q_arr = real(Q(:,:,:,${l}$), kd_arr)
+    QJ_${l}$  = Q_arr
+    #:endfor
+    deallocate(Q_arr)
+    #:endif
     ! 3. Set overlap from compile-time ORDER
     overlap = ${ORDER_IO + 1}$
     ! 4. Output step 0

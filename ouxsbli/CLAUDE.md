@@ -36,6 +36,11 @@ production settings remain expensive. `Case()` can only patch `config.fypp` and
 `mod_globals.f90` — anything living inside `set.f90`, e.g. BL's tanh stretch
 parameter `s`, is not tunable from a test.
 
+`Case(conv_precision=4, visc_precision=8)` selects the real kind of the convective /
+viscous kernels (`CONV_PRECISION` / `VISC_PRECISION` in `config.fypp`; see the Precision
+section of the root `CLAUDE.md`). Every test runs the 8/8 default; restart files and the
+VTK output kind (`output_precision`) do not depend on these settings.
+
 `test_bl.py`/`test_bl_3d.py` share their comparison logic entirely —
 `utils/bl_common.py` holds the tolerances, the `wall_profile()` helper, and
 the actual `test_*` functions (grid placement, quasi-steady guard, Blasius

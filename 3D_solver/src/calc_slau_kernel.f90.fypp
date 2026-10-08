@@ -1,4 +1,5 @@
 #:include 'config.fypp'
+#:include 'precision.fypp'
 #:if not defined('COMMZ')
   #:set COMMZ = False
 #:endif
@@ -7,8 +8,12 @@
 #! reaches a z ghost plane after the halo exchange has landed.
 #:set KOFF_VARIANTS = [False, True] if COMMZ else [False]
 module calc_slau_kernel
-  use mod_globals, only : gamma, threadsE, threadsF, threadsG
-  use mod_constant, only : id_slau, over_gamma_1, R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
+  use mod_precision
+  ! constants referenced by the included calc_scheme_math.f90
+  use mod_constant, only : gamma_conv, over_gamma_1_conv, R_over_gamma_1_conv, one_third_conv, one_sixth_conv, one_twelfth_conv, two_third_conv, &
+                           one_24_conv, one_48_conv, one_60_conv, one_120_conv, one_240_conv, seven_twelfth_conv
+  use mod_globals, only : threadsE, threadsF, threadsG
+  use mod_constant, only : id_slau
   use calc_muscl
   use calc_hybrid
   use libm
@@ -20,15 +25,6 @@ module calc_slau_kernel
   #:endif
   integer, parameter :: io = ${ORDER_IO}$
   !> io = 0, 1, 2 (2nd, 4th, 6th)
-  ! KEEP2/4/6 are compiled here too (calc_scheme_math.f90 include below covers
-  ! both schemes) even though this module never calls them -- these constants
-  ! are the ones their bodies reference.
-  real(8), parameter :: one_24        = 1.d0 / 24.d0
-  real(8), parameter :: one_48        = 1.d0 / 48.d0
-  real(8), parameter :: one_60        = 1.d0 / 60.d0
-  real(8), parameter :: one_120       = 1.d0 / 120.d0
-  real(8), parameter :: one_240       = 1.d0 / 240.d0
-  real(8), parameter :: seven_twelfth = 7.d0 / 12.d0
 
   interface SLAU
     module procedure SLAU1, HRSLAU2
@@ -40,11 +36,11 @@ contains
 #:set sfx  = '_koff' if is_koff else ''
 #:set karg = ', k_lo, k_hi' if is_koff else ''
   attributes(global) subroutine calc_slau_x${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, sensor, E${karg}$)
-    use mod_constant, only : Normal_x
+    use mod_constant, only : Normal_x => Normal_x_conv
     integer, intent(in), value                :: nx, ny, nz${karg}$
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
+    real(kd_arr), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
     integer i, j, k, it, jt, kt
     integer ii, i_base, idx, offset_yz
     logical :: jk_in_range
@@ -54,11 +50,11 @@ contains
     #:if ORDER >= 4
     integer idx_r, offset_yzr
     integer, parameter :: sxr = threadsE%x
-    real(8), dimension(sxr*sy*sz), shared :: rhor, ur, vr, wr, pr
-    real(8) rhol, ul, vl, wl, pl
+    real(kd_conv), dimension(sxr*sy*sz), shared :: rhor, ur, vr, wr, pr
+    real(kd_conv) rhol, ul, vl, wl, pl
     real(sp) fdx  ! sp intentional: sensor interpolation does not need double precision
     #:endif
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p
+    real(kd_conv), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -123,15 +119,39 @@ contains
     #:endif
     #:if ORDER >= 4
     associate(un1 => ul, un2 => ur(idx_r))
+      #:if CONV_CAST
+      block
+        real(kd_conv) :: o1, o2, o3, o4, o5
+        call SLAU(id_slau, rhol, rhor(idx_r), ul, ur(idx_r), vl, vr(idx_r), wl, wr(idx_r), un1, un2, pl, pr(idx_r), Normal_x, fdx, o1, o2, o3, o4, o5)
+        E(i,j-1,k-1,1) = o1
+        E(i,j-1,k-1,2) = o2
+        E(i,j-1,k-1,3) = o3
+        E(i,j-1,k-1,4) = o4
+        E(i,j-1,k-1,5) = o5
+      end block
+      #:else
       call SLAU(id_slau, rhol, rhor(idx_r), ul, ur(idx_r), vl, vr(idx_r), &
                 wl, wr(idx_r), un1, un2, pl, pr(idx_r), Normal_x, fdx, &
                 E(i,j-1,k-1,1), E(i,j-1,k-1,2), E(i,j-1,k-1,3), E(i,j-1,k-1,4), E(i,j-1,k-1,5))
+      #:endif
     end associate
     #:else
     associate(un1 => u(idx), un2 => u(idx+1))
+      #:if CONV_CAST
+      block
+        real(kd_conv) :: o1, o2, o3, o4, o5
+        call SLAU(id_slau, rho(idx), rho(idx+1), u(idx), u(idx+1), v(idx), v(idx+1), w(idx), w(idx+1), un1, un2, p(idx), p(idx+1), Normal_x, 1.0_sp, o1, o2, o3, o4, o5)
+        E(i,j-1,k-1,1) = o1
+        E(i,j-1,k-1,2) = o2
+        E(i,j-1,k-1,3) = o3
+        E(i,j-1,k-1,4) = o4
+        E(i,j-1,k-1,5) = o5
+      end block
+      #:else
       call SLAU(id_slau, rho(idx), rho(idx+1), u(idx), u(idx+1), v(idx), v(idx+1), &
                 w(idx), w(idx+1), un1, un2, p(idx), p(idx+1), Normal_x, 1.0_sp, &
                 E(i,j-1,k-1,1), E(i,j-1,k-1,2), E(i,j-1,k-1,3), E(i,j-1,k-1,4), E(i,j-1,k-1,5))
+      #:endif
     end associate
     #:endif
   end subroutine calc_slau_x${sfx}$
@@ -142,23 +162,23 @@ contains
 #:set sfx  = '_koff' if is_koff else ''
 #:set karg = ', k_lo, k_hi' if is_koff else ''
   attributes(global) subroutine calc_slau_y${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, sensor, F${karg}$)
-    use mod_constant, only : Normal_y
+    use mod_constant, only : Normal_y => Normal_y_conv
     integer, intent(in), value                :: nx, ny, nz${karg}$
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
+    real(kd_arr), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
     integer i, j, k, it, jt, kt
     integer jj, j_base, idx, offset_xz
     logical :: ik_in_range
     integer, parameter :: sx = threadsF%x
     integer, parameter :: sy = threadsF%y + 2*io + 1
     integer, parameter :: sz = threadsF%z
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p
+    real(kd_conv), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p
     #:if ORDER >= 4
     integer idx_r, offset_xzr
     integer, parameter :: syr = threadsF%y
-    real(8), dimension(sx*syr*sz), shared :: rhor, ur, vr, wr, pr
-    real(8) rhol, ul, vl, wl, pl
+    real(kd_conv), dimension(sx*syr*sz), shared :: rhor, ur, vr, wr, pr
+    real(kd_conv) rhol, ul, vl, wl, pl
     real(sp) fdy  ! sp intentional: sensor interpolation does not need double precision
     #:endif
     it = threadIdx%x
@@ -225,15 +245,39 @@ contains
     #:endif
     #:if ORDER >= 4
     associate(un1 => vl, un2 => vr(idx_r))
+      #:if CONV_CAST
+      block
+        real(kd_conv) :: o1, o2, o3, o4, o5
+        call SLAU(id_slau, rhol, rhor(idx_r), ul, ur(idx_r), vl, vr(idx_r), wl, wr(idx_r), un1, un2, pl, pr(idx_r), Normal_y, fdy, o1, o2, o3, o4, o5)
+        F(i-1,j,k-1,1) = o1
+        F(i-1,j,k-1,2) = o2
+        F(i-1,j,k-1,3) = o3
+        F(i-1,j,k-1,4) = o4
+        F(i-1,j,k-1,5) = o5
+      end block
+      #:else
       call SLAU(id_slau, rhol, rhor(idx_r), ul, ur(idx_r), vl, vr(idx_r), &
                 wl, wr(idx_r), un1, un2, pl, pr(idx_r), Normal_y, fdy, &
                 F(i-1,j,k-1,1), F(i-1,j,k-1,2), F(i-1,j,k-1,3), F(i-1,j,k-1,4), F(i-1,j,k-1,5))
+      #:endif
     end associate
     #:else
     associate(un1 => v(idx), un2 => v(idx+1))
+      #:if CONV_CAST
+      block
+        real(kd_conv) :: o1, o2, o3, o4, o5
+        call SLAU(id_slau, rho(idx), rho(idx+1), u(idx), u(idx+1), v(idx), v(idx+1), w(idx), w(idx+1), un1, un2, p(idx), p(idx+1), Normal_y, 1.0_sp, o1, o2, o3, o4, o5)
+        F(i-1,j,k-1,1) = o1
+        F(i-1,j,k-1,2) = o2
+        F(i-1,j,k-1,3) = o3
+        F(i-1,j,k-1,4) = o4
+        F(i-1,j,k-1,5) = o5
+      end block
+      #:else
       call SLAU(id_slau, rho(idx), rho(idx+1), u(idx), u(idx+1), v(idx), v(idx+1), &
                 w(idx), w(idx+1), un1, un2, p(idx), p(idx+1), Normal_y, 1.0_sp, &
                 F(i-1,j,k-1,1), F(i-1,j,k-1,2), F(i-1,j,k-1,3), F(i-1,j,k-1,4), F(i-1,j,k-1,5))
+      #:endif
     end associate
     #:endif
   end subroutine calc_slau_y${sfx}$
@@ -241,23 +285,23 @@ contains
 
 
   attributes(global) subroutine calc_slau_z(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, sensor, G)
-    use mod_constant, only : Normal_z
+    use mod_constant, only : Normal_z => Normal_z_conv
     integer, intent(in), value                :: nx, ny, nz
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: G(nx-2,ny-2,nz-1,5)
+    real(kd_arr), intent(out), device, contiguous  :: G(nx-2,ny-2,nz-1,5)
     integer i, j, k, it, jt, kt
     integer kk, k_base, idx, offset_xy
     logical :: ij_in_range
     integer, parameter :: sx = threadsG%x
     integer, parameter :: sy = threadsG%y
     integer, parameter :: sz = threadsG%z + 2*io + 1
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p
+    real(kd_conv), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p
     #:if ORDER >= 4
     integer idx_r, offset_xyr
     integer, parameter :: szr = threadsG%z
-    real(8), dimension(sx*sy*szr), shared :: rhor, ur, vr, wr, pr
-    real(8) rhol, ul, vl, wl, pl
+    real(kd_conv), dimension(sx*sy*szr), shared :: rhor, ur, vr, wr, pr
+    real(kd_conv) rhol, ul, vl, wl, pl
     real(sp) fdz  ! sp intentional: sensor interpolation does not need double precision
     #:endif
     it = threadIdx%x
@@ -324,15 +368,39 @@ contains
     #:endif
     #:if ORDER >= 4
     associate(un1 => wl, un2 => wr(idx_r))
+      #:if CONV_CAST
+      block
+        real(kd_conv) :: o1, o2, o3, o4, o5
+        call SLAU(id_slau, rhol, rhor(idx_r), ul, ur(idx_r), vl, vr(idx_r), wl, wr(idx_r), un1, un2, pl, pr(idx_r), Normal_z, fdz, o1, o2, o3, o4, o5)
+        G(i-1,j-1,k,1) = o1
+        G(i-1,j-1,k,2) = o2
+        G(i-1,j-1,k,3) = o3
+        G(i-1,j-1,k,4) = o4
+        G(i-1,j-1,k,5) = o5
+      end block
+      #:else
       call SLAU(id_slau, rhol, rhor(idx_r), ul, ur(idx_r), vl, vr(idx_r), &
                 wl, wr(idx_r), un1, un2, pl, pr(idx_r), Normal_z, fdz, &
                 G(i-1,j-1,k,1), G(i-1,j-1,k,2), G(i-1,j-1,k,3), G(i-1,j-1,k,4), G(i-1,j-1,k,5))
+      #:endif
     end associate
     #:else
     associate(un1 => w(idx), un2 => w(idx+1))
+      #:if CONV_CAST
+      block
+        real(kd_conv) :: o1, o2, o3, o4, o5
+        call SLAU(id_slau, rho(idx), rho(idx+1), u(idx), u(idx+1), v(idx), v(idx+1), w(idx), w(idx+1), un1, un2, p(idx), p(idx+1), Normal_z, 1.0_sp, o1, o2, o3, o4, o5)
+        G(i-1,j-1,k,1) = o1
+        G(i-1,j-1,k,2) = o2
+        G(i-1,j-1,k,3) = o3
+        G(i-1,j-1,k,4) = o4
+        G(i-1,j-1,k,5) = o5
+      end block
+      #:else
       call SLAU(id_slau, rho(idx), rho(idx+1), u(idx), u(idx+1), v(idx), v(idx+1), &
                 w(idx), w(idx+1), un1, un2, p(idx), p(idx+1), Normal_z, 1.0_sp, &
                 G(i-1,j-1,k,1), G(i-1,j-1,k,2), G(i-1,j-1,k,3), G(i-1,j-1,k,4), G(i-1,j-1,k,5))
+      #:endif
     end associate
     #:endif
   end subroutine calc_slau_z

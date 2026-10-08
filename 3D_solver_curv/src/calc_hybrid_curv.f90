@@ -1,8 +1,10 @@
 !> Module for shock detection and hybrid scheme support in curvilinear grids
 !> Computes Ducros sensor using physical velocity gradients via chain rule with inverse metrics
 module calc_hybrid_curv
+  use mod_precision
   use cudafor
-  use mod_globals, only : gamma, sp
+  use mod_globals, only : sp
+  use mod_constant, only : gamma => gamma_arr
   implicit none
 contains
   !> Compute Ducros shock sensor for curvilinear grids
@@ -10,16 +12,16 @@ contains
   !> Physical velocity gradients computed from computational derivatives via chain rule
   attributes(global) subroutine calc_Ducros_curv(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, Q_2, Q_3, Q_4, fd)
     integer, intent(in), value                :: nx, ny, nz
-    real(8), intent(in), value                :: dz
-    real(8), intent(in), device, contiguous   :: xi_x(nx,ny), xi_y(nx,ny)
-    real(8), intent(in), device, contiguous   :: eta_x(nx,ny), eta_y(nx,ny)
-    real(8), intent(in), device, contiguous   :: Q_2(nx,ny,nz)
-    real(8), intent(in), device, contiguous   :: Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous   :: Q_4(nx,ny,nz)
+    real(kd_arr), intent(in), value                :: dz
+    real(kd_arr), intent(in), device, contiguous   :: xi_x(nx,ny), xi_y(nx,ny)
+    real(kd_arr), intent(in), device, contiguous   :: eta_x(nx,ny), eta_y(nx,ny)
+    real(kd_arr), intent(in), device, contiguous   :: Q_2(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous   :: Q_3(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous   :: Q_4(nx,ny,nz)
     real(sp), intent(out), device, contiguous :: fd(nx,ny,nz)
     integer i, j, k
-    real(8) :: dudxi, dvdxi, dwdxi, dudeta, dvdeta, dwdeta, dudz, dvdz, dwdz
-    real(8) :: dudx, dudy, dvdx, dvdy, dwdx, dwdy
+    real(kd_arr) :: dudxi, dvdxi, dwdxi, dudeta, dvdeta, dwdeta, dudz, dvdz, dwdz
+    real(kd_arr) :: dudx, dudy, dvdx, dvdy, dwdx, dwdy
     real(sp) :: div, rot(3)
     real(sp), parameter :: eps = 1.0e-12_sp
     i = (blockIdx%x-1)*blockDim%x + threadIdx%x + 1
@@ -27,15 +29,15 @@ contains
     k = (blockIdx%z-1)*blockDim%z + threadIdx%z + 1
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
     ! Computational space derivatives (Δξ=Δη=1)
-    dudxi  = 0.5d0 * (Q_2(i+1,j,k) - Q_2(i-1,j,k))
-    dvdxi  = 0.5d0 * (Q_3(i+1,j,k) - Q_3(i-1,j,k))
-    dwdxi  = 0.5d0 * (Q_4(i+1,j,k) - Q_4(i-1,j,k))
-    dudeta = 0.5d0 * (Q_2(i,j+1,k) - Q_2(i,j-1,k))
-    dvdeta = 0.5d0 * (Q_3(i,j+1,k) - Q_3(i,j-1,k))
-    dwdeta = 0.5d0 * (Q_4(i,j+1,k) - Q_4(i,j-1,k))
-    dudz   = 0.5d0 * (Q_2(i,j,k+1) - Q_2(i,j,k-1)) / dz
-    dvdz   = 0.5d0 * (Q_3(i,j,k+1) - Q_3(i,j,k-1)) / dz
-    dwdz   = 0.5d0 * (Q_4(i,j,k+1) - Q_4(i,j,k-1)) / dz
+    dudxi  = 0.5_kd_arr * (Q_2(i+1,j,k) - Q_2(i-1,j,k))
+    dvdxi  = 0.5_kd_arr * (Q_3(i+1,j,k) - Q_3(i-1,j,k))
+    dwdxi  = 0.5_kd_arr * (Q_4(i+1,j,k) - Q_4(i-1,j,k))
+    dudeta = 0.5_kd_arr * (Q_2(i,j+1,k) - Q_2(i,j-1,k))
+    dvdeta = 0.5_kd_arr * (Q_3(i,j+1,k) - Q_3(i,j-1,k))
+    dwdeta = 0.5_kd_arr * (Q_4(i,j+1,k) - Q_4(i,j-1,k))
+    dudz   = 0.5_kd_arr * (Q_2(i,j,k+1) - Q_2(i,j,k-1)) / dz
+    dvdz   = 0.5_kd_arr * (Q_3(i,j,k+1) - Q_3(i,j,k-1)) / dz
+    dwdz   = 0.5_kd_arr * (Q_4(i,j,k+1) - Q_4(i,j,k-1)) / dz
     ! Physical space derivatives via chain rule
     ! du/dx = ∂u/∂ξ * ∂ξ/∂x + ∂u/∂η * ∂η/∂x = xi_x(i,j)*dudxi + eta_x(i,j)*dudeta
     ! du/dy = ∂u/∂ξ * ∂ξ/∂y + ∂u/∂η * ∂η/∂y = xi_y(i,j)*dudxi + eta_y(i,j)*dudeta

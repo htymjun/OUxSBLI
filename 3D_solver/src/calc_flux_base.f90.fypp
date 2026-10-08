@@ -29,6 +29,7 @@
   $:error('COMMZ with VISC_ORDER=2 is not implemented (calc_visc2 has no k-range kernels)')
 #:endif
 module calc_flux_base
+  use mod_precision
   use mod_globals, only : sp, &
   & blocks, threads, blocksE, blocksF, blocksG, threadsE, threadsF, threadsG, &
   & blocksEv, blocksFv, blocksGv, threadsEv, threadsFv, threadsGv
@@ -81,12 +82,12 @@ contains
 
   subroutine calc_conv(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, E, F, G)
     integer, intent(in), value               :: nx, ny, nz
-    real(8), intent(in), device, contiguous  :: inv_dx(nx-1), inv_dy(ny-1), inv_dz(nz-1)
-    real(8), intent(in), device, contiguous  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous  :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(out), device, contiguous :: E(nx-1,ny-2,nz-2,5)
-    real(8), intent(out), device, contiguous :: F(nx-2,ny-1,nz-2,5)
-    real(8), intent(out), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    real(kd_arr), intent(in), device, contiguous  :: inv_dx(nx-1), inv_dy(ny-1), inv_dz(nz-1)
+    real(kd_arr), intent(in), device, contiguous  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous  :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    real(kd_arr), intent(out), device, contiguous :: E(nx-1,ny-2,nz-2,5)
+    real(kd_arr), intent(out), device, contiguous :: F(nx-2,ny-1,nz-2,5)
+    real(kd_arr), intent(out), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     ! shock sensor
     #:if SCHEME in ('SLAU', 'Hybrid')
     call calc_Ducros<<<blocks,threads>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, sensor)
@@ -112,8 +113,8 @@ contains
   !> planes next to a ghost plane is only complete after the exchange.
   subroutine calc_sensor(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4)
     integer, intent(in), value              :: nx, ny, nz
-    real(8), intent(in), device, contiguous :: inv_dx(nx-1), inv_dy(ny-1), inv_dz(nz-1)
-    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous :: inv_dx(nx-1), inv_dy(ny-1), inv_dz(nz-1)
+    real(kd_arr), intent(in), device, contiguous :: Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz)
     #:if SCHEME in ('SLAU', 'Hybrid')
     call calc_Ducros<<<blocks,threads>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, sensor)
     #:endif
@@ -123,10 +124,10 @@ contains
   !> Convective E and F on the z planes [k_lo, k_hi] only.
   subroutine calc_conv_EF_koff(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, E, F, k_lo, k_hi)
     integer, intent(in), value                 :: nx, ny, nz, k_lo, k_hi
-    real(8), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
-    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
+    real(kd_arr), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
+    real(kd_arr), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
     type(dim3) :: bE, bF
     if (k_hi < k_lo) return
     bE = dim3(blocksE%x, blocksE%y, zblocks(k_hi-k_lo+1, threadsE%z))
@@ -140,9 +141,9 @@ contains
   !> it skips the faces outside [io+1, nz-io-1] by itself).
   subroutine calc_conv_G_koff(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, G, k_lo, k_hi)
     integer, intent(in), value                 :: nx, ny, nz, k_lo, k_hi
-    real(8), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    real(kd_arr), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     type(dim3) :: bG
     if (k_hi < k_lo) return
     bG = dim3(blocksG%x, blocksG%y, zblocks(k_hi-k_lo+1, threadsG%z))
@@ -154,25 +155,25 @@ contains
   subroutine calc_EFG(nx, ny, nz, inv_dx, inv_dy, inv_dz, Jacobian, &
                        QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
     integer, intent(in), value                 :: nx, ny, nz
-    real(8), intent(in), device, contiguous    :: inv_dx(nx-1), inv_dy(ny-1), inv_dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Jacobian(nx,ny)
-    real(8), intent(in), device, contiguous    :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: inv_dx(nx-1), inv_dy(ny-1), inv_dz(nz-1)
+    real(kd_arr), intent(in), device, contiguous    :: Jacobian(nx,ny)
+    real(kd_arr), intent(in), device, contiguous    :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     #:if VISC == 'Euler'
-    real(8), intent(inout), device, contiguous :: mu(1,1,1), mut(1,1,1), qc2(1,1,1)
-    real(8), intent(inout), device, contiguous :: ux(1,1,1), vy(1,1,1), wz(1,1,1)
+    real(kd_arr), intent(inout), device, contiguous :: mu(1,1,1), mut(1,1,1), qc2(1,1,1)
+    real(kd_arr), intent(inout), device, contiguous :: ux(1,1,1), vy(1,1,1), wz(1,1,1)
     #:elif VISC == 'NS'
-    real(8), intent(inout), device, contiguous :: mu(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: mut(1,1,1), qc2(1,1,1)
-    real(8), intent(inout), device, contiguous :: ux(nx,ny,nz), vy(nx,ny,nz), wz(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: mu(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: mut(1,1,1), qc2(1,1,1)
+    real(kd_arr), intent(inout), device, contiguous :: ux(nx,ny,nz), vy(nx,ny,nz), wz(nx,ny,nz)
     #:elif VISC == 'LES'
-    real(8), intent(inout), device, contiguous :: mu(nx,ny,nz), mut(nx,ny,nz), qc2(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: ux(nx,ny,nz), vy(nx,ny,nz), wz(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: mu(nx,ny,nz), mut(nx,ny,nz), qc2(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: ux(nx,ny,nz), vy(nx,ny,nz), wz(nx,ny,nz)
     #:endif
-    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5), F(nx-2,ny-1,nz-2,5)
-    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    real(kd_arr), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5), F(nx-2,ny-1,nz-2,5)
+    real(kd_arr), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     #:if COMMZ and VISC in ('NS', 'LES')
     integer    :: kv_lo, kv_hi, kg_lo, kg_hi
     type(dim3) :: bEv, bFv, bGv
@@ -207,8 +208,8 @@ contains
       {'dir': 'G', 'is_bc': BC_Z, 'grad': 'ux, vy', 'r': 'kg'} &
     ]
     #:if is_les
-    mut = 0.d0
-    qc2 = 0.d0
+    mut = 0._kd_arr
+    qc2 = 0._kd_arr
     #:endif
     #:if not COMMZ
     ! ===================================================================
@@ -298,26 +299,26 @@ contains
   subroutine calc_EFG_halo(nx, ny, nz, inv_dx, inv_dy, inv_dz, &
                              Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
     integer, intent(in), value                 :: nx, ny, nz
-    real(8), intent(in), device, contiguous    :: inv_dx(nx-1), inv_dy(ny-1), inv_dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Jacobian(nx,ny)
-    real(8), intent(in), device, contiguous    :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: inv_dx(nx-1), inv_dy(ny-1), inv_dz(nz-1)
+    real(kd_arr), intent(in), device, contiguous    :: Jacobian(nx,ny)
+    real(kd_arr), intent(in), device, contiguous    :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous    :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     #:if VISC == 'Euler'
-    real(8), intent(inout), device, contiguous :: mu(1,1,1), mut(1,1,1), qc2(1,1,1)
-    real(8), intent(inout), device, contiguous :: ux(1,1,1), vy(1,1,1), wz(1,1,1)
+    real(kd_arr), intent(inout), device, contiguous :: mu(1,1,1), mut(1,1,1), qc2(1,1,1)
+    real(kd_arr), intent(inout), device, contiguous :: ux(1,1,1), vy(1,1,1), wz(1,1,1)
     #:elif VISC == 'NS'
-    real(8), intent(inout), device, contiguous :: mu(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: mut(1,1,1), qc2(1,1,1)
-    real(8), intent(inout), device, contiguous :: ux(nx,ny,nz), vy(nx,ny,nz), wz(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: mu(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: mut(1,1,1), qc2(1,1,1)
+    real(kd_arr), intent(inout), device, contiguous :: ux(nx,ny,nz), vy(nx,ny,nz), wz(nx,ny,nz)
     #:elif VISC == 'LES'
-    real(8), intent(inout), device, contiguous :: mu(nx,ny,nz), mut(nx,ny,nz), qc2(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: ux(nx,ny,nz), vy(nx,ny,nz), wz(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: mu(nx,ny,nz), mut(nx,ny,nz), qc2(nx,ny,nz)
+    real(kd_arr), intent(inout), device, contiguous :: ux(nx,ny,nz), vy(nx,ny,nz), wz(nx,ny,nz)
     #:endif
-    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
-    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
-    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    real(kd_arr), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
+    real(kd_arr), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
+    real(kd_arr), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     ! low-z range of each pair is [first, *_hi1], high-z range is [*_lo2, last]
     integer :: kef_hi1, kef_lo2   ! convective E/F planes
     integer :: kg_hi1,  kg_lo2    ! convective G faces

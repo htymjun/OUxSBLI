@@ -1,4 +1,5 @@
 #:include 'config.fypp'
+#:include 'precision.fypp'
 #:if not defined('COMMZ')
   #:set COMMZ = False
 #:endif
@@ -7,8 +8,12 @@
 #! reaches a z ghost plane after the halo exchange has landed.
 #:set KOFF_VARIANTS = [False, True] if COMMZ else [False]
 module calc_hybrid_kernel_internal
-  use mod_globals, only : gamma, threshold, threadsE, threadsF, threadsG
-  use mod_constant, only : id_slau, over_gamma_1, R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
+  use mod_precision
+  ! constants referenced by the included calc_scheme_math.f90
+  use mod_constant, only : gamma_conv, over_gamma_1_conv, R_over_gamma_1_conv, one_third_conv, one_sixth_conv, one_twelfth_conv, two_third_conv, &
+                           one_24_conv, one_48_conv, one_60_conv, one_120_conv, one_240_conv, seven_twelfth_conv
+  use mod_globals, only : threshold, threadsE, threadsF, threadsG
+  use mod_constant, only : id_slau
   use calc_muscl
   use calc_hybrid
   use libm
@@ -19,12 +24,6 @@ module calc_hybrid_kernel_internal
   public calc_hybrid_x_in_koff, calc_hybrid_y_in_koff
   #:endif
   integer, parameter :: io = ${ORDER_IO}$
-  real(8), parameter :: one_24        = 1.d0 / 24.d0
-  real(8), parameter :: one_48        = 1.d0 / 48.d0
-  real(8), parameter :: one_60        = 1.d0 / 60.d0
-  real(8), parameter :: one_120       = 1.d0 / 120.d0
-  real(8), parameter :: one_240       = 1.d0 / 240.d0
-  real(8), parameter :: seven_twelfth = 7.d0 / 12.d0
 
 #:if ORDER == 6
   integer(8), parameter :: id_acc = 0_8
@@ -52,8 +51,8 @@ contains
   attributes(device) subroutine delta_r2(id_acc, sensor, a, al, ar)
     integer(2), intent(in), value :: id_acc
     real(sp), intent(in), value   :: sensor
-    real(8), intent(in)           :: a(2)
-    real(8), intent(out)          :: al, ar
+    real(kd_conv), intent(in)           :: a(2)
+    real(kd_conv), intent(out)          :: al, ar
     al = a(1); ar = a(2)
   end subroutine delta_r2
 
@@ -61,8 +60,8 @@ contains
   attributes(device) subroutine delta_r4(id_acc, sensor, a, al, ar)
     integer(4), intent(in), value :: id_acc
     real(sp), intent(in), value   :: sensor
-    real(8), intent(in)           :: a(4)
-    real(8), intent(out)          :: al, ar
+    real(kd_conv), intent(in)           :: a(4)
+    real(kd_conv), intent(out)          :: al, ar
     call delta4(sensor, a, al, ar)
   end subroutine delta_r4
 
@@ -70,8 +69,8 @@ contains
   attributes(device) subroutine delta_r6(id_acc, sensor, a, al, ar)
     integer(8), intent(in), value :: id_acc
     real(sp), intent(in), value   :: sensor
-    real(8), intent(in)           :: a(6)
-    real(8), intent(out)          :: al, ar
+    real(kd_conv), intent(in)           :: a(6)
+    real(kd_conv), intent(out)          :: al, ar
     call delta6(sensor, a, al, ar)
   end subroutine delta_r6
 
@@ -80,17 +79,17 @@ contains
 #:set sfx  = '_koff' if is_koff else ''
 #:set karg = ', k_lo, k_hi' if is_koff else ''
   attributes(global) subroutine calc_hybrid_x_in${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, E${karg}$)
-    use mod_constant, only : Normal_x
+    use mod_constant, only : Normal_x => Normal_x_conv
     integer, intent(in), value                :: nx, ny, nz${karg}$
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
+    real(kd_arr), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
     integer i, j, k, it, jt, kt, ii, i_base
     logical :: jk_in_range
-    real(8), dimension(-(io-1):threadsE%x+io+1, threadsE%y, threadsE%z), shared :: rho, u, v, w, p
-    real(8), dimension(threadsE%x, threadsE%y, threadsE%z), shared :: rhor, ur, vr, wr, pr
+    real(kd_conv), dimension(-(io-1):threadsE%x+io+1, threadsE%y, threadsE%z), shared :: rho, u, v, w, p
+    real(kd_conv), dimension(threadsE%x, threadsE%y, threadsE%z), shared :: rhor, ur, vr, wr, pr
     real(sp) fdx
-    real(8) rhol, ul, vl, wl, pl
+    real(kd_conv) rhol, ul, vl, wl, pl
     it = threadIdx%x;  jt = threadIdx%y;  kt = threadIdx%z
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
     k  = (blockIdx%z-1)*blockDim%z + kt + ${'k_lo - 1' if is_koff else '1'}$
@@ -110,7 +109,7 @@ contains
       fdx = 0.5_sp * (sensor(i,j,k) + sensor(i+1,j,k))
       if (fdx <= threshold) then
         block
-          real(8) tmp(2*io+2)
+          real(kd_conv) tmp(2*io+2)
           tmp = T(i-io:i+io+1, j, k)
           associate(uu => u)
             E(i,j-1,k-1,:) = KEEP(id_acc, &
@@ -132,9 +131,21 @@ contains
       rho(it,jt,kt) = rhol;   u(it,jt,kt) = ul;   v(it,jt,kt) = vl
         w(it,jt,kt) = wl;     p(it,jt,kt) = pl
       associate(un1 => u(it,jt,kt), un2 => ur(it,jt,kt))
+        #:if CONV_CAST
+        block
+          real(kd_conv) :: o1, o2, o3, o4, o5
+          call SLAU(id_slau, rho(it,jt,kt), rhor(it,jt,kt), u(it,jt,kt), ur(it,jt,kt), v(it,jt,kt), vr(it,jt,kt), w(it,jt,kt), wr(it,jt,kt), un1, un2, p(it,jt,kt), pr(it,jt,kt), Normal_x, 1.0_sp, o1, o2, o3, o4, o5)
+          E(i,j-1,k-1,1) = o1
+          E(i,j-1,k-1,2) = o2
+          E(i,j-1,k-1,3) = o3
+          E(i,j-1,k-1,4) = o4
+          E(i,j-1,k-1,5) = o5
+        end block
+        #:else
         call SLAU(id_slau, rho(it,jt,kt), rhor(it,jt,kt), u(it,jt,kt), ur(it,jt,kt), v(it,jt,kt), vr(it,jt,kt), &
                   w(it,jt,kt), wr(it,jt,kt), un1, un2, p(it,jt,kt), pr(it,jt,kt), Normal_x, 1.0_sp, &
                   E(i,j-1,k-1,1), E(i,j-1,k-1,2), E(i,j-1,k-1,3), E(i,j-1,k-1,4), E(i,j-1,k-1,5))
+        #:endif
       end associate
     endif
   end subroutine calc_hybrid_x_in${sfx}$
@@ -145,17 +156,17 @@ contains
 #:set sfx  = '_koff' if is_koff else ''
 #:set karg = ', k_lo, k_hi' if is_koff else ''
   attributes(global) subroutine calc_hybrid_y_in${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, F${karg}$)
-    use mod_constant, only : Normal_y
+    use mod_constant, only : Normal_y => Normal_y_conv
     integer, intent(in), value                :: nx, ny, nz${karg}$
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
+    real(kd_arr), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
     integer i, j, k, it, jt, kt, jj, j_base
     logical :: ik_in_range
-    real(8), dimension(-(io-1):threadsF%y+io+1, threadsF%x, threadsF%z), shared :: rho, u, v, w, p
-    real(8), dimension(threadsF%y, threadsF%x, threadsF%z), shared :: rhor, ur, vr, wr, pr
+    real(kd_conv), dimension(-(io-1):threadsF%y+io+1, threadsF%x, threadsF%z), shared :: rho, u, v, w, p
+    real(kd_conv), dimension(threadsF%y, threadsF%x, threadsF%z), shared :: rhor, ur, vr, wr, pr
     real(sp) fdy
-    real(8) rhol, ul, vl, wl, pl
+    real(kd_conv) rhol, ul, vl, wl, pl
     it = threadIdx%x;  jt = threadIdx%y;  kt = threadIdx%z
     i  = (blockIdx%x-1)*blockDim%x + it + 1
     k  = (blockIdx%z-1)*blockDim%z + kt + ${'k_lo - 1' if is_koff else '1'}$
@@ -175,7 +186,7 @@ contains
       fdy = 0.5_sp * (sensor(i,j,k) + sensor(i,j+1,k))
       if (fdy <= threshold) then
         block
-          real(8) tmp(2*io+2)
+          real(kd_conv) tmp(2*io+2)
           tmp = T(i, j-io:j+io+1, k)
           associate(vv => v)
             F(i-1,j,k-1,:) = KEEP(id_acc, &
@@ -197,9 +208,21 @@ contains
       rho(jt,it,kt) = rhol;   u(jt,it,kt) = ul;   v(jt,it,kt) = vl
         w(jt,it,kt) = wl;     p(jt,it,kt) = pl
       associate(un1 => v(jt,it,kt), un2 => vr(jt,it,kt))
+        #:if CONV_CAST
+        block
+          real(kd_conv) :: o1, o2, o3, o4, o5
+          call SLAU(id_slau, rho(jt,it,kt), rhor(jt,it,kt), u(jt,it,kt), ur(jt,it,kt), v(jt,it,kt), vr(jt,it,kt), w(jt,it,kt), wr(jt,it,kt), un1, un2, p(jt,it,kt), pr(jt,it,kt), Normal_y, 1.0_sp, o1, o2, o3, o4, o5)
+          F(i-1,j,k-1,1) = o1
+          F(i-1,j,k-1,2) = o2
+          F(i-1,j,k-1,3) = o3
+          F(i-1,j,k-1,4) = o4
+          F(i-1,j,k-1,5) = o5
+        end block
+        #:else
         call SLAU(id_slau, rho(jt,it,kt), rhor(jt,it,kt), u(jt,it,kt), ur(jt,it,kt), v(jt,it,kt), vr(jt,it,kt), &
                   w(jt,it,kt), wr(jt,it,kt), un1, un2, p(jt,it,kt), pr(jt,it,kt), Normal_y, 1.0_sp, &
                   F(i-1,j,k-1,1), F(i-1,j,k-1,2), F(i-1,j,k-1,3), F(i-1,j,k-1,4), F(i-1,j,k-1,5))
+        #:endif
       end associate
     endif
   end subroutine calc_hybrid_y_in${sfx}$
@@ -207,17 +230,17 @@ contains
 
 
   attributes(global) subroutine calc_hybrid_z_in(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, G)
-    use mod_constant, only : Normal_z
+    use mod_constant, only : Normal_z => Normal_z_conv
     integer, intent(in), value                :: nx, ny, nz
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: G(nx-2,ny-2,nz-1,5)
+    real(kd_arr), intent(out), device, contiguous  :: G(nx-2,ny-2,nz-1,5)
     integer i, j, k, it, jt, kt, kk, k_base
     logical :: ij_in_range
-    real(8), dimension(-(io-1):threadsG%z+io+1, threadsG%y, threadsG%x), shared :: rho, u, v, w, p
-    real(8), dimension(threadsG%z, threadsG%y, threadsG%x), shared :: rhor, ur, vr, wr, pr
+    real(kd_conv), dimension(-(io-1):threadsG%z+io+1, threadsG%y, threadsG%x), shared :: rho, u, v, w, p
+    real(kd_conv), dimension(threadsG%z, threadsG%y, threadsG%x), shared :: rhor, ur, vr, wr, pr
     real(sp) fdz
-    real(8) rhol, ul, vl, wl, pl
+    real(kd_conv) rhol, ul, vl, wl, pl
     it = threadIdx%x;  jt = threadIdx%y;  kt = threadIdx%z
     i  = (blockIdx%x-1)*blockDim%x + it + 1
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
@@ -237,7 +260,7 @@ contains
       fdz = 0.5_sp * (sensor(i,j,k) + sensor(i,j,k+1))
       if (fdz <= threshold) then
         block
-          real(8) tmp(2*io+2)
+          real(kd_conv) tmp(2*io+2)
           tmp = T(i, j, k-io:k+io+1)
           associate(ww => w)
             G(i-1,j-1,k,:) = KEEP(id_acc, &
@@ -259,26 +282,38 @@ contains
       rho(kt,jt,it) = rhol;   u(kt,jt,it) = ul;   v(kt,jt,it) = vl
         w(kt,jt,it) = wl;     p(kt,jt,it) = pl
       associate(un1 => w(kt,jt,it), un2 => wr(kt,jt,it))
+        #:if CONV_CAST
+        block
+          real(kd_conv) :: o1, o2, o3, o4, o5
+          call SLAU(id_slau, rho(kt,jt,it), rhor(kt,jt,it), u(kt,jt,it), ur(kt,jt,it), v(kt,jt,it), vr(kt,jt,it), w(kt,jt,it), wr(kt,jt,it), un1, un2, p(kt,jt,it), pr(kt,jt,it), Normal_z, 1.0_sp, o1, o2, o3, o4, o5)
+          G(i-1,j-1,k,1) = o1
+          G(i-1,j-1,k,2) = o2
+          G(i-1,j-1,k,3) = o3
+          G(i-1,j-1,k,4) = o4
+          G(i-1,j-1,k,5) = o5
+        end block
+        #:else
         call SLAU(id_slau, rho(kt,jt,it), rhor(kt,jt,it), u(kt,jt,it), ur(kt,jt,it), v(kt,jt,it), vr(kt,jt,it), &
                   w(kt,jt,it), wr(kt,jt,it), un1, un2, p(kt,jt,it), pr(kt,jt,it), Normal_z, 1.0_sp, &
                   G(i-1,j-1,k,1), G(i-1,j-1,k,2), G(i-1,j-1,k,3), G(i-1,j-1,k,4), G(i-1,j-1,k,5))
+        #:endif
       end associate
     endif
   end subroutine calc_hybrid_z_in
 
 
   attributes(global) subroutine calc_hybrid_z_in_koff(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, G, k_lo, k_hi)
-    use mod_constant, only : Normal_z
+    use mod_constant, only : Normal_z => Normal_z_conv
     integer, intent(in), value                :: nx, ny, nz, k_lo, k_hi
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    real(kd_arr), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    real(kd_arr), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     integer i, j, k, it, jt, kt, kk, k_base
     logical :: ij_in_range
-    real(8), dimension(-(io-1):threadsG%z+io+1, threadsG%y, threadsG%x), shared :: rho, u, v, w, p
-    real(8), dimension(threadsG%z, threadsG%y, threadsG%x), shared :: rhor, ur, vr, wr, pr
+    real(kd_conv), dimension(-(io-1):threadsG%z+io+1, threadsG%y, threadsG%x), shared :: rho, u, v, w, p
+    real(kd_conv), dimension(threadsG%z, threadsG%y, threadsG%x), shared :: rhor, ur, vr, wr, pr
     real(sp) fdz
-    real(8) rhol, ul, vl, wl, pl
+    real(kd_conv) rhol, ul, vl, wl, pl
     it = threadIdx%x;  jt = threadIdx%y;  kt = threadIdx%z
     i  = (blockIdx%x-1)*blockDim%x + it + 1
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
@@ -298,7 +333,7 @@ contains
       fdz = 0.5_sp * (sensor(i,j,k) + sensor(i,j,k+1))
       if (fdz <= threshold) then
         block
-          real(8) tmp(2*io+2)
+          real(kd_conv) tmp(2*io+2)
           tmp = T(i, j, k-io:k+io+1)
           associate(ww => w)
             G(i-1,j-1,k,:) = KEEP(id_acc, &
@@ -320,9 +355,21 @@ contains
       rho(kt,jt,it) = rhol;   u(kt,jt,it) = ul;   v(kt,jt,it) = vl
         w(kt,jt,it) = wl;     p(kt,jt,it) = pl
       associate(un1 => w(kt,jt,it), un2 => wr(kt,jt,it))
+        #:if CONV_CAST
+        block
+          real(kd_conv) :: o1, o2, o3, o4, o5
+          call SLAU(id_slau, rho(kt,jt,it), rhor(kt,jt,it), u(kt,jt,it), ur(kt,jt,it), v(kt,jt,it), vr(kt,jt,it), w(kt,jt,it), wr(kt,jt,it), un1, un2, p(kt,jt,it), pr(kt,jt,it), Normal_z, 1.0_sp, o1, o2, o3, o4, o5)
+          G(i-1,j-1,k,1) = o1
+          G(i-1,j-1,k,2) = o2
+          G(i-1,j-1,k,3) = o3
+          G(i-1,j-1,k,4) = o4
+          G(i-1,j-1,k,5) = o5
+        end block
+        #:else
         call SLAU(id_slau, rho(kt,jt,it), rhor(kt,jt,it), u(kt,jt,it), ur(kt,jt,it), v(kt,jt,it), vr(kt,jt,it), &
                   w(kt,jt,it), wr(kt,jt,it), un1, un2, p(kt,jt,it), pr(kt,jt,it), Normal_z, 1.0_sp, &
                   G(i-1,j-1,k,1), G(i-1,j-1,k,2), G(i-1,j-1,k,3), G(i-1,j-1,k,4), G(i-1,j-1,k,5))
+        #:endif
       end associate
     endif
   end subroutine calc_hybrid_z_in_koff

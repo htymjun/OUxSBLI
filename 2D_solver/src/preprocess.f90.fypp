@@ -1,10 +1,12 @@
 !> Module for preprocessing and GPU memory management
 !> Handles device setup, memory allocation, and initial data transfers
 #:include 'config.fypp'
+#:include 'precision.fypp'
 #:if not defined('VISC_ORDER')
   #:set VISC_ORDER = 4 if ORDER >= 4 else 2
 #:endif
 module preprocess
+  use mod_precision
   use cudafor
   use mpi
   use print
@@ -31,18 +33,18 @@ contains
     integer, intent(in)                       :: myrank        !< MPI rank
     integer, intent(in)                       :: nx            !< x grid dimension
     integer, intent(in)                       :: ny            !< y grid dimension
-    real(8), intent(out), allocatable, device :: dtdx(:)       !< dt * Sxy
-    real(8), intent(out), allocatable, device :: dtdy(:)       !< dt * Syz
-    real(8), intent(out), allocatable, device :: xix(:)        !< coordinate transform metric in x
-    real(8), intent(out), allocatable, device :: etay(:)       !< coordinate transform metric in y
-    real(8), intent(out), allocatable, device :: Jacobian(:,:) !< Jacobian determinant for coordinate transform
-    real(8), intent(out), allocatable, device :: Q_1(:,:), Q_2(:,:), Q_3(:,:), Q_4(:,:) !< primitive variables (rho, u, v, p)
-    real(8), intent(out), allocatable, device :: T(:,:)        !< temperature field
-    real(8), intent(out), allocatable, device :: mu(:,:)       !< molecular viscosity
-    real(8), intent(out), allocatable, device :: ux(:,:)       !< cell-center du/dx (VISC_ORDER>2 only)
-    real(8), intent(out), allocatable, device :: vy(:,:)       !< cell-center dv/dy (VISC_ORDER>2 only)
-    real(8), intent(out), allocatable, device :: E(:,:,:)      !< flux in x direction
-    real(8), intent(out), allocatable, device :: F(:,:,:)      !< flux in y direction
+    real(kd_arr), intent(out), allocatable, device :: dtdx(:)       !< dt * Sxy
+    real(kd_arr), intent(out), allocatable, device :: dtdy(:)       !< dt * Syz
+    real(kd_arr), intent(out), allocatable, device :: xix(:)        !< coordinate transform metric in x
+    real(kd_arr), intent(out), allocatable, device :: etay(:)       !< coordinate transform metric in y
+    real(kd_arr), intent(out), allocatable, device :: Jacobian(:,:) !< Jacobian determinant for coordinate transform
+    real(kd_arr), intent(out), allocatable, device :: Q_1(:,:), Q_2(:,:), Q_3(:,:), Q_4(:,:) !< primitive variables (rho, u, v, p)
+    real(kd_arr), intent(out), allocatable, device :: T(:,:)        !< temperature field
+    real(kd_arr), intent(out), allocatable, device :: mu(:,:)       !< molecular viscosity
+    real(kd_arr), intent(out), allocatable, device :: ux(:,:)       !< cell-center du/dx (VISC_ORDER>2 only)
+    real(kd_arr), intent(out), allocatable, device :: vy(:,:)       !< cell-center dv/dy (VISC_ORDER>2 only)
+    real(kd_arr), intent(out), allocatable, device :: E(:,:,:)      !< flux in x direction
+    real(kd_arr), intent(out), allocatable, device :: F(:,:,:)      !< flux in y direction
     integer ierr
     allocate(Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny), &
              E(nx-1,ny-2,4), F(nx-2,ny-1,4), stat=ierr)
@@ -83,19 +85,23 @@ contains
     real(8), intent(in)                      :: Jacobian_cpu(nx,ny) !< Jacobian determinant (host)
     real(8), intent(inout)                   :: Q(nx,ny,4)          !< conservative variables on host
     integer, intent(out)                     :: overlap             !< ghost cell width for MPI halo exchange
-    real(8), intent(out), device, contiguous :: dtdx(nx-2)          !< dt * Sxy (device)
-    real(8), intent(out), device, contiguous :: dtdy(ny-2)          !< dt * Syz (device)
-    real(8), intent(out), device, contiguous :: xix(nx-1)           !< x coordinate metric (device)
-    real(8), intent(out), device, contiguous :: etay(ny-1)          !< y coordinate metric (device)
-    real(8), intent(out), device, contiguous :: Jacobian(nx,ny)     !< Jacobian determinant (device)
-    real(8), intent(out), device, contiguous :: QJ_1(nx,ny)         !< Q(rho) / Jacobian (device)
-    real(8), intent(out), device, contiguous :: QJ_2(nx,ny)         !< Q(rhou) / Jacobian (device)
-    real(8), intent(out), device, contiguous :: QJ_3(nx,ny)         !< Q(rhov) / Jacobian (device)
-    real(8), intent(out), device, contiguous :: QJ_4(nx,ny)         !< Q(E) / Jacobian (device)
+    real(kd_arr), intent(out), device, contiguous :: dtdx(nx-2)          !< dt * Sxy (device)
+    real(kd_arr), intent(out), device, contiguous :: dtdy(ny-2)          !< dt * Syz (device)
+    real(kd_arr), intent(out), device, contiguous :: xix(nx-1)           !< x coordinate metric (device)
+    real(kd_arr), intent(out), device, contiguous :: etay(ny-1)          !< y coordinate metric (device)
+    real(kd_arr), intent(out), device, contiguous :: Jacobian(nx,ny)     !< Jacobian determinant (device)
+    real(kd_arr), intent(out), device, contiguous :: QJ_1(nx,ny)         !< Q(rho) / Jacobian (device)
+    real(kd_arr), intent(out), device, contiguous :: QJ_2(nx,ny)         !< Q(rhou) / Jacobian (device)
+    real(kd_arr), intent(out), device, contiguous :: QJ_3(nx,ny)         !< Q(rhov) / Jacobian (device)
+    real(kd_arr), intent(out), device, contiguous :: QJ_4(nx,ny)         !< Q(E) / Jacobian (device)
     real(4), intent(inout)                   :: ke0                 !< reference kinetic energy
     real(4), intent(inout)                   :: entropy0            !< reference entropy
-    real(8) xix_cpu(nx-1), etay_cpu(ny-1)
-    real(8) dtdx_cpu(nx-2), dtdy_cpu(ny-2)
+    real(kd_arr) xix_cpu(nx-1), etay_cpu(ny-1)
+    real(kd_arr) dtdx_cpu(nx-2), dtdy_cpu(ny-2)
+    #:if ARR != 8
+    ! the host keeps Q and the Jacobian in real(8); kd_arr images are staged for the device copy
+    real(kd_arr), allocatable :: Q_arr(:,:)
+    #:endif
     integer i, j, l, ierr
     ! set Q / Jacobian
     do l = 1, 4
@@ -118,11 +124,22 @@ contains
     dtdy     = dtdy_cpu
     xix      = xix_cpu
     etay     = etay_cpu
+    #:if ARR == 8
     Jacobian = Jacobian_cpu
     QJ_1 = Q(:,:,1)
     QJ_2 = Q(:,:,2)
     QJ_3 = Q(:,:,3)
     QJ_4 = Q(:,:,4)
+    #:else
+    allocate(Q_arr(nx,ny))
+    Q_arr    = real(Jacobian_cpu, kd_arr)
+    Jacobian = Q_arr
+    #:for l in range(1, 5)
+    Q_arr = real(Q(:,:,${l}$), kd_arr)
+    QJ_${l}$  = Q_arr
+    #:endfor
+    deallocate(Q_arr)
+    #:endif
     ! for multi GPU
     overlap = ${ORDER_IO + 1}$
     call print0(myrank, nx, ny, x, y, Jacobian_cpu, Q, ke0, entropy0)

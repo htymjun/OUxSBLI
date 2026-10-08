@@ -22,13 +22,17 @@ macro(add_ouxsbli_curv_case)
   else()
     set(_CASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
   endif()
-  set(FYPP_FLAGS "-I${_CASE_DIR}" "-DDIM=3")
+  set(FYPP_FLAGS "-I${_CASE_DIR}" "-I${CMAKE_CURRENT_SOURCE_DIR}/../../src" "-DDIM=3")
+  # every template includes precision.fypp (CONV_PRECISION / VISC_PRECISION -> kinds)
+  set(_PRECISION_FYPP "${CMAKE_CURRENT_SOURCE_DIR}/../../src/precision.fypp")
 
-  set(_PARENT_FYPP "mod_constant" "calc_muscl" "print")
+  set(_PARENT_FYPP "mod_precision" "mod_constant" "calc_muscl" "print" "print_curv")
   set(_SHARED_FYPP
       "calc_flux_base_curv"
       "preprocess_curv"
       "calc_time_dev_curv"
+      "calc_slau_kernel_curv"
+      "load_smem_visc2_curv"
       "main_curv")
 
   # calc_scheme_math.f90.fypp is include'd as raw text (no `module` wrapper) by
@@ -39,7 +43,7 @@ macro(add_ouxsbli_curv_case)
   set(_SCHEME_MATH_OUT "${CMAKE_CURRENT_BINARY_DIR}/calc_scheme_math.f90")
   add_custom_command(OUTPUT ${_SCHEME_MATH_OUT}
     COMMAND ${FYPP_EXE} ${FYPP_FLAGS} ${_SCHEME_MATH_IN} ${_SCHEME_MATH_OUT}
-    DEPENDS ${_SCHEME_MATH_IN} "${_CASE_DIR}/config.fypp"
+    DEPENDS ${_SCHEME_MATH_IN} "${_CASE_DIR}/config.fypp" "${_PRECISION_FYPP}"
     COMMENT "fypp ../../src: calc_scheme_math (include-only)")
 
   set(_GEN "")
@@ -48,7 +52,7 @@ macro(add_ouxsbli_curv_case)
     set(_out "${CMAKE_CURRENT_BINARY_DIR}/${_f}.f90")
     add_custom_command(OUTPUT ${_out}
       COMMAND ${FYPP_EXE} ${FYPP_FLAGS} ${_in} ${_out}
-      DEPENDS ${_in} "${_CASE_DIR}/config.fypp"
+      DEPENDS ${_in} "${_CASE_DIR}/config.fypp" "${_PRECISION_FYPP}"
       COMMENT "fypp ../../src: ${_f}")
     list(APPEND _GEN ${_out})
   endforeach()
@@ -58,7 +62,7 @@ macro(add_ouxsbli_curv_case)
     set(_out "${CMAKE_CURRENT_BINARY_DIR}/${_f}.f90")
     add_custom_command(OUTPUT ${_out}
       COMMAND ${FYPP_EXE} ${FYPP_FLAGS} ${_in} ${_out}
-      DEPENDS ${_in} "${_CASE_DIR}/config.fypp"
+      DEPENDS ${_in} "${_CASE_DIR}/config.fypp" "${_PRECISION_FYPP}"
       COMMENT "fypp ../src: ${_f}")
     list(APPEND _GEN ${_out})
   endforeach()
@@ -69,15 +73,12 @@ macro(add_ouxsbli_curv_case)
       "${CMAKE_CURRENT_SOURCE_DIR}/../../src/cpu_gpu_mpi.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../../src/set_coordinate.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../../src/calc_physical_quantities.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../../src/print_curv.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../../3D_solver/src/calc_hybrid.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../../3D_solver/src/set_bc_common.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_hybrid_curv.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_keep_kernel_curv.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_slau_kernel_curv.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_hybrid_kernel_curv.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_steps_curv.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../src/load_smem_visc2_curv.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_visc2_curv.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_para_curv.f90")
 
