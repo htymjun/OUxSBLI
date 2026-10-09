@@ -15,7 +15,7 @@ contains
     integer nranks, ierr, nz_int, iz_offset
     real(8) dx1, dz1
     real(8) tanh_s, yi
-    real(8), parameter :: s = 2.8d0 !2.4!1.6 ! tanh wall-clustering stretch
+    real(8), parameter :: s = 3.0d0 !2.4!1.6 ! tanh wall-clustering stretch
     ! z is decomposed across the compute (even) ranks when COMMZ=True; the odd
     ! I/O rank shares its partner's slab. Lz is the GLOBAL periodic span; each
     ! local slab holds nz-6 unique planes plus 3 ghost planes on either side
