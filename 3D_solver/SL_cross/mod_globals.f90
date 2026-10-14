@@ -24,7 +24,12 @@ module mod_globals
   real(8), parameter :: Lz = Lz_main + 2.d0*Lz_buf
 
 
-  integer, parameter :: nx_main = 492!428*2 !384
+  ! x主計算領域: 流入端の格子幅 dx_inlet から始めて、下流に向かって格子幅が5次smoothstepで滑らかに
+  ! 粗くなる(一様区間なし。流入端の傾きは0)。終端の格子幅 = dx_inlet + 振幅で、
+  ! 振幅 = (Lx_main - (nx_main-1)*dx_inlet) / ((nx_main-1)/2)。バッファはその幅から続けて伸長する。
+  ! Lx_main を (nx_main-1)*dx_inlet より長くすること(現在の終端幅は約 2.4 mm = 流入端の4倍)。
+  real(8), parameter :: dx_inlet = 0.61d-3
+  integer, parameter :: nx_main = 198
   integer, parameter :: nx_buf =  30!20  !30
   ! x方向MPI分割: npx = xスラブ数(= 計算ランク数 = MPIランク数/2)。npx=1 は分割なし。
   ! nx はスラブ1枚の点数(接続側にゴースト3面)。(nx_global-6) が npx で割り切れること。
@@ -66,12 +71,18 @@ integer, parameter :: nz_uniform = ny_uniform
   real(8), parameter :: gamma = 1.4d0
   real(8), parameter :: Pr    = 0.71d0
   real(8), parameter :: Prt   = 0.9d0
+  real(8), parameter :: Sct   = 0.9d0   ! LES: 乱流シュミット数 (スカラーの乱流拡散 = mut/Sct)
   real(8), parameter :: R     = 287.15d0
 
   ! passive scalar (mixture fraction xi: 1 in stream 1 [u1], 0 in stream 2 [u2]), solved in set.f90
   logical, parameter :: scalar_on = .true.          ! .false. -> no scalar, no extra cost
   real(8), parameter :: Sc        = 0.7d0           ! Schmidt number: rho*D = mu/Sc
   integer, parameter :: scalar_output_every = 1     ! write xi every this many flow outputs (nt steps each)
+
+  ! Stop the whole run (MPI_ABORT) when NaN/Inf shows up in the conserved variables or in xi.
+  ! Checked every nan_check_every steps (and at every stage of the first two steps); 0 disables the check.
+  ! Cost: about 1.4% of the run per check per step, i.e. 0.14% at 10.
+  integer, parameter :: nan_check_every = 10
 
   ! initial condition
   real(8), parameter :: p    = 80d3

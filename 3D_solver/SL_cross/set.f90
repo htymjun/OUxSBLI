@@ -8,7 +8,7 @@ module set
 
   
   ! グリッド生成用の内部ルーチン(他モジュールから見せない)
-  private :: partitioned_axis, stretched_widths, buffer_faces, calc_smooth_stretch_ratio
+  private :: partitioned_axis, downstream_axis, stretched_widths, buffer_faces, calc_smooth_stretch_ratio
 
   real(8), device :: rho_target(ny,nz), u_target(ny,nz), inlet_envelope(ny,nz)
   real(8), device :: sigma_x_1d(nx), sigma_y_1d(ny), sigma_z_1d(nz)
@@ -16,6 +16,8 @@ module set
   real(8), device :: v_target_x(ny,nz), w_target_x(ny,nz), p_target_x(ny,nz)
   real(8), device :: over_jacobian_tab(nx,ny)
   integer, save :: inlet_bc_calls = 0
+  ! LES(VISC='LES')のときだけ使う: 渦粘性 mut のコピー。スカラーの乱流拡散 mut/Sct に使う。
+  real(8), allocatable, device :: sc_mut(:,:,:)
 
   ! Non-uniform z without touching the shared solver.  main.f90 builds the 2-D
   ! Jacobian with dz(1) (set_Jacobian_xy3) and calc_R weights the x/y faces with
@@ -239,16 +241,17 @@ end subroutine alloc_exchange_x
 ! パッシブスカラー: 拡散係数 rho*D = mu/Sc (ソルバーと同じサザーランド則)
 !=====================================================================
 subroutine sc_calc_gam(myrank, nx, ny, nz, jacobian, Q_1, Q_2, Q_3, Q_4, Q_5, gam)
-  use mod_globals, only : Sc
-  use mod_constant, only : mu0_T0_S_over_T0_2_3
+  use mod_globals, only : Sc, Sct
+  use mod_constant, only : mu0_T0_S_over_T0_2_3, id_visc
   integer, intent(in), value  :: myrank, nx, ny, nz
   real(8), intent(in), device :: jacobian(nx,ny)
   real(8), intent(in), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
   real(8), intent(inout), device :: gam(nx,ny,nz)
   integer :: i, j, k
-  real(8) :: rho, u, v, w, pres, temp, over_Sc
+  real(8) :: rho, u, v, w, pres, temp, over_Sc, over_Sct
 
-  over_Sc = 1.d0/Sc
+  over_Sc  = 1.d0/Sc
+  over_Sct = 1.d0/Sct
   !$cuf kernel do(3)<<<*,*>>>
   do k = 1, nz
     do j = 1, ny
@@ -261,6 +264,17 @@ subroutine sc_calc_gam(myrank, nx, ny, nz, jacobian, Q_1, Q_2, Q_3, Q_4, Q_5, ga
         temp = pres/(R*rho)
         gam(i,j,k) = mu0_T0_S_over_T0_2_3/(temp + 110.4d0)*(temp*sqrt(temp))*over_Sc
   enddo;enddo;enddo
+
+  ! LES: 乱流拡散 rho*D_t = mut/Sct を足す(mut は直近の set_bc_mut で作ったもの。NSでは通らない)。
+  if (kind(id_visc) == 8) then
+    if (.not. allocated(sc_mut)) error stop 'LES: sc_mut is not set (set_bc_mut has not been called)'
+    !$cuf kernel do(3)<<<*,*>>>
+    do k = 1, nz
+      do j = 1, ny
+        do i = 1, nx
+          gam(i,j,k) = gam(i,j,k) + sc_mut(i,j,k)*over_Sct
+    enddo;enddo;enddo
+  endif
 
 end subroutine sc_calc_gam
 
@@ -431,10 +445,13 @@ subroutine sc_write(myrank, nx, ny, nz, idx)
   integer    :: u
   integer(4) :: nb_x, nb_y, nb_z, nb_f
   real(8)    :: fmin, fmax
+  logical    :: out_of_range
 
   allocate(h(nx,ny,nz), h4(nx,ny,nz))
   h  = sc_phi
   h4 = real(h, 4)
+  ! 値域の検査(NaNも「範囲外」になる)。正常なときは何も表示しない。
+  out_of_range = .not. all(h(2:nx-1,2:ny-1,2:nz-1) >= -1.d-6 .and. h(2:nx-1,2:ny-1,2:nz-1) <= 1.d0+1.d-6)
   fmin = minval(h(2:nx-1,2:ny-1,2:nz-1))
   fmax = maxval(h(2:nx-1,2:ny-1,2:nz-1))
   if (npx >= 2) then
@@ -470,8 +487,9 @@ subroutine sc_write(myrank, nx, ny, nz, idx)
   write(u) '</VTKFile>'//lf
   close(u)
   deallocate(h, h4)
-  print '(1x,a,i0,a,a,a,es13.6,a,es13.6)', "myrank is ", myrank, "  scalar written: ", trim(filename), &
-        "  min=", fmin, "  max=", fmax
+  if (out_of_range) &
+    print '(1x,a,i0,a,a,a,es13.6,a,es13.6)', "myrank is ", myrank, "  WARNING scalar out of [0,1]: ", trim(filename), &
+          "  min=", fmin, "  max=", fmax
 end subroutine sc_write
 
 
@@ -561,6 +579,138 @@ subroutine sc_step(myrank, nx, ny, nz, jacobian, Q_1, Q_2, Q_3, Q_4, Q_5)
 end subroutine sc_step
 
 
+!=====================================================================
+! このランクのGPUを選ぶ。main.f90のmygpuと同じ式(ノード内ランク/2 を GPU数で割った余り)。
+! モジュール変数のdevice配列(over_jacobian_tab, sigma_*, sc_*など)は GPU ごとに別のコピーが
+! あり、書き込んだ時点で選ばれている GPU のコピーに入る。本来の選択(check_gpu)は set_grid より
+! 後のRungeKutta内なので、複数GPUでは GPU 0 に表を書いて別のGPUで読むことになる。
+! そのため、表に書き込む前(set_grid の最初)に同じ GPU を選んでおく。GPU 1枚なら常に 0。
+!=====================================================================
+subroutine select_my_gpu()
+  use mpi
+  use cudafor
+  integer :: comm_node, rank_node, ndev, ierr, stat
+
+  call MPI_COMM_SPLIT_TYPE(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, comm_node, ierr)
+  call MPI_COMM_RANK(comm_node, rank_node, ierr)
+  call MPI_COMM_FREE(comm_node, ierr)
+  stat = cudaGetDeviceCount(ndev)
+  if (stat == 0 .and. ndev >= 1) stat = cudaSetDevice(mod(rank_node/2, ndev))
+end subroutine select_my_gpu
+
+
+!=====================================================================
+! 診断(最初の数回のset_bcだけ): CUDAエラー(カーネル起動失敗など)の報告、このランクの
+! GPU(型番とcc)、device表の中身(空でないか)を表示する。通常時は1行(GPUの情報)だけ出る。
+!=====================================================================
+subroutine diag_first_calls(myrank, nx, ny)
+  use cudafor
+  integer, intent(in), value :: myrank, nx, ny
+  integer :: stat, dev
+  type(cudaDeviceProp) :: prop
+  real(8) :: t
+
+  if (inlet_bc_calls > 7) return
+  stat = cudaDeviceSynchronize()
+  if (stat /= 0) print '(1x,a,i0,a,i0,a,a)', "myrank is ", myrank, "  CUDA error before set_bc call ", &
+                       inlet_bc_calls+1, ": ", trim(cudaGetErrorString(stat))
+  stat = cudaGetLastError()
+  if (stat /= 0) print '(1x,a,i0,a,i0,a,a)', "myrank is ", myrank, "  CUDA error before set_bc call ", &
+                       inlet_bc_calls+1, ": ", trim(cudaGetErrorString(stat))
+  if (inlet_bc_calls == 0) then
+    stat = cudaGetDevice(dev)
+    stat = cudaGetDeviceProperties(prop, dev)
+    t = over_jacobian_tab(nx/2, ny/2)
+    print '(1x,a,i0,a,i0,a,a,a,i0,a,i0,a,es10.3)', "myrank is ", myrank, "  set_bc runs on GPU ", dev, " (", &
+          trim(prop%name), ", cc ", prop%major, ".", prop%minor, ")  over_jacobian_tab sample =", t
+    if (.not. (t > 0.d0 .and. t < huge(1.d0))) print '(1x,a,i0,a)', "myrank is ", myrank, &
+          "  ERROR: the module device tables are empty on this GPU (they were written on another device)"
+  endif
+end subroutine diag_first_calls
+
+
+!=====================================================================
+! 配列中のNaN/Infの個数と、最初の(最小の線形番号の)位置を数える。
+!=====================================================================
+subroutine nan_scan(nx, ny, nz, Q, cnt, first)
+  integer, intent(in), value  :: nx, ny, nz
+  real(8), intent(in), device :: Q(nx,ny,nz)
+  integer, intent(out)        :: cnt, first
+  integer :: i, j, k, c, f, lin
+
+  c = 0
+  f = huge(1)
+  !$cuf kernel do(3)<<<*,*>>>
+  do k = 1, nz
+    do j = 1, ny
+      do i = 1, nx
+        if (.not. (abs(Q(i,j,k)) <= 1.d300)) then
+          c = c + 1
+          lin = i + nx*((j-1) + ny*(k-1))
+          f = min(f, lin)
+        endif
+  enddo;enddo;enddo
+  cnt = c
+  first = f
+end subroutine nan_scan
+
+
+!=====================================================================
+! NaN/Infの検査。見つけたら場所を表示して全ランクを強制終了する(MPI_ABORT)。
+! 最初の8回のset_bc(= 最初の2ステップ)は毎回、その後は nan_check_every ステップごとの
+! 4段目(Q^(n+1)になった時点)で、流れ場の保存変数5つと濃度xiを検査する。
+! nan_check_every = 0 なら検査しない。set_bcの入口で呼ぶので、直前のRK段の結果を見る。
+!=====================================================================
+subroutine check_nan_abort(myrank, nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5)
+  use mpi
+  use mod_globals, only : nan_check_every, inlet_rk_stages, dt
+  integer, intent(in), value  :: myrank, nx, ny, nz
+  real(8), intent(in), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+  integer :: m, cnt, first, ii, jj, kk, ierr, stage, step
+  logical :: bad
+  character(len=8) :: name
+
+  if (nan_check_every <= 0) return
+  stage = mod(inlet_bc_calls, inlet_rk_stages) + 1          ! この呼び出しが見るRK段の結果(1..4)
+  step  = inlet_bc_calls/inlet_rk_stages + 1                ! その段が属するステップ番号
+  if (inlet_bc_calls > 7) then
+    if (stage /= inlet_rk_stages) return
+    if (mod(step, max(nan_check_every, 1)) /= 0) return
+  endif
+
+  bad = .false.
+  do m = 1, 6
+    select case (m)
+    case (1); name = "Q_1";  call nan_scan(nx, ny, nz, Q_1, cnt, first)
+    case (2); name = "Q_2";  call nan_scan(nx, ny, nz, Q_2, cnt, first)
+    case (3); name = "Q_3";  call nan_scan(nx, ny, nz, Q_3, cnt, first)
+    case (4); name = "Q_4";  call nan_scan(nx, ny, nz, Q_4, cnt, first)
+    case (5); name = "Q_5";  call nan_scan(nx, ny, nz, Q_5, cnt, first)
+    case (6)
+      name = "xi"
+      cnt = 0;  first = huge(1)
+      if (allocated(sc_phi)) call nan_scan(nx, ny, nz, sc_phi, cnt, first)
+    end select
+    if (cnt > 0) then
+      bad = .true.
+      ii = mod(first-1, nx) + 1
+      jj = mod((first-1)/nx, ny) + 1
+      kk = (first-1)/(nx*ny) + 1
+      print '(1x,a,i0,a,i0,a,i0,a,i0,a,es10.3,a)', "myrank is ", myrank, "  NaN/Inf detected: step ", step, &
+            ", RK stage ", stage, " (set_bc call ", inlet_bc_calls+1, ", t = ", dble(step-1)*dt, " s)"
+      print '(1x,a,a,a,i0,a,i0,a,i0,a,i0,a,i0,a,i0)', "   array ", trim(name), ": ", cnt, " cells; first at local (i,j,k) = ", &
+            ii, ",", jj, ",", kk, "   (global i = ", ii + i_offset, ")"
+    endif
+  enddo
+  if (bad) then
+    print '(1x,a,i0,a)', "myrank is ", myrank, "  aborting all MPI ranks because of NaN/Inf"
+    call flush(6)
+    call MPI_ABORT(MPI_COMM_WORLD, 1, ierr)
+    stop 1
+  endif
+end subroutine check_nan_abort
+
+
 subroutine set_grid(myrank, nx, ny, nz, Lx, Ly, Lz, xc, yc, zc, dx, dy, dz)
   use mpi
   use mod_constant, only : id_accuracy
@@ -574,6 +724,9 @@ subroutine set_grid(myrank, nx, ny, nz, Lx, Ly, Lz, xc, yc, zc, dx, dy, dz)
   integer :: nt_suggest
   integer :: nranks, ierr
   character(len=64) :: rank_dir
+
+  ! 表(device配列)に書き込む前に、このランクのGPUを選ぶ(select_my_gpuの説明を参照)。
+  call select_my_gpu()
 
   ! set_gridは全ランクから呼ばれるので、ここでx分割の情報とコミュニケータを用意する。
   call MPI_COMM_SIZE(MPI_COMM_WORLD, nranks, ierr)
@@ -783,6 +936,37 @@ subroutine partitioned_axis(n, length, uniform_length, n_uniform, coord)
 end subroutine partitioned_axis
 
 
+!=====================================================================
+! Main-domain faces of the streamwise axis on [0, length]: a uniform inlet
+! section of n_uniform points (length uniform_length) followed by a section
+! whose widths grow downstream from the uniform spacing with a quintic
+! smoothstep (stretched_widths).  With n_uniform = 2 the uniform section is a
+! single cell of width uniform_length, i.e. the widths grow from the inflow face.
+!=====================================================================
+subroutine downstream_axis(n, length, uniform_length, n_uniform, coord)
+  use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
+  integer, intent(in) :: n, n_uniform
+  real(8), intent(in) :: length, uniform_length
+  real(8), intent(out) :: coord(n)
+  real(8) :: h, width(n)
+  integer :: m, j
+
+  if (n < 3 .or. n_uniform < 2 .or. n_uniform > n) error stop 'Invalid uniform point count (x)'
+  if (.not.ieee_is_finite(length) .or. .not.ieee_is_finite(uniform_length)) error stop 'Nonfinite x mesh length'
+  if (uniform_length <= 0.d0 .or. uniform_length > length) error stop 'Invalid uniform length (x)'
+  h = uniform_length / dble(n_uniform-1)
+  do j = 1, n_uniform
+    coord(j) = dble(j-1)*h
+  enddo
+  m = n - n_uniform
+  call stretched_widths(m, length-uniform_length, h, width(1:m))
+  do j = 1, m
+    coord(n_uniform+j) = coord(n_uniform+j-1) + width(j)
+  enddo
+  if (abs(coord(n)-length) > 1.d-11*length) error stop 'x main mesh length mismatch'
+end subroutine downstream_axis
+
+
 subroutine stretched_widths(n, length, h, width)
   integer, intent(in) :: n
   real(8), intent(in) :: length, h
@@ -853,7 +1037,7 @@ end subroutine buffer_faces
 subroutine set_grid_main_buffer(nx, ny, nz, Lx_main, Lx_buf,Ly_main, Ly_buf,Lz,&
   nx_main, nx_buf,ny_main, ny_buf,xc, yc, zc, dx, dy, dz)
 
-  use mod_globals, only : Ly_uniform, ny_uniform, Lz_uniform, nz_uniform
+  use mod_globals, only : Ly_uniform, ny_uniform, Lz_uniform, nz_uniform, dx_inlet
   integer, intent(in) :: nx, ny, nz
   real(8), intent(in) :: Lx_main, Lx_buf, Ly_main, Ly_buf, Lz
   integer, intent(in) :: nx_main, nx_buf, ny_main, ny_buf
@@ -867,14 +1051,13 @@ subroutine set_grid_main_buffer(nx, ny, nz, Lx_main, Lx_buf,Ly_main, Ly_buf,Lz,&
   integer :: i, j, k, ig
 
   !=================================================================
-  ! x: uniform main domain + outflow buffer (inflow end has no buffer)
+  ! x: main domain (widths growing downstream from dx_inlet, no uniform section) + outflow buffer
+  ! (inflow end has no buffer)
   !=================================================================
-  if (nx_main < 3 .or. Lx_main <= 0.d0) error stop 'Invalid uniform x mesh'
+  if (nx_main < 3 .or. Lx_main <= 0.d0) error stop 'Invalid x mesh'
   if (nxg /= nx_main+nx_buf+2) error stop 'nx_global must be nx_main+nx_buf+2'
   if (i_offset + nx > nxg) error stop 'x slab exceeds the global grid'
-  do i = 2, nx_main+1
-    x(i) = Lx_main*dble(i-2)/dble(nx_main-1)
-  enddo
+  call downstream_axis(nx_main, Lx_main, dx_inlet, 2, x(2:nx_main+1))
   dr = x(nx_main+1) - x(nx_main)
   call buffer_faces(x, nx_main+1, +1, nx_buf, 1.d0, Lx_buf, dr, r1_x)
   x(1)     = x(2) - (x(3)-x(2))
@@ -1100,6 +1283,8 @@ subroutine set_bc(myrank, nx, ny, nz, Jacobian, Q_1, Q_2, Q_3, Q_4, Q_5)
     ! point, N(0,1) samples are multiplied by
     ! inlet_fluctuation_rms*abs(u_init)*(1-tanh_y**2*tanh_z**2).
     !===================================================================
+    call diag_first_calls(myrank, nx, ny)
+    call check_nan_abort(myrank, nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5)
     ! RK4 stage of this call (1..4): RungeKutta calls set_bc once per stage.
     rk_stage = mod(inlet_bc_calls, inlet_rk_stages) + 1
 
@@ -1406,31 +1591,58 @@ subroutine set_bc(myrank, nx, ny, nz, Jacobian, Q_1, Q_2, Q_3, Q_4, Q_5)
     enddo;enddo;enddo
   end subroutine apply_stretched_z
 
+  !=====================================================================
+  ! LES: 渦粘性 mut と qc2 の境界。共有の set_bc_mut_common は全方向周期を仮定するので使わない。
+  !  x : 接続面は隣スラブの内部3面を受け取る(calc_mut は配列端のすぐ内側で低次の式に落ちるので、
+  !      受け取ると分割なしと同じ値になる)。物理端(先頭スラブの i=1、最終スラブの i=nx)は勾配ゼロ。
+  !  y, z : 両端は勾配ゼロ(このケースは全方向が非周期)。
+  ! 最後に、スカラーの乱流拡散用に mut を sc_mut へ保存する。
+  !=====================================================================
   subroutine set_bc_mut(nx, ny, nz, mut, qc2)
     integer, intent(in), value     :: nx, ny, nz
     real(8), intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
     integer :: i, j, k
+
+    call sc_exchange_x(nx, ny, nz, mut)
+    call sc_exchange_x(nx, ny, nz, qc2)
+
+    if (my_slab == 0) then
+      !$cuf kernel do(2)<<<*,*>>>
+      do k = 1, nz
+        do j = 1, ny
+          mut(1,j,k) = mut(2,j,k)
+          qc2(1,j,k) = qc2(2,j,k)
+      enddo;enddo
+    endif
+    if (my_slab == npx-1) then
+      !$cuf kernel do(2)<<<*,*>>>
+      do k = 1, nz
+        do j = 1, ny
+          mut(nx,j,k) = mut(nx-1,j,k)
+          qc2(nx,j,k) = qc2(nx-1,j,k)
+      enddo;enddo
+    endif
+
     !$cuf kernel do(2)<<<*,*>>>
-    do k = 2, nz-1
-      do j = 2, ny-1
-        mut(1,j,k) = mut(2,j,k); mut(nx,j,k) = mut(nx-1,j,k)
-        qc2(1,j,k) = qc2(2,j,k); qc2(nx,j,k) = qc2(nx-1,j,k)
-      enddo
-    enddo
-    !$cuf kernel do(2)<<<*,*>>>
-    do k = 2, nz-1
+    do k = 1, nz
       do i = 1, nx
-        mut(i,1,k) = mut(i,2,k); mut(i,ny,k) = mut(i,ny-1,k)
-        qc2(i,1,k) = qc2(i,2,k); qc2(i,ny,k) = qc2(i,ny-1,k)
-      enddo
-    enddo
+        mut(i,1,k)  = mut(i,2,k)
+        mut(i,ny,k) = mut(i,ny-1,k)
+        qc2(i,1,k)  = qc2(i,2,k)
+        qc2(i,ny,k) = qc2(i,ny-1,k)
+    enddo;enddo
+
     !$cuf kernel do(2)<<<*,*>>>
     do j = 1, ny
       do i = 1, nx
-        mut(i,j,1) = mut(i,j,2); mut(i,j,nz) = mut(i,j,nz-1)
-        qc2(i,j,1) = qc2(i,j,2); qc2(i,j,nz) = qc2(i,j,nz-1)
-      enddo
-    enddo
+        mut(i,j,1)  = mut(i,j,2)
+        mut(i,j,nz) = mut(i,j,nz-1)
+        qc2(i,j,1)  = qc2(i,j,2)
+        qc2(i,j,nz) = qc2(i,j,nz-1)
+    enddo;enddo
+
+    if (.not. allocated(sc_mut)) allocate(sc_mut(nx,ny,nz))
+    sc_mut = mut
   end subroutine set_bc_mut
 
 end module set
