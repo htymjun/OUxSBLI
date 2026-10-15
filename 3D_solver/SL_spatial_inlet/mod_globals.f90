@@ -10,10 +10,10 @@ module mod_globals
 
   ! mesh  
   ! delta_bl = 初期渦度厚さ delta_omega0 [m]。tanh(2(y-Ly/2)/delta_bl) の速度分布の最大勾配 = dU/delta_bl。
-  real(8), parameter :: delta_bl = 5.0d-5
+  real(8), parameter :: delta_bl = 5.0d-3
 
 
-  real(8), parameter :: Lx_main = 400*delta_bl
+  real(8), parameter :: Lx_main = 500*delta_bl
   real(8), parameter :: Lx_buf  = 100*delta_bl
   real(8), parameter :: Lx = Lx_main + Lx_buf 
   
@@ -24,7 +24,7 @@ module mod_globals
   real(8), parameter :: Lz = 10*delta_bl!40*delta_bl
 
   !格子のパラメータ
-  integer, parameter :: nx_main = 1424
+  integer, parameter :: nx_main = 1524
   integer, parameter :: nx_buf =  60
   ! x方向MPI分割: npx = xスラブ数(= 計算ランク数 = MPIランク数/2)。npx=1 は分割なし。
   ! nx はスラブ1枚の点数(接続側にゴースト3面)。(nx_global-6) が npx で割り切れること。
@@ -33,7 +33,7 @@ module mod_globals
   integer, parameter :: nx_global = nx_main + nx_buf + 2
   integer, parameter :: nx = (nx_global - 6)/npx + 6
   
-  integer, parameter :: ny_main = 210
+  integer, parameter :: ny_main = 512
   integer, parameter :: ny_buf =  32!14!24    
   integer, parameter :: ny = ny_main + 2*ny_buf + 2 
 
@@ -46,11 +46,11 @@ module mod_globals
   ! ny_uniformは両端を含む点数。ny_main-ny_uniform は偶数。
   ! バッファの長さ・点数は主計算領域の生成とは独立。
   real(8), parameter :: Ly_uniform = delta_bl          ! y中心を挟む一様領域の全幅 [m]
-  integer, parameter :: ny_uniform = 6                 ! y一様領域の格子生成点数 (間隔 delta_bl/4)
+  integer, parameter :: ny_uniform = 10                 ! y一様領域の格子生成点数 (間隔 delta_bl/4)
 
   ! nz は全体のz点数(周期、ゴースト3+3面を含む)。dz = Lz/(nz-6)。
   ! (z方向2分割のときの nz=32 [内部26面x2スラブ] と同じ格子が nz=58)
-  integer, parameter :: nz = 50 !200
+  integer, parameter :: nz = 100 !400
   integer, parameter :: rerank = 0
 
   type(dim3), parameter :: threadsE  = dim3(32,1,1)
@@ -74,7 +74,7 @@ module mod_globals
   real(8), parameter :: R     = 287.15d0
 
   ! passive scalar (mixture fraction xi: 1 in stream 1, 0 in stream 2), solved in set.f90
-  logical, parameter :: scalar_on = .true.          ! .false. -> no scalar, no extra cost
+  logical, parameter :: scalar_on = .false.!.true.          ! .false. -> no scalar, no extra cost
   real(8), parameter :: Sc        = 0.7d0           ! Schmidt number: rho*D = mu/Sc
   integer, parameter :: scalar_output_every = 1     ! write xi every this many flow outputs (nt steps each)
 
@@ -84,26 +84,14 @@ module mod_globals
   integer, parameter :: nan_check_every = 10
 
   real(8), parameter :: p    = 80.0d3
-  real(8), parameter :: M1   = 1.0d0
+  real(8), parameter :: M1   = 0.6667d0
   real(8), parameter :: T1   = 290d0
   real(8), parameter :: rho1 = p / (R * T1)
   real(8), parameter :: u1   = M1 * sqrt(gamma * R * T1)
-  real(8), parameter :: M2   = 0.6d0
+  real(8), parameter :: M2   = 0.2667d0
   real(8), parameter :: T2   = 290d0
   real(8), parameter :: rho2 = p / (R * T2)
   real(8), parameter :: u2   = M2 * sqrt(gamma * R * T2)
-
-!   ! initial condition
-!   real(8), parameter :: p    = 80d3
-!   ! M0.5
-!   real(8), parameter :: T1   = 290d0
-!   real(8), parameter :: rho1 = p / (R * T1)
-!   real(8), parameter :: u1   = 0.5d0 * sqrt(gamma * R * T1)
-!   ! M0.2
-!   real(8), parameter :: T2   = 290d0
-!   real(8), parameter :: rho2 = p / (R * T2)
-!   real(8), parameter :: u2   = 0.2d0 * sqrt(gamma * R * T2)
-!  !Mc = 1.1
 
   ! The initial field is unperturbed.  Velocity fluctuations are supplied
   ! continuously at the inlet by set_bc instead.
@@ -121,7 +109,7 @@ module mod_globals
   integer, parameter :: inlet_rk_stages = 4
   real(8), parameter :: CFL  = 0.1d0 !0.05d0
   ! dt は set_grid が表示する Suggested dt (対流CFL=0.1, 3方向合算) の少し下。Mc=0.3: 6.0d-10, Mc=0.8: 3.2d-10
-  real(8), parameter :: dt = 3.0d-10
+  real(8), parameter :: dt = 2.5E-08!3.0d-10
   real(8), parameter :: endT = 10.d0 * Lx / u2
   ! 出力回数 np、出力間隔 nt ステップ。np*nt*dt が endT (= 高速側の流入速度で10回通過する時間) になる。
   integer, parameter :: np = 1000!200
