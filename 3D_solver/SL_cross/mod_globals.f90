@@ -8,18 +8,18 @@ module mod_globals
   real(sp), parameter        :: threshold   = 0.9_sp !0.9_sp
   real(8), parameter         :: blt         = 0.d0
 
-  
+  real(8), parameter :: delta_bl = 2.0d-3
   ! mesh
-  real(8), parameter :: Lx_main = 300.d-3!200.d-3 !150.d-3 !200.d-3
-  real(8), parameter :: Lx_buf  = 100.d-3 !110.d-3 !100.d-3
+  real(8), parameter :: Lx_main = 400*delta_bl
+  real(8), parameter :: Lx_buf  = 50*delta_bl !110.d-3 !100.d-3
   real(8), parameter :: Lx = Lx_main + Lx_buf !200.d-3
   
-  real(8), parameter :: Ly_main = 40.d-3!80.d-3 !80
-  real(8), parameter :: Ly_buf  = 20.d-3 !80 
+  real(8), parameter :: Ly_main = 80*delta_bl
+  real(8), parameter :: Ly_buf  = 30*delta_bl
   real(8), parameter :: Ly = Ly_main + 2.0d0*Ly_buf!40.d-3
 
   ! z uses the same center-clustered mesh and stretched buffers as y.
-  real(8), parameter :: Lz_main = 40.d-3
+  real(8), parameter :: Lz_main = 80*delta_bl
   real(8), parameter :: Lz_buf = Ly_buf
   real(8), parameter :: Lz = Lz_main + 2.d0*Lz_buf
 
@@ -28,9 +28,9 @@ module mod_globals
   ! 粗くなる(一様区間なし。流入端の傾きは0)。終端の格子幅 = dx_inlet + 振幅で、
   ! 振幅 = (Lx_main - (nx_main-1)*dx_inlet) / ((nx_main-1)/2)。バッファはその幅から続けて伸長する。
   ! Lx_main を (nx_main-1)*dx_inlet より長くすること(現在の終端幅は約 2.4 mm = 流入端の4倍)。
-  real(8), parameter :: dx_inlet = 0.61d-3
-  integer, parameter :: nx_main = 198
-  integer, parameter :: nx_buf =  30!20  !30
+  real(8), parameter :: dx_inlet = 0.14d0*delta_bl
+  integer, parameter :: nx_main = 1720
+  integer, parameter :: nx_buf =  60!20  !30
   ! x方向MPI分割: npx = xスラブ数(= 計算ランク数 = MPIランク数/2)。npx=1 は分割なし。
   ! nx はスラブ1枚の点数(接続側にゴースト3面)。(nx_global-6) が npx で割り切れること。
   ! 実行は mpiexec -n 2*npx(set.f90 の set_grid が検査する)。
@@ -38,21 +38,20 @@ module mod_globals
   integer, parameter :: nx_global = nx_main + nx_buf + 2!438
   integer, parameter :: nx = (nx_global - 6)/npx + 6
   
-  integer, parameter :: ny_main = 128 !256 !192
-  integer, parameter :: ny_buf =  14     !15
+  integer, parameter :: ny_main = 351 !256 !192
+  integer, parameter :: ny_buf =  24     !15
   integer, parameter :: ny = ny_main + 2*ny_buf + 2 !130
 
- integer, parameter :: nz_main = 128
+ integer, parameter :: nz_main = 351
   integer, parameter :: nz_buf = ny_buf
   integer, parameter :: nz = nz_main + 2*nz_buf + 2
   integer, parameter :: rerank = 0
 
-  ! y/z main domain: uniform central section + stretched outer section.
-! *_uniform は両端を含む点数。ny_main-ny_uniform, nz_main-nz_uniform は偶数にすること。
-real(8), parameter :: Ly_uniform = 20.d-3   ! y中心の一様区間の全幅 [m]
-integer, parameter :: ny_uniform = 80       ! y一様区間の格子生成点数
-real(8), parameter :: Lz_uniform = Ly_uniform
-integer, parameter :: nz_uniform = ny_uniform
+  ! y/z主計算領域は sinh 写像: y = (Ly_main/2)*(1 + sinh(beta_y*s)/sinh(beta_y)), s=-1..1 を ny_main 点で等分。
+  ! 層の中心が最も細かく、外側へ滑らかに粗くなる(set.f90 の sinh_axis)。beta が大きいほど中心に集中する。
+  !   中心の格子幅 = Ly_main*beta_y/((ny_main-1)*sinh(beta_y))、端の格子幅 = 中心の格子幅*cosh(beta_y)
+  real(8), parameter :: beta_y = 3.0d0
+  real(8), parameter :: beta_z = beta_y
 
   type(dim3), parameter :: threadsE  = dim3(32,1,1)
   type(dim3), parameter :: threadsF  = dim3(32,4,1)
@@ -75,7 +74,7 @@ integer, parameter :: nz_uniform = ny_uniform
   real(8), parameter :: R     = 287.15d0
 
   ! passive scalar (mixture fraction xi: 1 in stream 1 [u1], 0 in stream 2 [u2]), solved in set.f90
-  logical, parameter :: scalar_on = .true.          ! .false. -> no scalar, no extra cost
+  logical, parameter :: scalar_on = .false.          ! .false. -> no scalar, no extra cost
   real(8), parameter :: Sc        = 0.7d0           ! Schmidt number: rho*D = mu/Sc
   integer, parameter :: scalar_output_every = 1     ! write xi every this many flow outputs (nt steps each)
 
@@ -85,20 +84,29 @@ integer, parameter :: nz_uniform = ny_uniform
   integer, parameter :: nan_check_every = 10
 
   ! initial condition
-  real(8), parameter :: p    = 80d3
-  ! M2
-  real(8), parameter :: M1 = 1.0d0
-  real(8), parameter :: T1   = 290
+  ! real(8), parameter :: p    = 80d3
+  ! ! M2
+  ! real(8), parameter :: M1 = 1.0d0
+  ! real(8), parameter :: T1   = 290
+  ! real(8), parameter :: rho1 = p / (R * T1)
+  ! real(8), parameter :: u1   = M1 * sqrt(gamma * R * T1)
+  ! ! M0.2
+  ! real(8), parameter :: M2 = 0.4d0
+  ! real(8), parameter :: T2   = 290
+  ! real(8), parameter :: rho2 = p / (R * T2)
+  ! real(8), parameter :: u2   = M2 * sqrt(gamma * R * T2)
+
+  real(8), parameter :: p    = 80.0d3
+  real(8), parameter :: M1   = 0.6667d0
+  real(8), parameter :: T1   = 290d0
   real(8), parameter :: rho1 = p / (R * T1)
   real(8), parameter :: u1   = M1 * sqrt(gamma * R * T1)
-  ! M0.2
-  real(8), parameter :: M2 = 0.4d0
-  real(8), parameter :: T2   = 290
+  real(8), parameter :: M2   = 0.2667d0
+  real(8), parameter :: T2   = 290d0
   real(8), parameter :: rho2 = p / (R * T2)
   real(8), parameter :: u2   = M2 * sqrt(gamma * R * T2)
-
  !Mc = 1.1
-  real(8), parameter :: delta_bl = 2.0d-3!4.0d0*0.988d-3 !1.0d-3 !2.0d-3
+  !4.0d0*0.988d-3 !1.0d-3 !2.0d-3
 
   ! The initial field is unperturbed.  Velocity fluctuations are supplied
   ! continuously at the inlet by set_bc instead.
@@ -119,7 +127,7 @@ integer, parameter :: nz_uniform = ny_uniform
   ! the local cell width (see set.f90).  Requires RK=4 and COMMZ=False.
   logical, parameter :: stretched_z_correction = .true.
   real(8), parameter :: CFL  = 0.1d0 !0.05d0
-  real(8), parameter :: dt =  8.20460E-009!.3727344786232972E-008!3.9757331116907360E-009 != 0.05d0 * (Lx / dble(nx-1)) / (u1 + 340.d0) !CFL * Lx / (dble(nx-1) * abs(u1))
+  real(8), parameter :: dt =  1.0E-008!.3727344786232972E-008!3.9757331116907360E-009 != 0.05d0 * (Lx / dble(nx-1)) / (u1 + 340.d0) !CFL * Lx / (dble(nx-1) * abs(u1))
   real(8), parameter :: endT = 10.d0 * Lx / u2
   integer, parameter :: np = 1000!500 !1000 !2000 !100
   integer, parameter :: nt = 1000!1000 !int(endT / (dble(np) * dt))
