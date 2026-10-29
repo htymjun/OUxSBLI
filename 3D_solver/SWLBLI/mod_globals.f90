@@ -11,9 +11,9 @@ module mod_globals
   real(8), parameter :: Ly = 56.d0 * blt !60!80!5
   real(8), parameter :: Lz = 4.d0 * blt !4!2  ! GLOBAL spanwise periodic span (see set_grid)
   ! DNS
-  integer, parameter :: nx = 257!2700 !1025!2900!257!257
-  integer, parameter :: ny = 480!480 !480!513!129!257
-  integer, parameter :: nz = 54!140 !54!140!33!9  ! planes per compute rank incl. 3+3 z ghosts -> nz-6 unique planes
+  integer, parameter :: nx = 2700 !1025!2900!257!257
+  integer, parameter :: ny = 480 !480!513!129!257
+  integer, parameter :: nz = 140 !54!140!33!9  ! planes per compute rank incl. 3+3 z ghosts -> nz-6 unique planes
   
   integer, parameter :: nre1 = 1
   integer, parameter :: nre2 = nx
@@ -36,8 +36,8 @@ module mod_globals
 
   ! time
   integer, parameter :: step_offset = 0
-  real(8), parameter :: endT  = 0.3d-2 !1.d-3
-  integer, parameter :: np    = 30 !100
+  real(8), parameter :: endT  = 0.24d-2 !1.d-3
+  integer, parameter :: np    = 24 !100
   real(8), parameter :: R     = 287.15d0
   real(8), parameter :: gamma = 1.4d0
   real(8), parameter :: M0    = 2.15d0
@@ -46,7 +46,7 @@ module mod_globals
   real(8), parameter :: T0    = 288.15d0
   real(8), parameter :: rho0  = p0 / (R * T0)
   real(8), parameter :: u0    = M0 * sqrt(gamma * R * T0)
-  real(8), parameter :: dt    = 5.d-9
+  real(8), parameter :: dt    = 4.d-9
   integer, parameter :: nt    = int(endT / (dble(np) * dt))
 
   ! physical properties
