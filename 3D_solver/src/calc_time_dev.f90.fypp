@@ -14,6 +14,14 @@
 #:if BC_FORCING and RESCALE
   #:stop 'BC_FORCING is only implemented for the RESCALE=False time loops (RK=3 and RK=4, with or without COMMZ)'
 #:endif
+#! TRACER=True: Lagrangian tracer particles (3D_solver/src/tracer.f90, which the
+#! case's CMakeLists.txt must add to CASE_EXTRA_SOURCES). Only SWLBLI uses it.
+#:if not defined('TRACER')
+  #:set TRACER = False
+#:endif
+#:if TRACER and (RK != 3 or RESCALE or COMMZ)
+  #:stop 'TRACER is only implemented for the RK=3, RESCALE=False, COMMZ=False time loop'
+#:endif
 module calc_time_dev
   use cudafor
   use mpi
@@ -29,6 +37,9 @@ module calc_time_dev
   use set
   use preprocess
   use print
+  #:if TRACER
+  use tracer
+  #:endif
   implicit none
   public RungeKutta
 contains
@@ -91,6 +102,9 @@ contains
       call pre_calc(nx, ny, nz, myrank, nranks, x, dx_cpu, y, dy_cpu, z, dz_cpu, Jacobian_cpu, Q, &
                     dtdxdy, dtdydz, dtdzdx, xix, etay, zetaz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, ke0, entropy0)
       QJ2_1 = QJ_1; QJ2_2 = QJ_2; QJ2_3 = QJ_3; QJ2_4 = QJ_4; QJ2_5 = QJ_5 ! initialize QJ2
+      #:if TRACER
+      call init_tracer(myrank, nranks, nx, ny, nz, x, y, z)
+      #:endif
 
 
     else
@@ -124,6 +138,10 @@ contains
         ! GPU-accelerated ranks perform time integration
         do t1 = 1, nt
           t_now = nt * (t2 - 1) + t1
+          #:if TRACER
+          ! tracer predictor with u^n
+          call tracer_predict(nx, ny, nz, QJ_1, QJ_2, QJ_3, QJ_4)
+          #:endif
           ! Step 1: Compute fluxes E, F, G from current state QJ
           call calc_EFG(nx, ny, nz, xix, etay, zetaz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
           ! Step 2a: TVD RK3 Stage 1 - compute Q(1), store in QJ2
@@ -140,6 +158,10 @@ contains
           call calc_EFG(nx, ny, nz, xix, etay, zetaz, Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
           call calc_step2_3<<<blocks,threads>>>(nx, ny, nz, 2.d0, 1.d0, 2.d0, one_third, dtdxdy, dtdydz, dtdzdx, E, F, G, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
           call set_bc(myrank, nx, ny, nz, ${bc_extra}$Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
+          #:if TRACER
+          ! tracer corrector with u^(n+1)
+          call tracer_correct(nx, ny, nz, QJ_1, QJ_2, QJ_3, QJ_4)
+          #:endif
         enddo
       endif
       if (mod(myrank, 2) == 0) then
@@ -150,6 +172,9 @@ contains
     enddo
 
     if (mod(myrank,2) == 0) then
+      #:if TRACER
+      call finalize_tracer()
+      #:endif
       deallocate(Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, &
                  QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, E, F, G, xix, etay, zetaz, Jacobian, dtdxdy, dtdydz, dtdzdx)
     endif

@@ -15,3 +15,5 @@
 #:set MPI = 'GPU'
 #! set_bc takes (x, z, phi_l_gpu, phi_m_gpu, t_now) for the blowing/suction strip
 #:set BC_FORCING = True
+#! Lagrangian tracer particles (3D_solver/src/tracer.f90; parameters trace_* in mod_globals.f90)
+#:set TRACER = True

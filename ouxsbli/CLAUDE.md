@@ -91,4 +91,5 @@ In `ouxsbli/tests/utils/`:
 
 Shared by the tests and the user-facing plotting scripts, in `ouxsbli/analysis/`:
 - `wall.py` — Sutherland viscosity, one-sided wall derivative, `compute_cf_cp()` / `wall_coeffs_from_vtr()`, `edge_state()`, `find_zero_crossings()`, `load_reference()`
+- `tracer_residual.py` — reads the SWLBLI tracer files `data/data_trace/P######.dat` (`TRACER=True`, see `3D_solver/CLAUDE.md`) and the flow snapshots, and reports how much of the initially tagged fluid (mass- and disturbance-weighted) remains in the domain and in the separation bubble
 - `blasius.py` — RK4-integrated Blasius similarity solution (`fprime()`, `eta()`, `cf_blasius()`); accurate to ~1e-5, unlike the coarse `fp_tab` in `src/set_compressible_bl.f90`, which is an IC seed only and deviates by up to 7%

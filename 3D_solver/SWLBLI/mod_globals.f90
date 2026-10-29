@@ -24,6 +24,16 @@ module mod_globals
   real(8), parameter :: Xsh  = 100.d0 * blt !80.d0 * blt  ! inviscid shock impingement point on the wall
   integer, parameter :: i_LE = nint(-x_in * dble(nx-1) / Lx) + 1 ! first no-slip wall point; leading edge stays at x ~ 0 for any nx
 
+  ! tracer particles (TRACER = True in config.fypp, see 3D_solver/src/tracer.f90)
+  ! seeded at the nodes i = i_LE..nx-1 (stride trace_si), j >= 2 with y <= trace_ymax
+  ! (stride trace_sj), k = 4..nz-3 (stride trace_sk); written every trace_nstep steps
+  logical, parameter :: trace_restart = .false. ! .true.: continue from recal/P00001.dat
+  real(8), parameter :: trace_ymax  = 2.d-3
+  integer, parameter :: trace_si    = 4
+  integer, parameter :: trace_sj    = 1
+  integer, parameter :: trace_sk    = 4
+  integer, parameter :: trace_nstep = 5000      ! 5000 * dt = 0.02 ms
+
   ! RTX 4090
   type(dim3), parameter :: threadsE  = dim3(128,1,1)
   type(dim3), parameter :: threadsF  = dim3(32,2,1)
@@ -36,8 +46,8 @@ module mod_globals
 
   ! time
   integer, parameter :: step_offset = 0
-  real(8), parameter :: endT  = 0.24d-2 !1.d-3
-  integer, parameter :: np    = 24 !100
+  real(8), parameter :: endT  = 0.23d-2 !1.d-3
+  integer, parameter :: np    = 23 !100
   real(8), parameter :: R     = 287.15d0
   real(8), parameter :: gamma = 1.4d0
   real(8), parameter :: M0    = 2.15d0

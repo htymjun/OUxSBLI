@@ -253,6 +253,16 @@ Rules that make this correct, and that any edit must preserve:
   `start_exchange_z` wraps the outer ranks periodically and `calc_conv_G_koff` always
   uses the `_in` z kernel.
 
+### SWLBLI: tracer particles (`TRACER`)
+
+`TRACER=True` (SWLBLI's `config.fypp`) advects Lagrangian particles with the resolved velocity to show that the fluid which carried the initial disturbance of `2D_solver/SBLI/convert_2d_to_3d.f90` leaves the domain and the separation bubble. `src/tracer.f90` (added through SWLBLI's `CASE_EXTRA_SOURCES`) seeds one particle per grid node `i = i_LE..nx-1`, `j >= 2` with `y <= trace_ymax`, `k = 4..nz-3` (strides `trace_si/sj/sk` in `mod_globals.f90`) and moves it with Heun's method: `tracer_predict` with `u^n` before the RK step, `tracer_correct` with `u^(n+1)` after the last `set_bc`. Velocity is `QJ_2..4/QJ_1` interpolated trilinearly (binary search in x and y, periodic z over the unique planes, plane `nz-2` being the image of plane 4); particles reflect at `y = 0` and are retired (status 1/2/3 with their exit time) past `x(nx)`, `y(ny)` or `x(1)`.
+
+* Output: `data/data_trace/P######.dat` (directory created by `init_tracer`) every `trace_nstep` steps (numbered `step/trace_nstep`, so independent of `nt`; note `int(endT/(np*dt))` can round down, e.g. 24999 for `endT=0.24d-2, np=24` but exactly 25000 for `endT=0.23d-2, np=23` — keep `trace_nstep` a divisor of `nt` so every flow snapshot has a particle file at the same step, and pass `--dt-flow nt*dt` to `tracer_residual.py`), `data/tracer.d` (counts per status), and `recal/P00001.dat` at the end of the run. `trace_restart=.true.` continues from that file; a 1000+1000-step split run reproduces a 2000-step run to the fp32 output rounding.
+* Only the `RK=3`, `RESCALE=False`, `COMMZ=False` loop has the hooks (fypp `#:stop` otherwise), and `init_tracer` aborts unless there are exactly 2 MPI ranks.
+* Cost: about 0.85 ns per particle per step on an RTX 4090, against about 6.4 ns per grid point for the flow, i.e. ~1% for the default 3.8×10⁶ particles on the 2700×480×140 grid. Each `P` file is ~75 MB.
+* Checked on a 257×129×22 copy of the case: free-stream particles move at `u0` to 4 digits; in `u = u0 + 50 sin(2πz/Lz)`, `w = -300 m/s` the particle `dx/dt` matches `u(z0)` within 1.5 m/s (linear-interpolation error at 16 planes per period) and `z` wraps through the periodic boundary exactly.
+* Post-processing: `python -m ouxsbli.analysis.tracer_residual data` (mass-weighted and disturbance-weighted fractions left in the domain, and the tagged-mass fraction of the bubble `<u>_z < 0`; see its docstring). Its bubble fraction is a particle-count estimate, so check that it is ≈1 at t = 0 before trusting it.
+
 ### SWLBLI: the blowing/suction strip (`BC_FORCING`)
 
 `BC_FORCING=True` only changes the `set_bc` *signature* (`(x, z, phi_l_gpu, phi_m_gpu, t_now)`); the strip itself is still commented out inside `SWLBLI/set.f90`. The phases are drawn once in `calc_time_dev` and `MPI_BCAST` so every rank sees the same `phi_l`/`phi_m`, and `t_now` is the step index, so all RK stages of a step share one forcing time (RK3 and RK4 alike). Four things to check before switching the strip on — all found by reading the code, none tested:

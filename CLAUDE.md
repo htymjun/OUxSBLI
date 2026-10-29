@@ -118,6 +118,7 @@ All compile-time scheme/method choices live in `<CASE>/config.fypp`. The fypp pr
 | `BC_Z` | `True`, `False` | Same for z |
 | `MPI` | `'CPU'`, `'GPU'` | COMMZ z-halo transport: stage through pinned host buffers (`'CPU'`, default, verified) or hand device buffers straight to a CUDA-aware MPI (`'GPU'` — only where a real multi-rank device-pointer exchange has been checked; see the COMMZ section of `3D_solver/CLAUDE.md`) |
 | `BC_FORCING` | `True`, `False` | `set_bc` takes extra `(x, z, phi_l_gpu, phi_m_gpu, t_now)` arguments for a time-dependent blowing/suction strip (SWLBLI only; default `False`; RK=3 and RK=4, with or without COMMZ; `RESCALE=True` unsupported) |
+| `TRACER` | `True`, `False` | Lagrangian tracer particles (`3D_solver/src/tracer.f90`, which the case's `CMakeLists.txt` must list in `CASE_EXTRA_SOURCES`; parameters `trace_*` in `mod_globals.f90`). SWLBLI only; default `False`; RK=3, `RESCALE=False`, `COMMZ=False`, 2 MPI ranks — see `3D_solver/CLAUDE.md` |
 
 ### mod_globals.f90 (grid, physical parameters, thread blocks)
 
