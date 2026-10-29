@@ -6,9 +6,9 @@ program convert_2d_to_3d
   real(8), parameter :: Ly = 56.d0 * blt
   real(8), parameter :: Lz = 4.d0 * blt   ! ★ スパン方向長さ（3D版mod_globalsのLzと一致させること）
   ! DNS
-  integer, parameter :: nx = 257
+  integer, parameter :: nx = 2700
   integer, parameter :: ny = 480
-  integer, parameter :: nz_new = 54
+  integer, parameter :: nz_new = 140
   integer, parameter :: nz_int = nz_new - 6   ! 1ランクあたりの内部平面数（ゴースト3枚ずつ除く）
   integer, parameter :: n_compute_ranks = 1   ! ★ 3D計算で使う計算ランク数（GPU数）に合わせる
   ! flat-plate geometry
@@ -17,8 +17,8 @@ program convert_2d_to_3d
   integer, parameter :: i_LE = nint(-x_in * dble(nx-1) / Lx) + 1
 
   ! --- 擾乱パラメータ ---
-  real(8), parameter :: eps      = 0.0001d0         ! 擾乱振幅（u0に対する比率などお好みで調整）
-  integer, parameter :: n_beta   = 3               ! スパン方向に入れる周期数（波数 = 2*pi*n_beta/Lz）
+  real(8), parameter :: eps      = 0.0001d-2         ! 擾乱振幅（u0に対する比率などお好みで調整）
+  integer, parameter :: n_beta   = 4               ! スパン方向に入れる周期数（波数 = 2*pi*n_beta/Lz）
   real(8), parameter :: pi       = 4.d0 * atan(1.d0)
   real(8), parameter :: delta99  = 1.d0 * blt      ! Xshでのδ99 = 1mm
   real(8), parameter :: y_center = 0.1d0 * delta99 ! 境界層中央付近に擾乱を集中
@@ -50,7 +50,7 @@ program convert_2d_to_3d
   open(10, file="recal/Q00001_nx257_np170_restart.dat", form="unformatted", access="stream", status="old")
   read(10) Q2d
   close(10)
-
+  !q = REAL(Q2d, kind=4)
   ! --- yグリッドをset_gridと同じ規約で再構築 ---
   tanh_s = tanh(s)
   do j = 1, ny
