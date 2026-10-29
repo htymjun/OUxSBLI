@@ -261,7 +261,7 @@ Rules that make this correct, and that any edit must preserve:
 * Only the `RK=3`, `RESCALE=False`, `COMMZ=False` loop has the hooks (fypp `#:stop` otherwise), and `init_tracer` aborts unless there are exactly 2 MPI ranks.
 * Cost: about 0.85 ns per particle per step on an RTX 4090, against about 6.4 ns per grid point for the flow, i.e. ~1% for the default 3.8×10⁶ particles on the 2700×480×140 grid. Each `P` file is ~75 MB.
 * Checked on a 257×129×22 copy of the case: free-stream particles move at `u0` to 4 digits; in `u = u0 + 50 sin(2πz/Lz)`, `w = -300 m/s` the particle `dx/dt` matches `u(z0)` within 1.5 m/s (linear-interpolation error at 16 planes per period) and `z` wraps through the periodic boundary exactly.
-* Post-processing: `python -m ouxsbli.analysis.tracer_residual data` (mass-weighted and disturbance-weighted fractions left in the domain, and the tagged-mass fraction of the bubble `<u>_z < 0`; see its docstring). Its bubble fraction is a particle-count estimate, so check that it is ≈1 at t = 0 before trusting it.
+* Post-processing: `cd data && python tracer_residual.py` (copy the self-contained script into `data/` first; `python -m ouxsbli.analysis.tracer_residual data` also works) (mass-weighted and disturbance-weighted fractions left in the domain, and the tagged-mass fraction of the bubble `<u>_z < 0`; see its docstring). Its bubble fraction is a particle-count estimate, so check that it is ≈1 at t = 0 before trusting it.
 
 ### SWLBLI: the blowing/suction strip (`BC_FORCING`)
 

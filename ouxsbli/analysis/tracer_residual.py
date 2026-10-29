@@ -24,11 +24,38 @@ bilinearly interpolated to its (x, y), is below the cut. The wall row j = 1
 carries no particles and is left out of the bubble mass. Only the rows
 y <= max(seed y) are read from each 3.6 GB snapshot (np.memmap).
 
-Typical use (run directory of the solver)::
+Usage
+-----
+The file needs only numpy (and matplotlib for the figure). Copy it into the
+solver output directory (Q#####.vtr there, particle files in data_trace/) and
+run it there::
 
-    python -m ouxsbli.analysis.tracer_residual data --out tracer_residual
+    cd data
+    python tracer_residual.py                     # all defaults
+    python tracer_residual.py --dt-flow 1e-4      # flow snapshot interval nt*dt [s]
+    python tracer_residual.py --yc 0.1e-3 --yw 0.03e-3 --u-cut 0 --out res_eps1e-6
+    python tracer_residual.py -h                  # this text and the defaults
 
-writes ``tracer_residual.dat`` and ``tracer_residual.png``.
+or from the repository root::
+
+    python -m ouxsbli.analysis.tracer_residual path/to/data
+
+Arguments:
+
+  data        output directory with Q#####.vtr and data_trace/P######.dat
+              (default: the current directory)
+  --dt-flow   time between flow snapshots, nt*dt of mod_globals.f90 [s]
+              (default 25000*4e-9 = 1e-4); Q#####.vtr is matched to a particle
+              file when their times agree to 1 % of this
+  --yc, --yw  y_center, y_width of the disturbance in convert_2d_to_3d.f90 [m]
+              (default 0.1e-3, 0.03e-3); only f_dist and f_dist_bub use them
+  --u-cut     the bubble is <u>_z below this [m/s] (default 0: reversed flow)
+  --out       prefix of the output <out>.dat and <out>.png, written in the
+              current directory (default tracer_residual)
+
+Needed: data_trace/P000000.dat and Q00000.vtr (t = 0); without the later
+Q#####.vtr the bubble columns are NaN. Columns of <out>.dat:
+t n_alive f_mass f_dist c_bub f_dist_bub bub_top.
 """
 
 import argparse
@@ -38,9 +65,39 @@ import re
 
 import numpy as np
 
-from .vtr_raw import _arrays, _header
-
 NG = 3  # ghost planes on each side in z
+_DTYPE = {"Float32": np.dtype("<f4"), "Float64": np.dtype("<f8")}
+
+
+# _header/_arrays are copies of ouxsbli/analysis/vtr_raw.py (see there for the
+# file layout), so that this script also runs on its own inside data/
+def _header(path, limit=65536):
+    with open(path, "rb") as f:
+        head = f.read(limit)
+    marker = head.find(b"<AppendedData")
+    if marker < 0:
+        raise ValueError(f"{path}: no <AppendedData> block in the first {limit} bytes")
+    start = head.find(b"_", marker)
+    if start < 0:
+        raise ValueError(f"{path}: no '_' payload marker")
+    return head[:marker].decode("ascii", "replace"), start + 1
+
+
+def _arrays(xml):
+    """[(name, dtype, ncomp, offset)] in file order; coordinates have name None."""
+    out = []
+    for tag in re.findall(r"<DataArray\b[^>]*/>", xml):
+        t = re.search(r'type="([^"]+)"', tag)
+        o = re.search(r'offset="\s*(\d+)"', tag)
+        if not t or not o:
+            continue
+        name = re.search(r'Name="([^"]+)"', tag)
+        ncomp = re.search(r'NumberOfComponents="\s*(\d+)"', tag)
+        out.append((name.group(1) if name else None,
+                    _DTYPE[t.group(1)],
+                    int(ncomp.group(1)) if ncomp else 1,
+                    int(o.group(1))))
+    return out
 
 
 def read_particles(path):
@@ -97,8 +154,12 @@ def bilinear(x, y, field, xs, ys):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("data", help="solver output directory with Q#####.vtr and data_trace/P######.dat")
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
+                                 epilog=__doc__[__doc__.index("Usage\n"):],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("data", nargs="?", default=".",
+                    help="solver output directory with Q#####.vtr and data_trace/P######.dat"
+                         " (default: the current directory)")
     ap.add_argument("--dt-flow", type=float, default=25000 * 4.0e-9,
                     help="time between flow snapshots [s] (nt*dt of mod_globals.f90)")
     ap.add_argument("--yc", type=float, default=0.1e-3, help="y_center of the disturbance [m]")
