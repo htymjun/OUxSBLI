@@ -5,7 +5,8 @@ The solver (3D_solver/src/tracer.f90) seeds Lagrangian particles at grid nodes
 of the disturbed boundary layer and writes ``data/data_trace/P######.dat`` every
 ``trace_nstep`` steps. Each particle stands for the fixed fluid mass
 ``m_p = rho(x_0) dV_0`` of the node it was seeded at (``dV_0`` = node control
-volume times the seeding strides), so sums of ``m_p`` are Lagrangian estimates
+volume times the seeding strides in x, y; in z the period over the seeded
+planes), so sums of ``m_p`` are Lagrangian estimates
 of a passive scalar ``c`` that was 1 in the seeded region at t = 0:
 
   f_mass(t)    tagged mass still in the domain / tagged mass at t = 0
@@ -186,7 +187,9 @@ def main(argv=None):
     dz = float(zg[NG + 1] - zg[NG])
     sk = int(round((zs[1] - zs[0]) / dz)) if zs.size > 1 else 1
     lz = (zg.size - 2 * NG) * dz
-    m_p = rho0[j0, i0] * node_widths(x)[i0] * si * node_widths(y)[j0] * dz * sk
+    # z weight lz / (number of seeded planes), not sk * dz: the nz-6 unique planes need
+    # not be a multiple of sk (134 planes, sk = 4 -> 34 * 4 = 136, +1.5 % in c_bub)
+    m_p = rho0[j0, i0] * node_widths(x)[i0] * si * node_widths(y)[j0] * lz / zs.size
     w_p = m_p * np.exp(-((p0["y"] - a.yc) / a.yw) ** 2) ** 2
     print(f"{p0['n']} particles, strides si={si} sk={sk}, seeded y <= {p0['y'].max()*1e3:.3f} mm,"
           f" reading rows j < {jmax} of the flow snapshots")
