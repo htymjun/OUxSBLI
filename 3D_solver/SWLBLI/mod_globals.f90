@@ -28,7 +28,7 @@ module mod_globals
   ! seeded at the nodes i = i_LE..nx-1 (stride trace_si), j >= 2 with y <= trace_ymax
   ! (stride trace_sj), k = 4..nz-3 (stride trace_sk); written every trace_nstep steps
   logical, parameter :: trace_restart = .false. ! .true.: continue from recal/P00001.dat
-  real(8), parameter :: trace_ymax  = 2.d-3
+  real(8), parameter :: trace_ymax  = 6.d-3     ! above the bubble (u < 0 up to y = 4.1 mm at t = 0)
   integer, parameter :: trace_si    = 4
   integer, parameter :: trace_sj    = 1
   integer, parameter :: trace_sk    = 4
