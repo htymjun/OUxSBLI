@@ -22,8 +22,8 @@ program convert_2d_to_3d
   real(8), parameter :: pi       = 4.d0 * atan(1.d0)
   real(8), parameter :: delta99  = 1.d0 * blt      ! Xshでのδ99 = 1mm
   real(8), parameter :: y_center = 0.1d0 * delta99 ! 境界層中央付近に擾乱を集中
-  real(8), parameter :: y_width  = 0.05d0 * delta99 ! 境界層厚みの広がり
-  real(8), parameter :: s        = 2.8d0           ! set_gridと同じtanhクラスタリング係数
+  real(8), parameter :: y_width  = 0.03d0 * delta99 ! 境界層厚みの広がり
+  real(8), parameter :: s        = 3.0d0           ! set_gridと同じtanhクラスタリング係数
 
   real(8), parameter :: R     = 287.15d0
   real(8), parameter :: gamma = 1.4d0
@@ -47,7 +47,7 @@ program convert_2d_to_3d
   allocate(ycoord(ny))
 
   ! --- 2次元のリスタートファイルを読み込み（全ランク共通の元データ） ---
-  open(10, file="recal/Q00001_nx257_np170_restart.dat", form="unformatted", access="stream", status="old")
+  open(10, file="recal/Q00001.dat", form="unformatted", access="stream", status="old")
   read(10) Q2d
   close(10)
   !q = REAL(Q2d, kind=4)
