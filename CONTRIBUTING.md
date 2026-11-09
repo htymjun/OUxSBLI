@@ -22,7 +22,7 @@ As a rule of thumb:
 
 ## Development workflow
 
-Create a focused branch from `stable`:
+Create a focused branch from `stable` for ordinary development:
 
 ```text
 stable
@@ -45,6 +45,27 @@ docs/installation
 ```
 
 Open a Pull Request against `stable` when the change is ready for review.
+The `stable` branch should remain the stable CUDA Fortran baseline.
+
+CUDA C porting work is handled separately:
+
+```text
+cuda-c-stable
+  |
+  +-- cuda-c-<name>
+```
+
+All branches for the `Porting to CUDA C` milestone must use the
+`cuda-c-*` naming pattern and open Pull Requests against `cuda-c-stable`, not
+`stable`. The CUDA C branch family must preserve the existing CUDA Fortran
+implementation while adding CUDA C paths alongside it. Duplicated build/test
+surfaces for CUDA Fortran and CUDA C are acceptable during the migration.
+
+For AI-assisted issue-driven development, use the OUxSBLI AI workflow in
+`docs/ai_development_workflow.md`. In short: issues hold the scientific and
+numerical decisions, AI assistants may propose and implement within the
+approved scope, and the human maintainer reviews unresolved choices before
+commit.
 
 ## Repository-specific development
 
@@ -123,6 +144,31 @@ AI-generated code must be reviewed and validated by the contributor.
 
 In particular, passing compilation or unit tests does not establish that a
 CFD implementation is physically or numerically correct.
+
+For issue-driven AI work:
+
+- Keep human-owned scientific and numerical choices in the issue.
+- Ask the AI for a plan before implementation when the change touches solver
+  behavior, validation tolerances, performance claims, or public API behavior.
+- Do not let the AI silently choose final boundary conditions, model constants,
+  default schemes, validation tolerances, or benchmark acceptance criteria.
+- For CUDA C migration work, split the milestone into a foundation issue and
+  child issues for fused kernels, build-system changes, validation reports,
+  translated kernel families, benchmarks, and documentation.
+- Use `cuda-c-*` branches and target `cuda-c-stable` for CUDA C migration PRs;
+  do not merge migration work directly into `stable`.
+- Keep the existing CUDA Fortran implementation available on `cuda-c-stable`
+  while CUDA C paths are introduced.
+- CUDA Fortran performance PRs merged into `stable` may trigger a CUDA C
+  carry-over issue when they carry a performance-style label, a `perf:` commit,
+  a `perf:` PR title, or a `perf/*` branch name. The follow-up issue evaluates
+  usefulness for `cuda-c-stable`; it does not imply automatic porting.
+- The CUDA C milestone starts from the current CUDA Fortran `stable` baseline.
+  The historical `CUDA_C_JAX_Python` branch is out of scope; reusing code or
+  structure from it requires a decision recorded in an issue first.
+- Include human-readable validation evidence in issues and PRs; pytest output
+  alone is not sufficient for solver-behavior changes.
+- Review the final diff and validation evidence before committing.
 
 ## Commit messages
 

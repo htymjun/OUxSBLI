@@ -15,6 +15,12 @@ This file covers project-wide concerns. Solver-specific detail lives in nested `
 - `2D_solver/CLAUDE.md` — 2D cases, and the BL/SBLI shared flat-plate setup with the boundary-condition/tuning lessons learned
 - `ouxsbli/CLAUDE.md` — Python test suite, analytical helpers, post-processing utilities
 
+Process rules for issue-driven work with an AI assistant live in
+`docs/ai_development_workflow.md`: issue states, human decision gates, required
+validation evidence, and the branch/milestone policy for the `Porting to CUDA C`
+milestone (`cuda-c-*` branches, PRs against `cuda-c-stable`). Read it before
+implementing work that is tracked by an issue.
+
 ## Build & Run
 
 All work happens inside a specific test-case directory. There is no top-level build.
