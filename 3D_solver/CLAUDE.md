@@ -7,6 +7,7 @@ This file documents the 3D Cartesian solver. See the repository root `CLAUDE.md`
 | Template (in `src/` or `3D_solver/src/`) | Purpose |
 |------------------------------------------|---------|
 | `src/mod_constant.f90.fypp` | Kind-dispatch Fortran parameters from config values |
+| `src/calc_weno.f90.fypp` | WENO5-Z face reconstruction (FP64, W32P64), called by `calc_muscl`'s `delta6` when `RECON='WENO'` |
 | `3D_solver/src/calc_flux_base.f90.fypp` | Top-level flux dispatcher (convective + viscous) |
 | `3D_solver/src/calc_time_dev.f90.fypp` | RK time-stepping orchestration |
 | `3D_solver/src/calc_para.f90.fypp` | MPI halo exchange: x-direction pack/unpack and the COMMZ z-halo `start_exchange_z`/`finish_exchange_z` (`MPI='CPU'` host staging or `MPI='GPU'` CUDA-aware) |
@@ -133,6 +134,68 @@ python -m ouxsbli.analysis.tbl_stats report tbl_acc.npz
 | Hybrid (KEEP↔SLAU via Ducros sensor) | `calc_hybrid_kernel.f90.fypp`, `calc_hybrid_kernel_internal.f90.fypp` | Mixed smooth/shocked regions |
 
 Viscous discretization: `calc_visc2.f90.fypp` (Gaitonde & Visbal 2nd-order, `VISC_ORDER=2`) or `calc_visc_high.f90.fypp` + `calc_visc_high_internal.f90.fypp` (4th/6th-order, `VISC_ORDER=4` or `6`).
+
+### WENO5-Z reconstruction and the LF flux (`RECON`, `WENO_PREC`, `RIEMANN`)
+
+Shared by `2D_solver` and `3D_solver`; not wired into `3D_solver_curv`.
+
+**Where the code lives.** No convective kernel was edited. `delta6(sensor, a(6), al, ar)` in
+`src/calc_muscl.f90.fypp` already has WENO5's geometry: the face lies between `a(3)` and `a(4)`,
+`al` comes from `a(1..5)` and `ar` from `a(2..6)`. With `RECON='WENO'`, its body calls
+`weno5z_fp64` or `weno5z_w32p64` from `src/calc_weno.f90.fypp`. Every SLAU-family kernel that
+calls `delta6` therefore reconstructs with WENO:
+- `calc_slau_kernel[_internal]`;
+- the fused `calc_slau_visc_kernel`;
+- the SLAU branch of `calc_hybrid_kernel[_internal]`.
+
+`RIEMANN='LF'` makes `id_slau` an `integer(8)`. That selects `LFflux`, a local Lax-Friedrichs
+(Rusanov) flux in `src/calc_scheme_math.f90.fypp`, through the existing `interface SLAU` blocks.
+`HR` (the wiggle detector) is ignored, and `c` is not scaled by a metric because the Cartesian
+`Normal_*` are unit vectors. That is also why `LFflux` is deliberately absent from the
+`3D_solver_curv` interfaces: `RIEMANN='LF'` fails to compile there instead of silently using a
+non-unit normal.
+
+`mod_constant.f90.fypp` stops the build when:
+- `RECON='WENO'` is used without `ORDER=6`;
+- `RECON='WENO'` or `RIEMANN='LF'` is used with `SCHEME='KEEP'`.
+
+**Near walls (`BC_*=True`).** WENO applies only where `delta6` was used. Faces 2 and n−2 stay
+MUSCL3rd via `delta4`, so `TVD` still matters there. Faces 1 and n−1 stay first order.
+
+**W32P64 is not WENO_ILP's arithmetic verbatim.** The verbatim port narrows the stencil values to
+FP32 and combines with `Σ w_k p_k`. That has an absolute error floor of about 6e-8·|v|, because
+the separately rounded FP32 weights do not sum to 1. On exact cell averages it stalled at ~1e-7
+(O(1) data) and 7.5e-3 (1e5 + 1e-2·sin). On 2D EVC it gave L2 ≈ 6e-8 at every grid. The
+shipped version makes two changes:
+- it builds the betas from **FP64 first differences narrowed to FP32**;
+- it combines as **`p0 + w1(p1−p0) + w2(p2−p0)`**.
+
+With both, it matches FP64 to the printed digits, at 5th order on both biases and on EVC. The
+`calc_weno.f90.fypp` header has the measurements and the SASS counts. On the 2D `calc_slau_x_in`,
+FP64 WENO takes 4096 instructions, 36 CALLs; W32P64 takes 2504, the same 8 CALLs as MUSCL.
+
+FP32 rules carried over from WENO_ILP:
+- the ratio cap;
+- unbatched FP32 ratios;
+- mirrored right-bias linear weights;
+- the approximate reciprocal for FP32 only.
+
+`__fdividef` compiles to `MUFU.RCP + FMUL` without range guards, because `-fast` already makes
+FP32 flush-to-zero. Do not add a fast-math flag.
+
+**Expected order on smooth flow.** The SLAU/LF kernels reconstruct primitive *point* values and
+then evaluate a nonlinear flux. That leaves an O(h²) error whatever the reconstruction. On 2D
+EVC at n=256, FP64 WENO + SLAU gives 3.9528e-10 and MUSCL + SLAU gives 3.9526e-10. Measured
+orders over 64/128/256:
+
+| configuration | order |
+|---|---|
+| WENO + LF | 3.47 |
+| WENO + SLAU | 3.18 |
+| MUSCL + SLAU | 1.79 |
+
+The reconstruction alone is 5th order: see `ouxsbli/tests/test_weno.py`, which gates that
+together with FP64 WENO + LF on EVC and the OS shock.
 
 ## Cell-Center Velocity Gradients (`ux`, `vy`, `wz`)
 

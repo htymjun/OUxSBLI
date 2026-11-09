@@ -25,7 +25,7 @@ macro(add_ouxsbli_2d_case)
   set(FYPP_FLAGS "-I${_CASE_DIR}" "-DDIM=2")
 
   # mod_constant/print come from the shared src/ (../../src relative to case dir)
-  set(_PARENT_FYPP "mod_constant" "calc_muscl" "print")
+  set(_PARENT_FYPP "mod_constant" "calc_weno" "calc_muscl" "print")
   # calc_flux_base is the only fypp template in 2D_solver/src/
   set(_SHARED_FYPP
       "calc_flux_base"

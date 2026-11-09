@@ -42,7 +42,7 @@ module calc_hybrid_kernel
   end interface KEEP
 
   interface SLAU
-    module procedure SLAU1, HRSLAU2
+    module procedure SLAU1, HRSLAU2, LFflux
   end interface SLAU
 contains
   include 'calc_scheme_math.f90'

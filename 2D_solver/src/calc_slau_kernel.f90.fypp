@@ -20,7 +20,7 @@ module calc_slau_kernel
   real(8), parameter :: seven_twelfth = 7.d0 / 12.d0
 
   interface SLAU
-    module procedure SLAU1, HRSLAU2
+    module procedure SLAU1, HRSLAU2, LFflux
   end interface SLAU
 contains
   include 'calc_scheme_math.f90'

@@ -3,6 +3,13 @@
 #:set ORDER         = 6
 #:set TVD           = 'none'
 #:set SLAU_VARIANT  = 'HRSLAU2'
+#! RECON: SLAU-family face reconstruction, 'MUSCL' (delta6/delta4) or 'WENO'
+#! (WENO5-Z in delta6, src/calc_weno.f90.fypp; needs ORDER=6).
+#! WENO_PREC: 'FP64' or 'W32P64' (FP32 weights with approximate reciprocal,
+#! FP64 polynomials). RIEMANN: 'SLAU' (SLAU_VARIANT) or 'LF' (local Lax-Friedrichs).
+#:set RECON         = 'MUSCL'
+#:set WENO_PREC     = 'FP64'
+#:set RIEMANN       = 'SLAU'
 #:set RESCALE       = False
 #:set RESTART       = False
 #:set RK            = 4

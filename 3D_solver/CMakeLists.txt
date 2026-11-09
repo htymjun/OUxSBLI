@@ -28,7 +28,7 @@ macro(add_ouxsbli_case)
   endif()
   set(FYPP_FLAGS "-I${_CASE_DIR}" "-I${CMAKE_CURRENT_SOURCE_DIR}/../src" "-DDIM=3")
 
-  set(_PARENT_FYPP "mod_constant" "calc_muscl" "print")
+  set(_PARENT_FYPP "mod_constant" "calc_weno" "calc_muscl" "print")
   set(_SHARED_FYPP
       "calc_visc2"
       "calc_visc_high"

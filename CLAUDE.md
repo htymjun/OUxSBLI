@@ -124,6 +124,9 @@ All compile-time scheme/method choices live in `<CASE>/config.fypp`. The fypp pr
 | `BC_Z` | `True`, `False` | Same for z |
 | `MPI` | `'CPU'`, `'GPU'` | COMMZ z-halo transport: stage through pinned host buffers (`'CPU'`, default, verified) or hand device buffers straight to a CUDA-aware MPI (`'GPU'` — only where a real multi-rank device-pointer exchange has been checked; see the COMMZ section of `3D_solver/CLAUDE.md`) |
 | `BC_FORCING` | `True`, `False` | `set_bc` takes extra `(x, z, phi_l_gpu, phi_m_gpu, t_now)` arguments for a time-dependent blowing/suction strip (SWLBLI only; default `False`; RK=3 and RK=4, with or without COMMZ; `RESCALE=True` unsupported) |
+| `RECON` | `'MUSCL'`, `'WENO'` | SLAU-family face reconstruction: MUSCL (`delta6`/`delta4`, default) or WENO5-Z in `delta6` (`src/calc_weno.f90.fypp`; needs `ORDER=6` and `SCHEME='SLAU'`/`'Hybrid'`; `TVD` then only affects the near-wall `delta4` faces) |
+| `WENO_PREC` | `'FP64'`, `'W32P64'` | WENO5-Z precision placement: all FP64 (IEEE division), or W32P64 — FP32 smoothness indicators/weights with the approximate reciprocal, FP64 polynomials and combine (after `WENO_ILP`'s `Recon<3,P,RecipRcp>`, with two accuracy fixes; see the WENO section of `3D_solver/CLAUDE.md`) |
+| `RIEMANN` | `'SLAU'`, `'LF'` | Face flux of the SLAU-family kernels: SLAU (`SLAU_VARIANT`, default) or local Lax-Friedrichs/Rusanov (`LFflux` in `src/calc_scheme_math.f90.fypp`; `id_slau` becomes `integer(8)`). Not wired into `3D_solver_curv` |
 
 ### mod_globals.f90 (grid, physical parameters, thread blocks)
 
@@ -141,7 +144,7 @@ This file is **not** preprocessed by fypp. It holds:
 | `id_visc` (integer) | Euler | NS | LES |
 | `id_accuracy` (integer) | 2nd order | 4th order | 6th order |
 | `id_tvd` (integer) | no TVD | tvd | hybrid |
-| `id_slau` (integer) | SLAU | HRSLAU2 | — |
+| `id_slau` (integer) | SLAU | HRSLAU2 | LF (`RIEMANN='LF'`) |
 | `id_rescale` (integer) | off | on | — |
 | `id_scheme` | integer(2)=KEEP | real(2)=SLAU | real(8)=Hybrid |
 | `id_bc_x/y/z` (integer) | periodic | wall/inflow | — |

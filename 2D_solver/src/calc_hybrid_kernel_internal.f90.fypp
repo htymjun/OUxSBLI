@@ -31,7 +31,7 @@ module calc_hybrid_kernel_internal
   end interface KEEP
 
   interface SLAU
-    module procedure SLAU1, HRSLAU2
+    module procedure SLAU1, HRSLAU2, LFflux
   end interface SLAU
 
   interface delta_r

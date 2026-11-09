@@ -23,6 +23,14 @@ The 2D solver uses CMake (like 3D); `2D_solver/src/calc_flux_base.f90.fypp` is p
 | ST   | Sod shock tube |
 | SWLBLI | 2D precursor of `3D_solver/SWLBLI`: oblique shock / laminar BL interaction (M=2.15, β=32.72°, p_tot=100 kPa, Xsh=100 mm, 2700×480, SLAU) — see below |
 
+## WENO5-Z and Lax-Friedrichs
+
+`RECON='WENO'`, `WENO_PREC='FP64'|'W32P64'` and `RIEMANN='SLAU'|'LF'` work here exactly as in
+3D. The SLAU-family kernels call the shared `delta6` / `interface SLAU`, so no 2D-specific code
+exists. See the WENO section of `3D_solver/CLAUDE.md`.
+
+`EVC` and `OS` carry the three lines in their `config.fypp`, so `Case()` can patch them.
+
 ## BL and SBLI: Shared Flat-Plate Setup
 
 BL and SBLI share the same flat-plate setup: a uniform freestream over a

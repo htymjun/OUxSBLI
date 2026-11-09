@@ -43,6 +43,9 @@ _ALIAS = {
     "bc_y":       "BC_Y",
     "commz":      "COMMZ",
     "output_precision": "OUTPUT_PRECISION",
+    "recon":      "RECON",
+    "weno_prec":  "WENO_PREC",
+    "riemann":    "RIEMANN",
 }
 
 # ---------------------------------------------------------------------------
@@ -55,6 +58,9 @@ _VALUE_NORMALIZE: dict[str, dict[str, str]] = {
     "TVD":          {"none": "none", "tvd": "tvd", "hybrid": "hybrid",
                      "minmod": "tvd", "muscl4": "hybrid"},  # backward-compat aliases
     "SLAU_VARIANT": {"slau": "SLAU", "hrslau2": "HRSLAU2"},
+    "RECON":        {"muscl": "MUSCL", "weno": "WENO"},
+    "WENO_PREC":    {"fp64": "FP64", "w32p64": "W32P64"},
+    "RIEMANN":      {"slau": "SLAU", "lf": "LF"},
 }
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,33 @@
 #:if not defined('FLTFLT_FORK')
   #:set FLTFLT_FORK = False
 #:endif
+#:if not defined('RECON')
+  #:set RECON = 'MUSCL'
+#:endif
+#:if not defined('WENO_PREC')
+  #:set WENO_PREC = 'FP64'
+#:endif
+#:if not defined('RIEMANN')
+  #:set RIEMANN = 'SLAU'
+#:endif
+#:if RECON not in ('MUSCL', 'WENO')
+  #:stop "RECON must be 'MUSCL' or 'WENO'"
+#:endif
+#:if WENO_PREC not in ('FP64', 'W32P64')
+  #:stop "WENO_PREC must be 'FP64' or 'W32P64'"
+#:endif
+#:if RIEMANN not in ('SLAU', 'LF')
+  #:stop "RIEMANN must be 'SLAU' or 'LF'"
+#:endif
+#:if RECON == 'WENO' and ORDER != 6
+  #:stop 'RECON=WENO (WENO5-Z, 6-point window) needs ORDER=6'
+#:endif
+#:if RECON == 'WENO' and SCHEME not in ('SLAU', 'Hybrid')
+  #:stop 'RECON=WENO only affects the SLAU-family face reconstruction: needs SCHEME=SLAU or Hybrid'
+#:endif
+#:if RIEMANN == 'LF' and SCHEME not in ('SLAU', 'Hybrid')
+  #:stop 'RIEMANN=LF replaces the SLAU face flux: needs SCHEME=SLAU or Hybrid'
+#:endif
 module mod_constant
   use cudafor
   use mod_globals, only : R, gamma, Pr, dimension
@@ -96,7 +123,9 @@ module mod_constant
   #:elif TVD == 'hybrid'
   integer(8), parameter :: id_tvd = 0
   #:endif
-  #:if SLAU_VARIANT == 'SLAU'
+  #:if RIEMANN == 'LF'
+  integer(8), parameter :: id_slau = 0  ! local Lax-Friedrichs (LFflux) instead of SLAU
+  #:elif SLAU_VARIANT == 'SLAU'
   integer(2), parameter :: id_slau = 0
   #:elif SLAU_VARIANT == 'HRSLAU2'
   integer(4), parameter :: id_slau = 0
