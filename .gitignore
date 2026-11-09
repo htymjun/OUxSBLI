@@ -40,3 +40,6 @@ nohup.out
 !2D_solver/*/ref/*.py
 *.log
 *.npz
+# test_tbl.py reads its committed moment file from here
+!ouxsbli/tests/data/
+!ouxsbli/tests/data/*.npz

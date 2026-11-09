@@ -59,8 +59,8 @@ main.f90
 | NSTGV| NS Taylor-Green vortex |
 | OS   | Quasi-2D oblique shock + wall reflection (extrudes 2D_solver/OS through a thin periodic z; validated vs. Rankine-Hugoniot) |
 | SBLI | Shock-boundary layer interaction (RESCALE=True) |
-| STZ  | z-direction halo exchange validation (COMMZ=True, BC_Z=True) |
-| SWLBLI | Oblique-shock / laminar flat-plate boundary-layer interaction, M=2.15 (NS, Hybrid, ORDER=6, BC_X=BC_Y=True, periodic z); the only NS case that can run with `COMMZ=True` (`MPI='GPU'`) — see the COMMZ section below. `BC_FORCING=True`: its `set_bc` takes `(x, z, phi_l_gpu, phi_m_gpu, t_now)` for a blowing/suction strip (currently commented out inside `set_bc`) |
+| STZ  | z-direction halo exchange validation: viscous Sod shock tube along z, same physical state as 2D_solver/ST (NS, KEEP, ORDER=4, COMMZ=True, `MPI='GPU'`, BC_Z=True) |
+| SWLBLI | Oblique-shock / laminar flat-plate boundary-layer interaction, M=2.15, β=32.72°, Xsh=100 mm (NS, SLAU, ORDER=6, BC_X=BC_Y=True, periodic z). Runs with `RESTART=True`: the initial field is the converged 2D solution of `2D_solver/SWLBLI`, extruded in z by that case's `convert_2d_to_3d[_2].f90` (see `2D_solver/CLAUDE.md`), so a fresh clone needs that 2D run first. It is the only NS case that can run with `COMMZ=True` (`MPI='GPU'`) — see the COMMZ section below. `BC_FORCING=True`: its `set_bc` takes `(x, z, phi_l_gpu, phi_m_gpu, t_now)` for a blowing/suction strip (currently commented out inside `set_bc`) |
 | SWTBLI | Oblique-shock / turbulent boundary-layer interaction (rescaling inflow, RESCALE branch of `calc_time_dev`) |
 | TBL  | Supersonic turbulent boundary layer, M=2.5 adiabatic wall (NS, KEEP, ORDER=6, RESCALE=True); validated against Guarini et al. (2000) — see the TBL notes below |
 
@@ -259,7 +259,7 @@ Rules that make this correct, and that any edit must preserve:
 
 * `h_t` sums `sin(beta_force*t + 2π φ_m)` over `m = m_min..m_max` **without a `dble(m)` factor**, unlike `g_z` which does carry `dble(l)`; as written every temporal mode has the same frequency and the sum collapses to a single sine.
 * `beta_force = 75000` is commented `(Hz)` but enters as `sin(β t)`, i.e. 75000 rad/s ≈ 11.9 kHz — multiply by 2π if Hz was meant.
-* Spanwise modes `l = 12..24` need a span that resolves them: at the current `Lz = 0.5·blt` with `nz-6` planes per rank their wavelengths are far below `dz`.
+* Spanwise modes `l = 12..24` need a span that resolves them: at the current `Lz = 4·blt` with `nz-6 = 134` planes per compute rank, `l = 24` has a wavelength of `Lz/24 ≈ 5.6·dz` on one compute rank — resolved, but only marginally for a 6th-order stencil.
 * `Z_l`, `T_m`, `xs_gpu`, `zs_gpu` are rebuilt and copied host→device inside `set_bc`, i.e. once per RK stage, although only `t_now` changes between calls.
 
 ## Adding a New Test Case
@@ -275,7 +275,7 @@ Rules that make this correct, and that any edit must preserve:
 * From an occupancy perspective, the subroutines invoked within `calc_flux_base.f90` should not be executed on separate streams.
 * `calc_flux_base.f90` and `calc_steps.f90` are the main bottleneck. You should optimize them. `calc_flux_base.f90` calls `calc_*_kernel.f90`, `calc_*_kernel_internal.f90`, `calc_visc*.f90`, and `calc_div.f90` (runs once per RK stage, right after `calc_quantities_T_3D`, for `VISC_ORDER>2`).
 * Roe scheme is not used. KEEP, SLAU, Hybrid schemes should be optimized.
-* STZ case exists specifically to validate the z-direction halo exchange (COMMZ=True, BC_Z=True, Euler, 2nd order). The 6th-order NS path is exercised by SWLBLI with `COMMZ=True`; see the COMMZ section above.
+* STZ case exists specifically to validate the z-direction halo exchange (COMMZ=True, BC_Z=True; currently NS, KEEP, 4th order, `MPI='GPU'`). The 6th-order NS path is exercised by SWLBLI with `COMMZ=True`; see the COMMZ section above.
 * `calc_time_dev.f90.fypp`'s RK3 and RK4 loops (with and without COMMZ) call `set_bc` with the extra `(x, z, phi_l_gpu, phi_m_gpu, t_now)` arguments only when the case's `config.fypp` sets `BC_FORCING = True` (SWLBLI); every other case keeps the plain signature. Adding a case-specific argument to `set_bc` again must go through such a flag, or every other 3D case stops compiling.
 * `RESTART=True` + `RESCALE=True` used to abort on startup: `pre_rescale`
   (`preprocess.f90.fypp`) requires `recal/Qm.dat`, but `write_Qm` — the only routine

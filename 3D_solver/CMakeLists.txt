@@ -96,7 +96,6 @@ macro(add_ouxsbli_case)
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_hybrid.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_steps.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_rescale.f90"
-      #"${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_para.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/set_bc_common.f90")
 
   get_filename_component(_CASE "${CMAKE_CURRENT_SOURCE_DIR}" NAME)
