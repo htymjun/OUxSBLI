@@ -28,7 +28,7 @@ macro(add_ouxsbli_case)
   endif()
   set(FYPP_FLAGS "-I${_CASE_DIR}" "-I${CMAKE_CURRENT_SOURCE_DIR}/../src" "-DDIM=3")
 
-  set(_PARENT_FYPP "mod_constant" "calc_muscl" "print")
+  set(_PARENT_FYPP "mod_constant" "calc_weno" "calc_muscl" "print")
   set(_SHARED_FYPP
       "calc_visc2"
       "calc_visc_high"
@@ -44,6 +44,7 @@ macro(add_ouxsbli_case)
       "calc_hybrid_kernel_internal"
       "calc_flux_base"
       "calc_time_dev"
+      "calc_para"
       "preprocess")
 
   # calc_scheme_math.f90.fypp is include'd as raw text (no `module` wrapper) by
@@ -95,7 +96,6 @@ macro(add_ouxsbli_case)
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_hybrid.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_steps.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_rescale.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_para.f90"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/set_bc_common.f90")
 
   get_filename_component(_CASE "${CMAKE_CURRENT_SOURCE_DIR}" NAME)

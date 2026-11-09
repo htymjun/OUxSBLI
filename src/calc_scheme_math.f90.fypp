@@ -337,3 +337,49 @@
   #:endif
     end block
   end subroutine HRSLAU2
+
+
+  !> Local Lax-Friedrichs (Rusanov) flux, selected by RIEMANN = 'LF' in
+  !> config.fypp (mod_constant makes id_slau integer(8)). Same argument list as
+  !> SLAU1/HRSLAU2, so it is one more procedure of every module's
+  !> `interface SLAU`; HR (the wiggle detector) is unused.
+  !>   F = 0.5*(F(q1) + F(q2)) - 0.5*a*(U2 - U1),  a = max(|un1|+c1, |un2|+c2)
+  !> Norm(2..${DIM+1}$) is the unit face normal of the Cartesian solvers, so the
+  !> sound speeds need no metric factor.
+  attributes(device) subroutine LFflux(id_slau, rho1, rho2, u1, u2, v1, v2, &
+  #:if DIM == 3
+                                            w1, w2, &
+  #:endif
+                                            un1, un2, p1, p2, Norm, HR, F1, F2, F3, F4${', F5' if DIM == 3 else ''}$)
+    use mod_globals, only : sp, gamma
+    use mod_constant, only : over_gamma_1
+    integer(8), intent(in), value :: id_slau
+    real(8), intent(in)           :: rho1, rho2, u1, u2, v1, v2, &
+  #:if DIM == 3
+                                      w1, w2, &
+  #:endif
+                                      un1, un2, p1, p2, Norm(5)
+    real(sp), intent(in), value   :: HR
+    real(8), intent(out)          :: F1, F2, F3, F4${', F5' if DIM == 3 else ''}$
+    real(8) over_rho1, over_rho2, k1, k2, a, m1, m2, ps
+    over_rho1 = 1.d0 / rho1
+    over_rho2 = 1.d0 / rho2
+    k1 = 0.5d0 * (u1*u1 + v1*v1${' + w1*w1' if DIM == 3 else ''}$)
+    k2 = 0.5d0 * (u2*u2 + v2*v2${' + w2*w2' if DIM == 3 else ''}$)
+    a  = max(abs(un1) + sqrt(gamma * p1 * over_rho1), &
+             abs(un2) + sqrt(gamma * p2 * over_rho2))
+    m1 = rho1 * un1
+    m2 = rho2 * un2
+    ps = p1 + p2
+    F1 = 0.5d0 * (m1 + m2                         - a * (rho2      - rho1     ))
+    F2 = 0.5d0 * (m1 * u1 + m2 * u2 + ps * Norm(2) - a * (rho2 * u2 - rho1 * u1))
+    F3 = 0.5d0 * (m1 * v1 + m2 * v2 + ps * Norm(3) - a * (rho2 * v2 - rho1 * v1))
+  #:if DIM == 3
+    F4 = 0.5d0 * (m1 * w1 + m2 * w2 + ps * Norm(4) - a * (rho2 * w2 - rho1 * w1))
+    F5 = 0.5d0 * (m1 * phi(rho1, k1, p1, over_rho1) + m2 * phi(rho2, k2, p2, over_rho2) &
+                  - a * ((p2 - p1) * over_gamma_1 + rho2 * k2 - rho1 * k1))
+  #:else
+    F4 = 0.5d0 * (m1 * phi(rho1, k1, p1, over_rho1) + m2 * phi(rho2, k2, p2, over_rho2) &
+                  - a * ((p2 - p1) * over_gamma_1 + rho2 * k2 - rho1 * k1))
+  #:endif
+  end subroutine LFflux

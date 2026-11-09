@@ -1,20 +1,30 @@
 module set
   use cudafor
-  use mod_globals, only : gamma, rho0, u0, p0, rho2, p2, ux, uy, beta, x_in, Xsh, i_LE
+  use mod_globals, only : gamma, rho0, u0, p0, rho2, p2, ux, uy, beta, Lx, Ly, Lz, x_in, Xsh, i_LE, nx, dt
   use mod_constant, only : gamma_1, over_gamma_1
   use set_bc_common
   implicit none
 contains
   subroutine set_grid(myrank, nx, ny, nz, Lx, Ly, Lz, x, y, z, dx, dy, dz)
+    use mpi
     integer, intent(in)  :: myrank, nx, ny, nz
     real(8), intent(in)  :: Lx, Ly, Lz
     real(8), intent(out) :: x(nx), y(ny), z(nz), dx(nx-1), dy(ny-1), dz(nz-1)
     integer i, j, k
+    integer nranks, ierr, nz_int, iz_offset
     real(8) dx1, dz1
     real(8) tanh_s, yi
-    real(8), parameter :: s = 1.6d0 ! tanh wall-clustering stretch
+    real(8), parameter :: s = 3.0d0 !2.4!1.6 ! tanh wall-clustering stretch
+    ! z is decomposed across the compute (even) ranks when COMMZ=True; the odd
+    ! I/O rank shares its partner's slab. Lz is the GLOBAL periodic span; each
+    ! local slab holds nz-6 unique planes plus 3 ghost planes on either side
+    ! (6th-order stencil, see set_bc_cyclic_z). With one compute rank this
+    ! reduces to a single slab of period Lz.
+    call MPI_COMM_SIZE(MPI_COMM_WORLD, nranks, ierr)
+    nz_int    = nz - 6
+    iz_offset = (myrank/2) * nz_int
     dx1 = Lx / dble(nx-1)
-    dz1 = Lz / dble(nz-1)
+    dz1 = Lz / dble((nranks/2) * nz_int)
 
     x(1) = x_in
     do i = 1, nx-1
@@ -31,12 +41,14 @@ contains
       dy(j) = y(j+1) - y(j)
     enddo
 
-    z(1) = 0.d0
     do k = 1, nz-1
       dz(k) = dz1
-      z(k+1) = z(k) + dz(k)
     enddo
-    z(:) = z(:) - 0.5d0 * Lz
+    ! interior plane k=4 of the first slab sits at z=-Lz/2; the last slab's
+    ! plane nz-2 is its periodic image at +Lz/2
+    do k = 1, nz
+      z(k) = dble(iz_offset + k - 4) * dz1 - 0.5d0 * Lz
+    enddo
   end subroutine set_grid
 
 
@@ -59,12 +71,22 @@ contains
         ! no inlet BC in set_bc), so it stays frozen at these values: below the
         ! incident-shock trace it holds the freestream, above it the post-shock
         ! state, acting as the oblique-shock generator.
-        if (ys(j) > (Xsh - x_in) * dtan(beta)) then
-          Q(1,j,k,1) = rho2
-          Q(1,j,k,2) = rho2 * ux
-          Q(1,j,k,3) = rho2 * uy
-          Q(1,j,k,4) = 0.d0
-          Q(1,j,k,5) = p2 * over_gamma_1 + 0.5d0 * rho2 * (ux**2 + uy**2)
+        ! if (ys(j) > (Xsh - x_in) * dtan(beta)) then
+        !   Q(1,j,k,1) = rho2
+        !   Q(1,j,k,2) = rho2 * ux
+        !   Q(1,j,k,3) = rho2 * uy
+        !   Q(1,j,k,4) = 0.d0
+        !   Q(1,j,k,5) = p2 * over_gamma_1 + 0.5d0 * rho2 * (ux**2 + uy**2)
+        ! endif
+    enddo;enddo
+    do k = 1, nz
+      do i = 1, nx    
+        if (Ly / dtan(beta) + Lx / dble(nx-1) * dble(i-1) + x_in >= Xsh .and. Lx / dble(nx-1) * dble(i-1) + x_in < 0.09d0) then
+          Q(i,ny,k,1) = rho2
+          Q(i,ny,k,2) = rho2 * ux
+          Q(i,ny,k,3) = rho2 * uy
+          Q(i,ny,k,4) = 0.d0
+          Q(i,ny,k,5) = p2 * over_gamma_1 + 0.5d0 * rho2 * (ux**2 + uy**2)
         endif
     enddo;enddo
     do k = 1, nz
@@ -78,8 +100,9 @@ contains
   end subroutine set_init
 
 
-  subroutine set_bc(myrank, nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
+  subroutine set_bc(myrank, nx, ny, nz, xs, zs, phi_l_gpu, phi_m_gpu, t_now, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     integer, intent(in), value     :: myrank, nx, ny, nz
+    real(8), intent(in)  :: xs(nx), zs(nz)
     real(8), intent(in), device    :: Jacobian(nx,ny)
     real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8) Jacobian_tmp
@@ -89,6 +112,24 @@ contains
     real(8) :: Rp, Rm, vb, cb, sb, ub, rhob, pb
     ! exterior (post-shock) sound speed for the top Riemann state
     real(8), parameter :: c_ext = sqrt(gamma * p2 / rho2)
+    real(8), parameter :: c0    = sqrt(gamma * p0 / rho0)
+    ! region of blowing (laminar-to-turbulent transition)
+    real(8), parameter :: A = 0.05d0
+    real(8) :: f_x, g_z, h_t
+    real(8), parameter :: x_a = 0.01d0 !beginning of the blowing and suction zone
+    real(8), parameter :: x_b = 0.02d0 ! end of the blowing and suction zone
+    integer, parameter :: l_min = 12, m_min = 12
+    integer, parameter :: l_max = 24, m_max = 24
+    integer :: l, m
+    real(8), parameter :: beta_force = 75000 !(Hz)
+    real(8) :: Z_l(l_max), T_m(m_max)
+    real(8), intent(in), device ::phi_l_gpu(l_max), phi_m_gpu(m_max)
+    real(8), device :: Z_l_gpu(l_max), T_m_gpu(m_max)
+    real(8), device :: xs_gpu(nx), zs_gpu(nz)
+    integer t_now
+    real(8) r, theta, t_now_local
+    real(8), parameter :: pi = 4.0d0 * atan(1.0d0)
+    real(8), parameter :: ratio = 1.25d0
 
     !$cuf kernel do(2)<<<*,*>>>
     do k = 1, nz
@@ -101,38 +142,73 @@ contains
     !$cuf kernel do(2)<<<*,*>>>
     do k = 1, nz
       do i = 1, nx
-        ! ---- interior state (j = ny-1) ----
-        rhoin = QJ_1(i,ny-1,k) * Jacobian(i,ny-1)
-        uin   = QJ_2(i,ny-1,k) / QJ_1(i,ny-1,k)
-        vin   = QJ_3(i,ny-1,k) / QJ_1(i,ny-1,k)
-        pin   = gamma_1 * ( QJ_5(i,ny-1,k) * Jacobian(i,ny-1) &
-              - 0.5d0 * rhoin * (uin**2 + vin**2) )
-        cin   = sqrt(gamma * pin / rhoin)
+        if (Ly / dtan(beta) + Lx / dble(nx-1) * dble(i-1) + x_in < Xsh) then
+          ! ---- pre-shock state (j = ny) ----
+          ! ---- interior state (j = ny-1) ----
+          rhoin = QJ_1(i,ny-1,k) * Jacobian(i,ny-1)
+          uin   = QJ_2(i,ny-1,k) / QJ_1(i,ny-1,k)
+          vin   = QJ_3(i,ny-1,k) / QJ_1(i,ny-1,k)
+          pin   = gamma_1 * ( QJ_5(i,ny-1,k) * Jacobian(i,ny-1) &
+                - 0.5d0 * rhoin * (uin**2 + vin**2) )
+          cin   = sqrt(gamma * pin / rhoin)
 
-        ! ---- Riemann invariant (normal = y direction) ----
-        Rp = vin + 2.d0 * cin * over_gamma_1
-        Rm = uy - 2.d0 * c_ext * over_gamma_1
-        vb = 0.5d0 * (Rp + Rm)
-        cb = 0.25d0 * gamma_1 * (Rp - Rm)
+          ! ---- Riemann invariant (normal = y direction) ----
+          Rp = vin + 2.d0 * cin * over_gamma_1
+          Rm = - 2.d0 * c0 * over_gamma_1 !uy - 2.d0 * c_ext * over_gamma_1
+          vb = 0.5d0 * (Rp + Rm)
+          cb = 0.25d0 * gamma_1 * (Rp - Rm)
 
-        if (vb >= 0.d0) then
-          sb = pin / rhoin**gamma
-          ub = uin
+          if (vb >= 0.d0) then
+            sb = pin / rhoin**gamma
+            ub = uin
+          else
+            sb = p0 / rho0**gamma !sb = p2 / rho2**gamma
+            ub = u0 !ub = ux
+          endif
+
+          rhob = (cb**2 / (gamma * sb)) ** over_gamma_1
+          pb   = sb * rhob**gamma
+
+          Jacobian_tmp = 1.d0 / Jacobian(i,ny)
+          QJ_1(i,ny,k) = rhob * Jacobian_tmp
+          QJ_2(i,ny,k) = rhob * ub * Jacobian_tmp
+          QJ_3(i,ny,k) = rhob * vb * Jacobian_tmp
+          QJ_4(i,ny,k) = 0.d0
+          QJ_5(i,ny,k) = (pb * over_gamma_1 + 0.5d0 * rhob * (ub**2 + vb**2)) * Jacobian_tmp
+        
+        else if (Ly / dtan(beta) + Lx / dble(nx-1) * dble(i-1) + x_in >= Xsh .and. Lx / dble(nx-1) * dble(i-1) + x_in < 0.09d0) then
+          ! ---- post-shock state (j = ny) ----
+          Jacobian_tmp = 1.d0 / Jacobian(i,ny)
+          QJ_1(i,ny,k) = rho2 * Jacobian_tmp
+          QJ_2(i,ny,k) = rho2 * ux * Jacobian_tmp
+          QJ_3(i,ny,k) = rho2 * uy * Jacobian_tmp
+          QJ_4(i,ny,k) = 0.d0
+          QJ_5(i,ny,k) = (p2 * over_gamma_1 + 0.5d0 * rho2 * (ux**2 + uy**2)) * Jacobian_tmp
+        
         else
-          sb = p2 / rho2**gamma
-          ub = ux
+          ! ---- Neumann ----
+          QJ_1(i,ny,k) = QJ_1(i,ny-1,k); QJ_2(i,ny,k) = QJ_2(i,ny-1,k); QJ_3(i,ny,k) = QJ_3(i,ny-1,k)
+          QJ_4(i,ny,k) = QJ_4(i,ny-1,k); QJ_5(i,ny,k) = QJ_5(i,ny-1,k)
         endif
-
-        rhob = (cb**2 / (gamma * sb)) ** over_gamma_1
-        pb   = sb * rhob**gamma
-
-        Jacobian_tmp = 1.d0 / Jacobian(i,ny)
-        QJ_1(i,ny,k) = rhob * Jacobian_tmp
-        QJ_2(i,ny,k) = rhob * ub * Jacobian_tmp
-        QJ_3(i,ny,k) = rhob * vb * Jacobian_tmp
-        QJ_4(i,ny,k) = 0.d0
-        QJ_5(i,ny,k) = (pb * over_gamma_1 + 0.5d0 * rhob * (ub**2 + vb**2)) * Jacobian_tmp
     enddo;enddo
+    
+    !prepareing for the region of blowing (laminar-to-turbulent transition)
+    ! r = 1.d0 / ratio ! r = 0.8
+    ! Z_l(l_min) = (1.0d0 - r) / (1.0d0 - r**dble(l_max - l_min + 1))
+    ! do l = l_min + 1, l_max
+    !   Z_l(l) = Z_l(l-1) * r
+    ! enddo
+    ! T_m(m_min) = (1.0d0 - r) / (1.0d0 - r**dble(m_max - m_min + 1))
+    ! do m = m_min + 1, m_max
+    !   T_m(m) = T_m(m-1) * r
+    ! enddo
+    ! t_now_local = dt * dble(t_now)
+
+    ! Z_l_gpu   = Z_l
+    ! T_m_gpu   = T_m
+    ! xs_gpu    = xs
+    ! zs_gpu    = zs
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
     !$cuf kernel do(2)<<<*,*>>>
     do k = 1, nz
@@ -150,11 +226,43 @@ contains
           QJ_2(i,1,k) = 0.d0
           QJ_3(i,1,k) = 0.d0
           QJ_4(i,1,k) = 0.d0
-          p_wall = gamma_1 * (QJ_5(i,2,k) - 0.5d0 * (QJ_2(i,2,k)**2 + QJ_3(i,2,k)**2 + QJ_4(i,2,k)) / QJ_1(i,2,k))
+          p_wall = gamma_1 * (QJ_5(i,2,k) - 0.5d0 * (QJ_2(i,2,k)**2 + QJ_3(i,2,k)**2 + QJ_4(i,2,k)**2) / QJ_1(i,2,k))
           QJ_5(i,1,k) = p_wall * over_gamma_1
         endif
+        
+        !oblique shock
+        ! QJ_1(i,1,k) =  QJ_1(i,2,k)
+        ! QJ_2(i,1,k) =  QJ_2(i,2,k)
+        ! QJ_3(i,1,k) = -QJ_3(i,2,k)
+        ! QJ_4(i,1,k) =  QJ_4(i,2,k)
+        ! QJ_5(i,1,k) =  QJ_5(i,2,k)
+
+        ! region of blowing (laminar-to-turbulent transition)
+        ! if(xs_gpu(i) >= x_a .and. xs_gpu(i) <= x_b) then
+        !   g_z = 0.d0; h_t = 0.d0
+        !   do l = l_min, l_max
+        !     g_z = g_z + Z_l_gpu(l) * sin(2.d0 * pi * dble(l) * (zs_gpu(k) / Lz + phi_l_gpu(l)))
+        !   enddo
+          
+        !   do m = m_min, m_max
+        !     h_t = h_t + T_m_gpu(m) * sin(beta_force * t_now_local + 2.d0 * pi * phi_m_gpu(m))
+        !   enddo
+
+        !   theta = 2.d0 * pi * (xs_gpu(i) - x_a) / (x_b - x_a)
+        !   f_x = 4.d0 * sin(theta) * (1.d0 -cos(theta)) / sqrt(27.d0)
+
+        !   QJ_3(i,1,k) = QJ_1(i,1,k) * A * u0 * f_x * g_z * h_t
+        ! endif
     enddo;enddo
 
+    
+
+    ! Periodic z ghost planes. With COMMZ=False this IS the spanwise BC. With
+    ! COMMZ=True it is only a placeholder that keeps the ghost planes finite
+    ! between stages: finish_exchange_z overwrites them with the neighbours'
+    ! data before any ghost-dependent flux is evaluated (see the range table
+    ! in calc_flux_base.f90.fypp), and the exchange is repeated right before
+    ! output.
     call set_bc_cyclic_z(nx, ny, nz, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
   end subroutine set_bc
 

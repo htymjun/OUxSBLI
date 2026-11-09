@@ -147,6 +147,8 @@ contains
     real(8), device ::     Qre(ny*(nz-6)*5), Qm(ny*5)
     integer stat, errorcode, ierr, ireq, ireqs(2), flag_req, n
     integer istat(MPI_STATUS_SIZE), istats(MPI_STATUS_SIZE,2), j
+    integer, parameter :: nQm = 1000 !< timesteps between recal/Qm.dat checkpoints
+    integer, save      :: ncall = 0
     real(8) t
     character(len=40) filename
     write(filename, "(a)") "data/rescaling.d"
@@ -200,6 +202,12 @@ contains
         print *, "Invalid boundary layer thickness was detected"
         call MPI_ABORT(MPI_COMM_WORLD, errorcode, ierr)
       endif
+      ! checkpoint the reference profile so a RESTART=True + RESCALE=True run has
+      ! the recal/Qm.dat that pre_rescale demands
+      ncall = ncall + 1
+      if (flag_re >= 1 .and. mod(ncall, nQm) == 0) then
+        call write_Qm_restart(ny, Qm_cpu_1, Qm_cpu_2, Qm_cpu_3, Qm_cpu_4, Qm_cpu_5)
+      endif
       t = nt * step * dt
       if (flag_re >= 1 .and. step >= start_rescale) then
         open(10, file=filename, position="append")
@@ -212,6 +220,17 @@ contains
       endif
     endif
   end subroutine rescale_recv_send
+
+
+  !> Overwrite recal/Qm.dat with the current rescaling reference profile.
+  !> pre_rescale() aborts a RESTART=True + RESCALE=True run without this file.
+  subroutine write_Qm_restart(ny, Qm_1, Qm_2, Qm_3, Qm_4, Qm_5)
+    integer, intent(in) :: ny
+    real(8), intent(in) :: Qm_1(ny), Qm_2(ny), Qm_3(ny), Qm_4(ny), Qm_5(ny)
+    open(10, file="recal/Qm.dat", status="replace", action="write", form="unformatted", access="stream")
+    write(10) Qm_1, Qm_2, Qm_3, Qm_4, Qm_5
+    close(10)
+  end subroutine write_Qm_restart
 
 
   subroutine write_Qm(ny, step, y, Qm_1, Qm_2, Qm_3, Qm_4, Qm_5)

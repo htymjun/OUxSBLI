@@ -21,6 +21,16 @@ from ouxsbli.tests.utils.vtk_reader import latest_vtr
 
 plot_style.apply()
 
+# Use Times New Roman throughout (axis labels, tick numbers, legend text)
+# and a matching serif math font (STIX closely matches Times) for math
+# expressions like $C_f$, $x/x_{sh}$. Falls back to Liberation Serif (a
+# metric-compatible open-source substitute) if Times New Roman is not
+# installed on this system -- set explicitly here so it applies regardless
+# of what plot_style.apply() configured above.
+plt.rcParams["font.family"] = "serif"
+plt.rcParams["font.serif"] = ["Times New Roman", "Liberation Serif"]
+plt.rcParams["mathtext.fontset"] = "stix"
+
 # must match 2D_solver/SBLI/mod_globals.f90
 R = 287.15
 gamma = 1.4
@@ -37,9 +47,9 @@ Xsh_mm = 80.0  # shock impingement location [mm]
 # region is actually visible. Set to None to auto-scale instead.
 Y_ZOOM_RANGE = (-1.5e-3, 6.5e-3)
 
-TICK_LABEL_FONTSIZE = 25   # size of the 0,1,2,...,0.25,0.50,... numbers
-AXIS_LABEL_FONTSIZE = 25   # size of the "X/Xsh" and "Cf" axis titles
-LEGEND_FONTSIZE = 18       # size of the legend entries (Present Study, Moro et al., ...)
+TICK_LABEL_FONTSIZE = 28   # size of the 0,1,2,...,0.25,0.50,... numbers
+AXIS_LABEL_FONTSIZE = 28   # size of the "X/Xsh" and "Cf" axis titles
+LEGEND_FONTSIZE = 24       # size of the legend entries (Present Study, Moro et al., ...)
 
 p0 = p_tot / (1.0 + 0.5 * (gamma - 1.0) * M0**2) ** (gamma / (gamma - 1.0))
 rho0 = p0 / (R * T0)
@@ -117,7 +127,7 @@ if __name__ == "__main__":
 
     ax.axhline(0.0, color="k", ls="--", lw=0.8)
     ax.set_xlim(0, 2.0)
-    ax.set_xlabel(r"$X / X_{sh}$", fontsize=AXIS_LABEL_FONTSIZE)
+    ax.set_xlabel(r"$x / x_{sh}$", fontsize=AXIS_LABEL_FONTSIZE)
     ax.set_ylabel(r"$C_f$", fontsize=AXIS_LABEL_FONTSIZE)
     ax.tick_params(axis="both", which="major", labelsize=TICK_LABEL_FONTSIZE)
 
@@ -143,5 +153,6 @@ if __name__ == "__main__":
     ax.legend(frameon=False, fontsize=LEGEND_FONTSIZE, loc="upper right",
               bbox_to_anchor=(1.0, 1.0), borderaxespad=0.3)
     fig.tight_layout()
+    ax.set_box_aspect(0.75)  # height/width ratio
     fig.savefig(REF_DIR / "cf_BL2_all.png", dpi=200)
     print("Saved: cf_BL2_all.png")

@@ -12,8 +12,16 @@ contains
 
   subroutine check_gpu(mygpu)
     integer, intent(in) :: mygpu
-    integer ilen, stat
+    integer ilen, stat, ndevices, ierr
     type(cudaDeviceProp) prop
+    ! cudaSetDevice accepts an out-of-range index without complaint (measured:
+    ! it returns 0 for device 1 on a single-GPU host), so range-check first
+    ! rather than run on a device that was never selected.
+    stat = cudaGetDeviceCount(ndevices)
+    if (mygpu < 0 .or. mygpu >= ndevices) then
+      print '(1x,a,i0,a,i0,a)', "requested GPU ", mygpu, " but only ", ndevices, " device(s) are visible"
+      call MPI_ABORT(MPI_COMM_WORLD, 1, ierr)
+    endif
     stat = cudaSetDevice(mygpu)
     stat = cudaGetDeviceProperties(prop, mygpu)
     ilen = verify(prop%name, ' ', .true.)

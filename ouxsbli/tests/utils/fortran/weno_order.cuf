@@ -1,0 +1,63 @@
+! Reconstruction-order driver for src/calc_weno.f90.fypp, used by
+! ouxsbli/tests/test_weno.py::test_weno5z_reconstruction_order.
+!
+! Feeds EXACT cell averages of a smooth periodic function to weno5z_fp64 and
+! weno5z_w32p64 and prints, per grid, the max error of v^- and v^+ against the
+! exact point value at the face. Two data sets:
+!   case 1: f = 1   + 0.2  (sin(2 pi x) + 0.5 cos(4 pi x))
+!   case 2: f = 1e5 + 1e-2 (sin(2 pi x) + 0.5 cos(4 pi x))  (weak relative perturbation)
+! Output lines: "case n err_fp64_left err_fp64_right err_w32p64_left err_w32p64_right".
+module weno_order_kernel
+  use calc_weno
+contains
+  attributes(global) subroutine recon(n, abar, l64, r64, l32, r32)
+    integer, value :: n
+    real(8), device :: abar(-2:n+3), l64(n), r64(n), l32(n), r32(n)
+    integer :: i
+    real(8) :: w(6), al, ar
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i > n) return
+    w = abar(i-2:i+3)        ! face between cells i and i+1
+    call weno5z_fp64(w, al, ar);   l64(i) = al; r64(i) = ar
+    call weno5z_w32p64(w, al, ar); l32(i) = al; r32(i) = ar
+  end subroutine recon
+end module weno_order_kernel
+
+program weno_order
+  use cudafor
+  use weno_order_kernel
+  implicit none
+  real(8), parameter :: pi = 4.d0*atan(1.d0)
+  real(8), allocatable :: abar(:), l64(:), r64(:), l32(:), r32(:), ex(:)
+  real(8), allocatable, device :: abar_d(:), l64_d(:), r64_d(:), l32_d(:), r32_d(:)
+  real(8) :: h, x0, x1, amp, base
+  integer :: n, i, m
+  do m = 1, 2
+    if (m == 1) then
+      base = 1.d0; amp = 0.2d0
+    else
+      base = 1.d5; amp = 1.d-2
+    endif
+    n = 16
+    do while (n <= 1024)
+      h = 1.d0 / n
+      allocate(abar(-2:n+3), l64(n), r64(n), l32(n), r32(n), ex(n))
+      do i = -2, n+3
+        x0 = (i-1)*h; x1 = i*h      ! cell i = [x0, x1]
+        abar(i) = base + amp*( -(cos(2*pi*x1)-cos(2*pi*x0))/(2*pi) &
+                               + 0.5d0*(sin(4*pi*x1)-sin(4*pi*x0))/(4*pi) )/h
+      enddo
+      do i = 1, n
+        ex(i) = base + amp*(sin(2*pi*i*h) + 0.5d0*cos(4*pi*i*h))
+      enddo
+      allocate(abar_d(-2:n+3), l64_d(n), r64_d(n), l32_d(n), r32_d(n))
+      abar_d = abar
+      call recon<<<(n+127)/128,128>>>(n, abar_d, l64_d, r64_d, l32_d, r32_d)
+      l64 = l64_d; r64 = r64_d; l32 = l32_d; r32 = r32_d
+      write(*,'(i2,i6,4es14.6)') m, n, maxval(abs(l64-ex)), maxval(abs(r64-ex)), &
+                                 maxval(abs(l32-ex)), maxval(abs(r32-ex))
+      deallocate(abar, l64, r64, l32, r32, ex, abar_d, l64_d, r64_d, l32_d, r32_d)
+      n = n*2
+    enddo
+  enddo
+end program weno_order

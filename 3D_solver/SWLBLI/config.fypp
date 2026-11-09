@@ -1,10 +1,10 @@
 #:set VISC          = 'NS'
-#:set SCHEME        = 'Hybrid'
+#:set SCHEME        = 'SLAU'
 #:set ORDER         = 6
 #:set TVD           = 'none'
 #:set SLAU_VARIANT  = 'HRSLAU2'
 #:set RESCALE       = False
-#:set RESTART       = False
+#:set RESTART       = True
 #:set RK            = 3
 #:set BC_X          = True
 #:set BC_Y          = True
@@ -12,3 +12,6 @@
 #:set COMMZ         = False
 #:set ORDER_IO = ORDER // 2 - 1
 #:set OUTPUT_PRECISION = 4
+#:set MPI = 'GPU'
+#! set_bc takes (x, z, phi_l_gpu, phi_m_gpu, t_now) for the blowing/suction strip
+#:set BC_FORCING = True

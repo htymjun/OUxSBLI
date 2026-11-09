@@ -1,6 +1,7 @@
 program main
   use, intrinsic :: iso_fortran_env
   use mpi
+  use cudafor
   use mod_globals, only : dimension, nx, ny, nz, Lx, Ly, Lz, &
   & blocks, threads, blocksE, blocksF, blocksG, threadsE, threadsF, threadsG, &
   & blocksEv, blocksFv, blocksGv, threadsEv, threadsFv, threadsGv
@@ -17,12 +18,27 @@ program main
   logical is_sequential
   ! MPI
   integer nranks, myrank, ierr, ireq, istat(MPI_STATUS_SIZE)
+  integer comm_node, rank_node, ndevices, cstat
 
   call MPI_INIT(ierr)
   call MPI_COMM_SIZE(MPI_COMM_WORLD, nranks, ierr)
   call MPI_COMM_RANK(MPI_COMM_WORLD, myrank, ierr)
-  mygpu = myrank / 2
-  
+  ! Pick the GPU from this rank's position WITHIN ITS NODE. A global
+  ! myrank/2 only addresses the right device on a single node: spread over
+  ! several nodes the higher ranks ask for device numbers their node does not
+  ! have, and cudaSetDevice does not reject that (it returns success and the
+  ! failure surfaces later, or not at all). Ranks are paired compute/IO, so
+  ! two consecutive node-local ranks share one device.
+  call MPI_COMM_SPLIT_TYPE(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, comm_node, ierr)
+  call MPI_COMM_RANK(comm_node, rank_node, ierr)
+  call MPI_COMM_FREE(comm_node, ierr)
+  cstat = cudaGetDeviceCount(ndevices)
+  if (cstat /= 0 .or. ndevices < 1) then
+    print *, "rank", myrank, ": no CUDA device visible (cudaGetDeviceCount status", cstat, ")"
+    call MPI_ABORT(MPI_COMM_WORLD, 1, ierr)
+  endif
+  mygpu = mod(rank_node / 2, ndevices)
+
   call execute_command_line('mkdir -p recal', wait=.true., exitstat=ierr)
 
   print *, "my rank is", myrank

@@ -1,0 +1,210 @@
+!> WENO5-Z (Borges et al. 2008) face-state reconstruction, FP64 and W32P64.
+!>
+!> Ported from WENO_ILP's single WENO implementation,
+!> microbenchmark/weight32poly64/weno_recon.cuh `Recon<3, P, RecipRcp>` with
+!> its bodies in weno_w32.cuh (weights5_64_*, weights5_32f_*, poly5_64_*):
+!>
+!>   weno5z_fp64    = Recon<3, RP_FP64>: FP64 weights, FP64 polynomials,
+!>                    IEEE division, combine sum(w_k p_k)
+!>   weno5z_w32p64  = W32P64: FP32 smoothness indicators + nonlinear weights
+!>                    (approximate reciprocal), FP64 candidate polynomials and
+!>                    combine -- with TWO deliberate deviations from
+!>                    Recon<3, RP_W32P64, RecipRcp>, see below.
+!>
+!> Both take the 6-point window a(1..6) that straddles the face between a(3)
+!> and a(4) -- the same geometry as calc_muscl's delta6 -- and return
+!>   al = v^- (left-biased,  from a(1..5))
+!>   ar = v^+ (right-biased, from a(2..6))
+!> calc_muscl.f90.fypp's delta6 calls one of them when config.fypp sets
+!> RECON = 'WENO' (WENO_PREC picks which), so every SLAU-family kernel uses
+!> WENO without a kernel edit.
+!>
+!> Why W32P64 is not WENO_ILP's arithmetic verbatim. The verbatim port
+!> (stencil VALUES narrowed to FP32, combine sum(w_k p_k)) has an error floor of
+!> ~6e-8 * |v|: each FP32 weight is rounded on its own, so sum(w_k) = 1 + O(eps32)
+!> and that defect multiplies the face value itself. Measured (2026-11-09,
+!> RTX PRO 6000 / sm_120) on exact cell averages: max error stuck at ~1e-7 for
+!> O(1) data from N=128 on, and at 7.5e-3 for 1e5 + 1e-2*sin (the FP32 ulp of
+!> 1e5); 2D_solver/EVC (SLAU) L2(rho) 6.1e-8 / 5.8e-8 / 6.2e-8 at n=64/128/256
+!> while FP64 gives 3.3e-8 / 1.5e-9 / 4.0e-10. The two changes:
+!>  1. The betas are formed from FP64 first DIFFERENCES narrowed to FP32
+!>     (betas depend on differences only), so a perturbation below the FP32
+!>     resolution of the values is still seen.
+!>  2. The combine is p0 + w1*(p1-p0) + w2*(p2-p0): the weights sum to one
+!>     exactly, and the FP32 weight error multiplies only the candidate
+!>     differences, never |v|.
+!> With both, W32P64 matches FP64 to the last digits printed at every N in
+!> both regimes (5th order, both biases) and on EVC (3.32e-8 / 1.462e-9 /
+!> 3.953e-10). Cost: the window differences (5 DADD per face and variable,
+!> shared by the biases) and one more FP64 op per combine. SASS of the 2D
+!> SLAU x kernel (calc_slau_x_in, sm_120): MUSCL 1816 instructions / 222 FP64
+!> ops; WENO FP64 4096 / 656 FP64 ops and 36 CALLs (the IEEE FP64 division
+!> slow paths); W32P64 2504 / 270 FP64 + 288 FP32 ops, 33 MUFU.RCP, 8 CALLs
+!> (as MUSCL).
+!>
+!> Traps carried over from WENO_ILP, each of which has cost a debugging session
+!> there:
+!>  * The linear weights are MIRRORED between biases: left (1,6,3)/10, right
+!>    (3,6,1)/10, and the right candidate polynomials are the mirrored forms.
+!>    Copying the left d into the right bias makes v^+ third order, and no
+!>    timing or checksum shows it -- only a convergence test does.
+!>  * `+ eps` is load-bearing: on constant data beta == tau == 0.
+!>  * FP32 only: the ratio cap is load-bearing (beta_k == 0 with tau /= 0
+!>    gives r_k = Inf and NaN weights), and the ratios are UNBATCHED --
+!>    batching needs 1/(c0*c1*c2) and eps**3 underflows in FP32.
+!>  * Only FP32 takes the approximate reciprocal; FP64 stays IEEE (MUFU.RCP64H
+!>    is only a seed, so an "approximate" FP64 reciprocal saves only the
+!>    fix-up). The normalisation 1/sum(alpha) gets one Newton step.
+!>  * WENO5 keeps the textbook sum-of-two-squares betas; do not expand them
+!>    into the dense quadratic form (worse conditioning, see WENO_ILP
+!>    solver2d/docs/discretization.md).
+!>  * nvfortran -fast already compiles FP32 arithmetic flush-to-zero, so
+!>    __fdividef becomes MUFU.RCP + FMUL with no range-guard sequence (checked
+!>    with cuobjdump on sm_120, HPC SDK 26.5). Never add a fast-math flag that
+!>    would also relax the FP64 IEEE divisions.
+!>  * The weights5_* dummies are deliberately NOT `value`: with `value` and
+!>    array-element actuals, nvfortran 26.5 compiling this file without -acc
+!>    (e.g. `-cuda -fast`) dies with "Internal compiler error. Required sptr
+!>    not found in llgetsym". The routines are inlined either way.
+module calc_weno
+  use cudadevice
+  implicit none
+  private
+  public weno5z_fp64, weno5z_w32p64
+
+  real(8), parameter :: eps64 = 1.0d-20
+  real(4), parameter :: eps32 = 1.0e-20_4
+  real(4), parameter :: ratio_cap = 1.0e9_4
+  ! candidate polynomials with the 1/6 folded into the coefficients
+  real(8), parameter :: c1 = 1.d0 / 6.d0, c2 = 2.d0 / 6.d0, c5 = 5.d0 / 6.d0
+  real(8), parameter :: c7 = 7.d0 / 6.d0, c11 = 11.d0 / 6.d0
+contains
+
+  ! ------------------------------------------------------------------
+  ! FP64 nonlinear weights from one 5-point substencil window.
+  ! d0..d2 are the linear weights of the bias (mirrored left/right).
+  ! ------------------------------------------------------------------
+  attributes(device) subroutine weights5_64(v1, v2, v3, v4, v5, d0, d1, d2, w0, w1, w2)
+    real(8), intent(in)  :: v1, v2, v3, v4, v5, d0, d1, d2
+    real(8), intent(out) :: w0, w1, w2
+    real(8) e0, f0, e1, f1, e2, f2, b0, b1, b2, tau, r0, r1, r2, a0, a1, a2, invs
+    e0 = v1 - 2.d0 * v2 + v3
+    f0 = v1 - 4.d0 * v2 + 3.d0 * v3
+    e1 = v2 - 2.d0 * v3 + v4
+    f1 = v2 - v4
+    e2 = v3 - 2.d0 * v4 + v5
+    f2 = 3.d0 * v3 - 4.d0 * v4 + v5
+    b0 = (13.d0 / 12.d0) * e0 * e0 + 0.25d0 * f0 * f0
+    b1 = (13.d0 / 12.d0) * e1 * e1 + 0.25d0 * f1 * f1
+    b2 = (13.d0 / 12.d0) * e2 * e2 + 0.25d0 * f2 * f2
+    tau = abs(b0 - b2)
+    r0 = tau / (b0 + eps64)
+    r1 = tau / (b1 + eps64)
+    r2 = tau / (b2 + eps64)
+    a0 = d0 * (1.d0 + r0 * r0)
+    a1 = d1 * (1.d0 + r1 * r1)
+    a2 = d2 * (1.d0 + r2 * r2)
+    invs = 1.d0 / (a0 + a1 + a2)
+    w0 = a0 * invs
+    w1 = a1 * invs
+    w2 = a2 * invs
+  end subroutine weights5_64
+
+
+  ! ------------------------------------------------------------------
+  ! FP32 nonlinear weights (W32P64). The four first differences of the
+  ! window are taken in FP64 and narrowed; the betas are the textbook
+  ! e_k, f_k written in those differences:
+  !   e0 = g2-g1, f0 = 3g2-g1, e1 = g3-g2, f1 = -(g2+g3), e2 = g4-g3, f2 = g4-3g3
+  ! Every ratio is an approximate division (MUFU.RCP + FMUL), the
+  ! normalisation is rcp + one Newton step.
+  ! ------------------------------------------------------------------
+  attributes(device) subroutine weights5_32(v1, v2, v3, v4, v5, d0, d1, d2, w0, w1, w2)
+    real(8), intent(in)  :: v1, v2, v3, v4, v5
+    real(4), intent(in)  :: d0, d1, d2
+    real(4), intent(out) :: w0, w1, w2
+    real(4), parameter :: c13_12 = 13.0_4 / 12.0_4
+    real(4) g1, g2, g3, g4, e0, f0, e1, f1, e2, f2
+    real(4) b0, b1, b2, tau, r0, r1, r2, a0, a1, a2, s, y0, e
+    g1 = real(v2 - v1, 4)
+    g2 = real(v3 - v2, 4)
+    g3 = real(v4 - v3, 4)
+    g4 = real(v5 - v4, 4)
+    e0 = g2 - g1
+    f0 = 3.0_4 * g2 - g1
+    e1 = g3 - g2
+    f1 = -(g2 + g3)
+    e2 = g4 - g3
+    f2 = g4 - 3.0_4 * g3
+    b0 = c13_12 * (e0 * e0) + 0.25_4 * (f0 * f0)
+    b1 = c13_12 * (e1 * e1) + 0.25_4 * (f1 * f1)
+    b2 = c13_12 * (e2 * e2) + 0.25_4 * (f2 * f2)
+    tau = abs(b0 - b2)
+    r0 = min(__fdividef(tau, b0 + eps32), ratio_cap)
+    r1 = min(__fdividef(tau, b1 + eps32), ratio_cap)
+    r2 = min(__fdividef(tau, b2 + eps32), ratio_cap)
+    a0 = d0 * (1.0_4 + r0 * r0)
+    a1 = d1 * (1.0_4 + r1 * r1)
+    a2 = d2 * (1.0_4 + r2 * r2)
+    ! 1/s: rcp.approx + one Newton step, e = 1 - s*y0, 1/s = y0 + y0*e
+    s  = a0 + a1 + a2
+    y0 = __fdividef(1.0_4, s)
+    e  = __fmaf_rn(-s, y0, 1.0_4)
+    s  = __fmaf_rn(y0, e, y0)
+    w0 = a0 * s
+    w1 = a1 * s
+    w2 = a2 * s
+  end subroutine weights5_32
+
+
+  ! ------------------------------------------------------------------
+  ! FP64 WENO5-Z
+  ! ------------------------------------------------------------------
+  attributes(device) subroutine weno5z_fp64(a, al, ar)
+    real(8), intent(in), contiguous :: a(6)
+    real(8), intent(out)            :: al, ar
+    real(8) w0, w1, w2, p0, p1, p2
+    ! v^- from a(1..5), linear weights (1, 6, 3)/10
+    call weights5_64(a(1), a(2), a(3), a(4), a(5), 0.1d0, 0.6d0, 0.3d0, w0, w1, w2)
+    p0 =  c2 * a(1) - c7 * a(2) + c11 * a(3)
+    p1 = -c1 * a(2) + c5 * a(3) +  c2 * a(4)
+    p2 =  c2 * a(3) + c5 * a(4) -  c1 * a(5)
+    al = w0 * p0
+    al = al + w1 * p1
+    al = al + w2 * p2
+    ! v^+ from a(2..6), MIRRORED linear weights (3, 6, 1)/10
+    call weights5_64(a(2), a(3), a(4), a(5), a(6), 0.3d0, 0.6d0, 0.1d0, w0, w1, w2)
+    p0 = -c1 * a(2) + c5 * a(3) +  c2 * a(4)
+    p1 =  c2 * a(3) + c5 * a(4) -  c1 * a(5)
+    p2 = c11 * a(4) - c7 * a(5) +  c2 * a(6)
+    ar = w0 * p0
+    ar = ar + w1 * p1
+    ar = ar + w2 * p2
+  end subroutine weno5z_fp64
+
+
+  ! ------------------------------------------------------------------
+  ! W32P64 WENO5-Z: FP32 weights, FP64 polynomials, partition-of-unity
+  ! combine p0 + w1*(p1-p0) + w2*(p2-p0) in FP64 (w0 is implied).
+  ! ------------------------------------------------------------------
+  attributes(device) subroutine weno5z_w32p64(a, al, ar)
+    real(8), intent(in), contiguous :: a(6)
+    real(8), intent(out)            :: al, ar
+    real(4) w0, w1, w2
+    real(8) p0, p1, p2
+    ! v^- from a(1..5), linear weights (1, 6, 3)/10
+    call weights5_32(a(1), a(2), a(3), a(4), a(5), 0.1_4, 0.6_4, 0.3_4, w0, w1, w2)
+    p0 =  c2 * a(1) - c7 * a(2) + c11 * a(3)
+    p1 = -c1 * a(2) + c5 * a(3) +  c2 * a(4)
+    p2 =  c2 * a(3) + c5 * a(4) -  c1 * a(5)
+    al = p0 + dble(w1) * (p1 - p0)
+    al = al + dble(w2) * (p2 - p0)
+    ! v^+ from a(2..6), MIRRORED linear weights (3, 6, 1)/10
+    call weights5_32(a(2), a(3), a(4), a(5), a(6), 0.3_4, 0.6_4, 0.1_4, w0, w1, w2)
+    p0 = -c1 * a(2) + c5 * a(3) +  c2 * a(4)
+    p1 =  c2 * a(3) + c5 * a(4) -  c1 * a(5)
+    p2 = c11 * a(4) - c7 * a(5) +  c2 * a(6)
+    ar = p0 + dble(w1) * (p1 - p0)
+    ar = ar + dble(w2) * (p2 - p0)
+  end subroutine weno5z_w32p64
+end module calc_weno

@@ -58,7 +58,7 @@ module calc_slau_visc_kernel_internal
   end interface recon
 
   interface SLAU
-    module procedure SLAU1, HRSLAU2
+    module procedure SLAU1, HRSLAU2, LFflux
   end interface SLAU
 contains
   include 'calc_scheme_math.f90'

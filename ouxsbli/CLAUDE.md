@@ -22,6 +22,7 @@ pytest ouxsbli/tests/
 | `test_evc_3d.py` | Quasi-2D 3D_solver/EVC — grid convergence, same as `test_evc.py`, plus z-uniformity (~16 min total, `slow`) |
 | `test_bl_3d.py` | Quasi-2D 3D_solver/BL — Cf and u-profile vs. Blasius, same as `test_bl.py`, plus z-uniformity (~13 min, `slow`) |
 | `test_os_3d.py` | Quasi-2D 3D_solver/OS — pre/post state vs. Rankine-Hugoniot, same as `test_os.py`, plus z-uniformity (~16 min, `slow`) |
+| `test_weno.py` | WENO5-Z (`RECON='WENO'`). It has three parts. (1) `src/calc_weno.f90.fypp` alone, built with `utils/fortran/weno_order.cuf` on exact cell averages: FP64 order ≥4.8 on both biases; W32P64 is printed but not gated. (2) EVC grid convergence of FP64 WENO + LF, order ≥3.0, 2D and 3D (3D is `slow`). The gate is not 5 because the SLAU/LF point-value framework is O(h²); see `3D_solver/CLAUDE.md`. (3) OS vs Rankine-Hugoniot for 2D FP64+SLAU, 2D W32P64+LF and 3D FP64+LF (3D is `slow`). The non-slow part takes ~2.7 min |
 
 `test_sbli.py` and all three `_3d.py` tests carry the `slow` marker; deselect
 with `pytest -m "not slow"`. `test_bl.py`/`test_sbli.py` assert a quasi-steady

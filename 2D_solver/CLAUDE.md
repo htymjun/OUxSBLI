@@ -21,6 +21,15 @@ The 2D solver uses CMake (like 3D); `2D_solver/src/calc_flux_base.f90.fypp` is p
 | OS   | 2D oblique shock (M=2, θ=8°, SLAU, Euler) |
 | SBLI | Oblique shock / laminar BL interaction (M=2.15, β=30.8°, Re_Xsh≈1e5) |
 | ST   | Sod shock tube |
+| SWLBLI | 2D precursor of `3D_solver/SWLBLI`: oblique shock / laminar BL interaction (M=2.15, β=32.72°, p_tot=100 kPa, Xsh=100 mm, 2700×480, SLAU) — see below |
+
+## WENO5-Z and Lax-Friedrichs
+
+`RECON='WENO'`, `WENO_PREC='FP64'|'W32P64'` and `RIEMANN='SLAU'|'LF'` work here exactly as in
+3D. The SLAU-family kernels call the shared `delta6` / `interface SLAU`, so no 2D-specific code
+exists. See the WENO section of `3D_solver/CLAUDE.md`.
+
+`EVC` and `OS` carry the three lines in their `config.fypp`, so `Case()` can patch them.
 
 ## BL and SBLI: Shared Flat-Plate Setup
 
@@ -79,6 +88,41 @@ Digitized reference data for SBLI (Moro et al., Degrez et al., Vila-Perez et
 al.) lives in `2D_solver/SBLI/ref/`, together with the `Cf_all.py` / `Cp_all.py`
 overlay scripts. Note that `.gitignore` excludes `2D_solver/*/data*` and `*.dat`
 globally; `ref/` is kept tracked by an explicit `!2D_solver/*/ref/**` negation.
+
+## SWLBLI: 2D precursor for the 3D warm start
+
+`2D_solver/SWLBLI` is the 2D run whose converged field initialises
+`3D_solver/SWLBLI` (which is built with `RESTART=True`). It started as a copy of
+SBLI and keeps the flat-plate setup above, but it is **not** the validated SBLI
+case — different shock angle, Reynolds number, domain and top boundary — so it has
+no reference data and no test. SBLI stays at the Moro et al. conditions that
+`ouxsbli/tests/test_sbli.py` checks; do not move SWLBLI parameters back into it.
+
+Differences from SBLI that matter:
+
+* The oblique shock enters through the **top** boundary instead of the frozen
+  inlet column (whose post-shock override is commented out, so `i=1` holds plain
+  freestream). `set_bc` splits the top row by `x + Ly/tan(beta)` against `Xsh`:
+  upstream of the shock trace a Riemann far field with the *freestream* exterior
+  state; on the trace (and `x < 0.09` m, hard-coded) the analytic post-shock state
+  as a Dirichlet value; downstream zeroth-order extrapolation.
+* tanh wall clustering `s = 3.0` (SBLI: 1.6).
+
+Warm-start workflow:
+
+1. Build and run this case; its final state is written to `recal/Q00001.dat`
+   (physical conservatives — `main.f90` multiplies `Q/J` back by the Jacobian — as a
+   raw stream of shape `(nx, ny, 4)`).
+2. Compile and run `convert_2d_to_3d.f90` (spanwise sine disturbance in `v`) or
+   `convert_2d_to_3d_2.f90` (round-off-level random noise) in this directory. Both
+   copy every z plane, insert `rho*w = 0`, and write one `recal/Q_3d0000N.dat`
+   per compute rank. Their `nx`, `ny`, `nz_new`, `n_compute_ranks` (and, in
+   `convert_2d_to_3d.f90`, also `Lz` and the grid/flow constants) are hard-coded and **must match
+   `3D_solver/SWLBLI/mod_globals.f90`** — the file is a raw dump with no header, so
+   a mismatch is not detected, it just scrambles the field. As committed,
+   `convert_2d_to_3d_2.f90` has `nz_new = 35` while the 3D case has `nz = 140`.
+3. Copy `recal/Q_3d0000N.dat` to `3D_solver/SWLBLI/recal/Q0000N.dat` (the name the
+   3D `main.f90` reads) and run the 3D case.
 
 ## Adding a New Test Case
 

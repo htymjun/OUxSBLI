@@ -32,7 +32,7 @@ module calc_slau_kernel_internal
   end interface interp
 
   interface SLAU
-    module procedure SLAU1, HRSLAU2
+    module procedure SLAU1, HRSLAU2, LFflux
   end interface SLAU
 contains
   include 'calc_scheme_math.f90'

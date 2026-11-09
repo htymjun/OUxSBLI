@@ -38,3 +38,8 @@ nohup.out
 # generated figures in ref/ stay ignored via *.png
 !2D_solver/*/ref/*.dat
 !2D_solver/*/ref/*.py
+*.log
+*.npz
+# test_tbl.py reads its committed moment file from here
+!ouxsbli/tests/data/
+!ouxsbli/tests/data/*.npz

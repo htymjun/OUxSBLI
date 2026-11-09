@@ -1,8 +1,19 @@
+#:include 'config.fypp'
 #:if not defined('FLTFLT_FORK')
   #:set FLTFLT_FORK = False
 #:endif
+#:if not defined('RECON')
+  #:set RECON = 'MUSCL'
+#:endif
+#:if not defined('WENO_PREC')
+  #:set WENO_PREC = 'FP64'
+#:endif
 module calc_muscl
   use libm
+  #:if RECON == 'WENO'
+  ! RECON = 'WENO': delta6 is WENO5-Z (src/calc_weno.f90.fypp), WENO_PREC = '${WENO_PREC}$'
+  use calc_weno, only : weno5z => weno5z_${WENO_PREC.lower()}$
+  #:endif
   use mod_globals, only : sp
   use mod_constant, only : one_third, one_sixth, one_twelfth
   #:if FLTFLT_FORK
@@ -216,6 +227,11 @@ contains
     real(sp), intent(in), value     :: sensor
     real(8), intent(in), contiguous :: a(6)
     real(8), intent(out)            :: al, ar
+    #:if RECON == 'WENO'
+    ! WENO5-Z on the same 6-point window: al from a(1..5), ar from a(2..6).
+    ! sensor and id_tvd (TVD) do not apply; delta4 (near-wall faces) stays MUSCL.
+    call weno5z(a, al, ar)
+    #:else
     real(8) d1, d2, d3, d4, d5
     d1 = -a(1) + a(2)
     d2 = -a(2) + a(3)
@@ -223,6 +239,7 @@ contains
     d4 = -a(4) + a(5)
     d5 = -a(5) + a(6)
     call MUSCL4th(id_tvd, sensor, a(3), a(4), d1, d2, d3, d4, d5, al, ar)
+    #:endif
   end subroutine delta6_r8
 
   #:if FLTFLT_FORK
