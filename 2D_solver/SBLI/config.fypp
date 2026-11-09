@@ -1,5 +1,5 @@
 #:set VISC          = 'NS'
-#:set SCHEME        = 'SLAU'
+#:set SCHEME        = 'Hybrid'
 #:set ORDER         = 6
 #:set TVD           = 'none'
 #:set SLAU_VARIANT  = 'HRSLAU2'
