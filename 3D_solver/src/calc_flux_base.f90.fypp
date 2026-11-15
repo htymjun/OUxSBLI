@@ -26,7 +26,7 @@
 #:set GLO = OV + 1 + max(OV - 1, 1)
 #:set GHI = OV + max(OV, 2)
 #:if COMMZ and VISC in ('NS', 'LES') and VISC_ORDER == 2
-  $:error('COMMZ with VISC_ORDER=2 is not implemented (calc_visc2 has no k-range kernels)')
+  #:stop 'COMMZ with VISC_ORDER=2 is not implemented (calc_visc2 has no k-range kernels)'
 #:endif
 module calc_flux_base
   use mod_globals, only : sp, &

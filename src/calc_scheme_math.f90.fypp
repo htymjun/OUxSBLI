@@ -203,7 +203,7 @@
     use mod_globals, only : gamma
     use mod_constant, only : over_gamma_1
     real(8), intent(in) :: rho, k, p, over_rho
-    real(8) :: gamma_over_gamma_1 = gamma * over_gamma_1
+    real(8), parameter :: gamma_over_gamma_1 = gamma * over_gamma_1
     real(8) ans
     ans = (p * gamma_over_gamma_1 + rho * k) * over_rho
   end function phi

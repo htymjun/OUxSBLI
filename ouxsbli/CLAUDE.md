@@ -14,7 +14,7 @@ pytest ouxsbli/tests/
 |-----------|----------------|
 | `test_etgv.py` | Supersonic Taylor-Green vortex (energy decay) |
 | `test_st.py` | Sod shock tube (exact Riemann solution) |
-| `test_evc.py` | Euler vortex convergence — KEEP 2nd/4th/6th, SLAU 2nd; expected order ≥1.5/3.5 |
+| `test_evc.py` | Euler vortex convergence — KEEP 4th/6th (`SCHEME_CONFIGS` in `utils/evc_common.py`); expected order ≥3.6/5.7 |
 | `test_os.py` | 2D oblique shock — pre/post state vs. Rankine-Hugoniot (tol 2%/5%) |
 | `test_corn.py` | 3D_solver_curv/CORN — pressure and density ratios vs. θ-β-M theory (tol 5%) |
 | `test_bl.py` | 2D laminar BL — Cf and u-profile vs. Blasius (~4 min) |

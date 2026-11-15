@@ -1,5 +1,6 @@
 #! SWTBLI: incident-shock / turbulent boundary-layer interaction, IUSTI-like
-#! conditions (M=2.28, theta=9.5 deg), two domains: a recycling-rescaling TBL
+#! conditions (M=2.28; theta_deg in mod_globals.f90, ramped 9.5 -> 11 -> 12 deg by
+#! stage.sh), two domains: a recycling-rescaling TBL
 #! generator (ranks 0/1) feeding an SBLI domain (ranks 2/3). See set.f90.
 #:set VISC = 'NS'
 #:set SCHEME = 'SLAU'

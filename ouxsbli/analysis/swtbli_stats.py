@@ -772,10 +772,10 @@ def cmd_report(rundir, out, last_du=100.0, ref=None):
                 "p_top_over_p2_behind_incident_maxdev": float(np.abs(B["p"][jt, mid] / P["p2"] - 1).max()) if mid.any() else None}
     xs_unif = (xb > G["x_in"] + blt) & (xb < G["x_imp"] + (P["xdown"] - 1) * blt)
     prof = prms_b[:, xs_unif].mean(1)
-    j95 = int(np.argmin(abs(yb - P["y_str"])))
+    jstr = int(np.argmin(abs(yb - P["y_str"])))
     # p'rms next to the top over p'rms where the y-stretch begins (y_str; 9.5 delta
     # in grid generation 1, where this key was called prms_ratio_top_to_9p5delta)
-    R["top"]["prms_ratio_top_to_ystr"] = float(prof[-2] / prof[j95])
+    R["top"]["prms_ratio_top_to_ystr"] = float(prof[-2] / prof[jstr])
     R["top"]["ok"] = bool((R.get("top_vs_reference_upstream_maxdev", R["top"]["p_top_over_p0_upstream_maxdev"])) < 0.01
                           and (R["top"]["p_top_over_p2_behind_incident_maxdev"] or 0) < 0.02
                           and R["top"]["prms_ratio_top_to_ystr"] <= 1.1)
@@ -1125,7 +1125,7 @@ def cmd_gif(rundir, out, frames=150, track_npz=None):
         f = figs["schlieren"]; f.clf(); ax = f.add_subplot(111)
         ax.pcolormesh(X, Yb, sch, cmap="Greys", vmin=-2.5, vmax=0.5, shading="auto")
         ax.set_aspect("equal"); ax.set_xlabel("x/δ"); ax.set_ylabel("y/δ")
-        ax.set_title(f"numerical schlieren log10|∇ρ|δ/ρ0, mid-span, t u0/δ = {t:.1f}")
+        ax.set_title(f"numerical schlieren log10|∇ρ|δ/ρ0, mid-span, t u0/δ = {t + t_off:.1f}")
         f.tight_layout(); writers["schlieren"].grab_frame()
         # (2) u with reversed-flow contour
         ua = np.full((len(b["y"]), na), np.nan)
@@ -1135,7 +1135,7 @@ def cmd_gif(rundir, out, frames=150, track_npz=None):
         ax.pcolormesh(X, Yb, U2, cmap="viridis", vmin=-0.2, vmax=1.05, shading="auto")
         ax.contour(X, Yb, np.nan_to_num(U2, nan=1.0), [0.0], colors="r", linewidths=0.8)
         ax.set_ylim(0, 6); ax.set_aspect("equal"); ax.set_xlabel("x/δ"); ax.set_ylabel("y/δ")
-        ax.set_title(f"u/u0 mid-span (red: u=0), t u0/δ = {t:.1f}")
+        ax.set_title(f"u/u0 mid-span (red: u=0), t u0/δ = {t + t_off:.1f}")
         f.tight_layout(); writers["u_bubble"].grab_frame()
         # (3) u' at y+ ~ 15
         j15 = int(np.argmin(abs(b["y"] - 15 * P["dnu0"])))
@@ -1145,7 +1145,7 @@ def cmd_gif(rundir, out, frames=150, track_npz=None):
         f = figs["uprime_y15"]; f.clf(); ax = f.add_subplot(111)
         ax.pcolormesh(X, b["z"] / blt, UP, cmap="RdBu_r", vmin=-0.25, vmax=0.25, shading="auto")
         ax.set_aspect("equal"); ax.set_xlabel("x/δ"); ax.set_ylabel("z/δ")
-        ax.set_title(f"u'/u0 at y+≈15, t u0/δ = {t:.1f}")
+        ax.set_title(f"u'/u0 at y+≈15, t u0/δ = {t + t_off:.1f}")
         f.tight_layout(); writers["uprime_y15"].grab_frame()
         # (4) wall pressure map, span-mean Cf and p_w (instantaneous and running mean
         # over the frames), tracked quantities

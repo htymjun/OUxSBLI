@@ -13,11 +13,15 @@
 !>    x_top = x_imp - Ly2/tan(beta1). The top boundary is a 1D characteristic
 !>    (Riemann-invariant) condition everywhere: R+ is extrapolated, R-, entropy and
 !>    the tangential velocity come from an exterior state that is state 1 upstream,
-!>    blends smoothly (tanh over ~4 cells) into state 2 at x_top (states 2/3 rescaled
-!>    to the actual upstream level, see set_bc) and, from x_top + 3 delta on, is the
-!>    running time mean of the local spanwise-mean state, so the boundary passes the
-!>    reflected/separation shock and its waves without imposing a state of its own. Fixing all five variables would reflect outgoing acoustic waves,
-!>    because the normal Mach number behind the incident shock is only ~0.3.
+!>    blends smoothly (tanh over ~4 cells) into state 2 at x_top (state 2 rescaled
+!>    to the actual upstream level, see set_bc) and stays state 2 from x_top + 3 delta
+!>    on while the flow under the top still comes down through the incident shock.
+!>    Fixing all five variables would reflect outgoing acoustic waves, because the
+!>    normal Mach number behind the incident shock is only ~0.3.
+!>    Behind the reflected (separation) shock, detected from the running time mean
+!>    of the local spanwise-mean v, the top row is instead copied from row ny-1 at
+!>    the foot of the right-running characteristic, so that shock and its waves
+!>    leave the domain.
 !>  * The top 2 delta of the SBLI domain (gy_top per cell) and the last 9.4 delta in
 !>    x (3 %/cell) are stretched to damp outgoing waves before the boundaries.
 !>  * The inter-domain transfer is staged through host memory (1.6 MB per stage):
@@ -51,7 +55,8 @@ module set
   logical, save :: dev_ready = .false.
   real(8), allocatable, device, save :: s_d(:)
   ! running mean (tau_mavg) of the spanwise-mean primitive state (rho, u, v, p) next to
-  ! the top, per column; the exterior state of the top boundary downstream of x_dyn
+  ! the top, per column; downstream of x_dyn it decides between the Riemann condition
+  ! on state 2 and the characteristic copy, and gives the characteristic's angle
   real(8), allocatable, device, save :: etop_d(:,:), itop_d(:,:)
   logical, save :: etop_init = .false.
   ! x on the device and the spacing of the top cell, for the characteristic extrapolation
@@ -281,7 +286,8 @@ contains
   !> Mean: composite turbulent profile with delta99 = blt (not Blasius).
   !> Perturbations chosen to by-pass the slow linear transition:
   !>  (1) near-wall streaks, 0.12 u0, peak at y+ = 15, spanwise wavelength
-  !>      Lz/2 = 1 delta (~108 wall units), modulated in x over 4 delta;
+  !>      Lz1/2 (1 delta, ~108 wall units, in the 2 delta span the runs were started
+  !>      with; 2 delta for Lz1 = 4 delta), modulated in x over 4 delta;
   !>  (2) divergence-free (in y-z) quasi-streamwise vortex pairs, |v'|,|w'| ~ 0.05 u0,
   !>      centred at y+ = 30, same spanwise wavelength, phase-shifted in x;
   !>  (3) Gaussian-filtered random noise, 5 % of u0, inside the boundary layer.
@@ -299,7 +305,7 @@ contains
     call composite_profile(ny, ys, um, Tm, dnu)
     if (myrank == 0) print '(a,f8.3,a,f8.2)', " IC: wall unit [um] = ", dnu*1.d6, ",  Re_tau = ", blt/dnu
 
-    lz_w = 0.5d0 * Lz1          ! = 1 delta for the 2 delta span, still periodic for 4 delta
+    lz_w = 0.5d0 * Lz1          ! 1 delta for the 2 delta span of the first runs, 2 delta for Lz1 = 4 delta
     lx_w = 4.d0 * blt
     yv   = 30.d0 * dnu
     psi0 = 0.05d0 * u0 / (2.d0 * pi / lz_w)   ! max |v'| = 0.05 u0 (g peaks at 1)
@@ -494,10 +500,10 @@ contains
         QJ_5(nx,j,k) = QJ_5(nx-1,j,k)
     enddo;enddo
 
-    ! Level of the exterior states behind the shocks at the SBLI top. Upstream of the
-    ! shock the outer flow is not at p0 but ~2 % above it (compression by the growing
-    ! boundary layer's displacement), so nominal states 2/3 fight the actual flow and
-    ! radiate weak waves behind the incident shock (seen in A2a). States 2 and 3 are
+    ! Level of the exterior state behind the incident shock at the SBLI top. Upstream
+    ! of the shock the outer flow is not at p0 but ~2 % above it (compression by the
+    ! growing boundary layer's displacement), so the nominal state 2 fights the actual
+    ! flow and radiates weak waves behind the incident shock (seen in A2a). State 2 is
     ! rescaled isentropically by the running mean (tau = 10 delta/u0) of the pressure
     ! next to the top upstream of x_top: p*f, rho*f**(1/gamma), same velocities.
     ! State 1 (upstream exterior) stays nominal: rescaling it too would feed the
@@ -528,9 +534,10 @@ contains
       ! (separation) shock and is not a known uniform state: with a large bubble it is
       ! neither state 2 nor state 3. The former SWTBLI switch between the two, decided
       ! cell by cell from the local v, kept injecting waves (A2c segment 1 schlieren:
-      ! a fan of parallel waves from the top where the reflected shock leaves). Use
-      ! the running mean of the local state instead: the boundary then imposes no mean
-      ! state of its own and the fluctuations leave through the Riemann condition.
+      ! a fan of parallel waves from the top where the reflected shock leaves). The
+      ! running mean of the local state now makes that decision per column (and gives
+      ! the characteristic direction), see the top-boundary kernel below; imposing
+      ! that mean itself through the Riemann condition was tried and rejected.
       call span_mean_row(nx, ny, nz, nx, ny-1, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, itop_d)
       call running_mean(nx, itop_d, etop_d, etop_init)
     endif

@@ -28,7 +28,7 @@ This file documents the 3D Cartesian solver. See the repository root `CLAUDE.md`
 
 Source is split across directories; CMake/vpath merges them at build time:
 
-- `src/` — shared templates and utilities: `mod_constant.f90.fypp`, `main.f90`, `cpu_gpu_mpi.f90`, `calc_muscl.f90.fypp`, `calc_physical_quantities.f90`, `print.f90.fypp`, `set_coordinate.f90`, `set_compressible_bl.f90`
+- `src/` — shared templates and utilities: `mod_constant.f90.fypp`, `sbli.f90` (SWTBLI's two-domain main; the single-domain `main.f90` is in `3D_solver/src/`), `cpu_gpu_mpi.f90`, `calc_muscl.f90.fypp`, `calc_physical_quantities.f90`, `print.f90.fypp`, `set_coordinate.f90`, `set_compressible_bl.f90`
 - `3D_solver/src/` — solver kernels (mostly `.f90.fypp` templates): convective/viscous scheme modules, time-integration, preprocessing
 - `3D_solver/<CASE>/` — per-case configuration: `mod_globals.f90` (grid/physical params, thread blocks), `set.f90` (grid/IC/BC), `config.fypp` (build-time scheme/method flags), `CMakeLists.txt`, `calc.sh`
 
@@ -57,7 +57,6 @@ main.f90
 | KHI  | Kelvin-Helmholtz instability |
 | NSTGV| NS Taylor-Green vortex |
 | OS   | Quasi-2D oblique shock + wall reflection (extrudes 2D_solver/OS through a thin periodic z; validated vs. Rankine-Hugoniot) |
-| SBLI | Shock-boundary layer interaction (RESCALE=True) |
 | STZ  | z-direction halo exchange validation: viscous Sod shock tube along z, same physical state as 2D_solver/ST (NS, KEEP, ORDER=4, COMMZ=True, `MPI='GPU'`, BC_Z=True) |
 | SWLBLI | Oblique-shock / laminar flat-plate boundary-layer interaction, M=2.15, β=32.72°, Xsh=100 mm (NS, SLAU, ORDER=6, BC_X=BC_Y=True, periodic z). Runs with `RESTART=True`: the initial field is the converged 2D solution of `2D_solver/SWLBLI`, extruded in z by that case's `convert_2d_to_3d[_2].f90` (see `2D_solver/CLAUDE.md`), so a fresh clone needs that 2D run first. It is the only NS case that can run with `COMMZ=True` (`MPI='GPU'`) — see the COMMZ section below. `BC_FORCING=True`: its `set_bc` takes `(x, z, phi_l_gpu, phi_m_gpu, t_now)` for a blowing/suction strip (currently commented out inside `set_bc`) |
 | SWTBLI | Incident-shock / turbulent boundary-layer interaction with large separation, M=2.28, θ=12° (grid generation 2; generation 1 was IUSTI-like θ=9.5°), Re_θ≈500 (NS, SLAU-family + WENO5-Z `W32P64`, ORDER=6, RESCALE=True). Two coupled domains run by `src/sbli.f90` on 4 ranks: a recycling-rescaling TBL generator (ranks 0/1) feeds an SBLI domain (ranks 2/3). Staged with `stage.sh`/`run_stage.sh`; see the SWTBLI section below |
@@ -139,7 +138,7 @@ python -m ouxsbli.analysis.tbl_stats report tbl_acc.npz
     at the top by the reflected shock coming back into the recovering boundary layer
     (inviscid landing estimate x_imp+28δ, inside the domain). With 18δ and θ=12° the
     estimate is beyond the outlet (`report` → `top_reflection`). The longer inflow
-    (`ximp_in` 31) keeps the top entry of the incident shock, `x_top` = x_imp − 24.2δ
+    (`ximp_in` 31) keeps the top entry of the incident shock, `x_top` = x_imp − 24.3δ
     at θ=12°, 6.7δ downstream of the inlet.
   * dz (4δ/108), `dyw0` and `dt` are the same in both generations: `dt` is set by
     the acoustic CFL of the first wall cell (x CFL is ~0.2 on the finer grid).
@@ -237,7 +236,7 @@ python -m ouxsbli.analysis.tbl_stats report tbl_acc.npz
 | Scheme | Files | Best for |
 |--------|-------|----------|
 | KEEP (Kinetic Energy & Entropy Preserving) | `calc_keep_kernel.f90.fypp`, `calc_keep_kernel_internal.f90.fypp` | Smooth vortical flows (TGV, KHI) |
-| SLAU (Simple Low-dissipation AUSM) | `calc_slau_kernel.f90.fypp`, `calc_slau_kernel_internal.f90.fypp` | Compressible turbulence with shocks (SBLI, TBL) |
+| SLAU (Simple Low-dissipation AUSM) | `calc_slau_kernel.f90.fypp`, `calc_slau_kernel_internal.f90.fypp` | Compressible turbulence with shocks (SWLBLI, SWTBLI) |
 | Hybrid (KEEP↔SLAU via Ducros sensor) | `calc_hybrid_kernel.f90.fypp`, `calc_hybrid_kernel_internal.f90.fypp` | Mixed smooth/shocked regions |
 
 Viscous discretization: `calc_visc2.f90.fypp` (Gaitonde & Visbal 2nd-order, `VISC_ORDER=2`) or `calc_visc_high.f90.fypp` + `calc_visc_high_internal.f90.fypp` (4th/6th-order, `VISC_ORDER=4` or `6`).
@@ -449,10 +448,11 @@ Rules that make this correct, and that any edit must preserve:
 * `calc_time_dev.f90.fypp`'s RK3 and RK4 loops (with and without COMMZ) call `set_bc` with the extra `(x, z, phi_l_gpu, phi_m_gpu, t_now)` arguments only when the case's `config.fypp` sets `BC_FORCING = True` (SWLBLI); every other case keeps the plain signature. Adding a case-specific argument to `set_bc` again must go through such a flag, or every other 3D case stops compiling.
 * `RESTART=True` + `RESCALE=True` used to abort on startup: `pre_rescale`
   (`preprocess.f90.fypp`) requires `recal/Qm.dat`, but `write_Qm` — the only routine
-  that wrote it — was never called from anywhere. `rescale_recv_send` now checkpoints
+  that wrote it — was never called from anywhere (it has since been removed). `rescale_recv_send` now checkpoints
   the profile through `write_Qm_restart` every 1000 timesteps once rescaling has
   engaged, which is what makes a staged TBL run resumable. On restart the running
-  mean now **continues** from the checkpoint: `pre_rescale` loads `recal/Qm.dat` into
+  mean now **resumes** from the checkpoint with the weight of 2000 steps (not the
+  true sample count of the previous stage): `pre_rescale` loads `recal/Qm.dat` into
   the compute rank's device `Qm`, `calc_time_dev` starts the counter `step` at 2001 (the
   restored profile weighs 2000 steps), and `calc_mean`/`rescale_recv_send` no longer
   skip on `id_recal`. It used to stay frozen at the restored profile, which makes the
@@ -469,6 +469,6 @@ Rules that make this correct, and that any edit must preserve:
   `np*(t2-1)+t1` rather than `nt*(t2-1)+t1`, which makes the time column of
   `data/rescaling.d` a sawtooth but does not affect the running mean (`calc_mean` keeps
   its own counter).
-* `calc_hybrid.f90`'s `calc_Ducros` shock sensor (used by SLAU/Hybrid schemes) recomputes its own full velocity-gradient tensor via always-2nd-order central differences, independent of `calc_div`'s higher-order `ux,vy,wz` — reusing `calc_div`'s output there would change the sensor's numerical values (mixed-order dilatation vs. vorticity) and needs a fallback for the edge band `calc_div` doesn't cover, so it hasn't been done; flagged as a known optimization candidate for SLAU/Hybrid NS/LES cases (currently: SBLI).
+* `calc_hybrid.f90`'s `calc_Ducros` shock sensor (used by SLAU/Hybrid schemes) recomputes its own full velocity-gradient tensor via always-2nd-order central differences, independent of `calc_div`'s higher-order `ux,vy,wz` — reusing `calc_div`'s output there would change the sensor's numerical values (mixed-order dilatation vs. vorticity) and needs a fallback for the edge band `calc_div` doesn't cover, so it hasn't been done; flagged as a known optimization candidate for SLAU/Hybrid NS/LES cases.
 * Nsight Compute profiling captures live in `3D_solver/nsys_ncu/*.ncu-rep` (open with `ncu --import <file> --print-summary per-kernel`, or the `.csv` triage exports); use these before speculating about kernel performance.
 * `preprocess.f90.fypp`'s `pre_calc` (the initial t=0 snapshot send) used to hardcode `real(4)`/`MPI_REAL4` for its flux-flat buffers regardless of `OUTPUT_PRECISION`, unlike `print.f90.fypp`'s `send_recv_for_print_even/odd3`, which already dispatched on the `io` kind parameter. This was never exercised because no case had set `OUTPUT_PRECISION=8` before EVC/BL/OS's tests needed it (float32 can't resolve a 6th-order convergence trend or tight Cf tolerances); fixed to use `real(io)` and branch on `io` like the rest of the pipeline. No existing case's behavior changes (`io` still resolves to 4 for all of them).

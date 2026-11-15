@@ -36,8 +36,8 @@ module mod_globals
   real(8), parameter :: Ly1 = 4.d0 * blt       ! nominal; the grid sets the exact value
 
   ! ---- SBLI domain: 1316 uniform cells (53 delta) + 80 buffer cells (+3 %/cell up
-  ! to 4 dx0, 9.4 delta). x_top = x_imp - 24.2 delta for theta = 12 deg, so the top
-  ! upstream of the incident shock still spans 6.8 delta; the uniform part ends
+  ! to 4 dx0, 9.4 delta). x_top = x_imp - 24.3 delta for theta = 12 deg, so the top
+  ! upstream of the incident shock still spans 6.7 delta; the uniform part ends
   ! xdown = 22 delta behind x_imp, at least 10 delta behind the reattachment.
   integer, parameter :: nx2   = 1397
   integer, parameter :: nbuf  = 80
@@ -80,7 +80,7 @@ module mod_globals
   type(dim3), parameter :: threads   = dim3(32,2,1)
   type(dim3) :: blocksE, blocksF, blocksG, blocksEv, blocksFv, blocksGv, blocks
 
-  ! ---- time (endT, np, step_offset, theta_deg are rewritten by stage.sh)
+  ! ---- time (endT, np, step_offset, theta_deg, Lz1 and nz1 are rewritten by stage.sh)
   ! delta/u0 = 1.968 us = 182 steps
   integer, parameter :: step_offset   = 6400
   integer, parameter :: start_rescale = 10

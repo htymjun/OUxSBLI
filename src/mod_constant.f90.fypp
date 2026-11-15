@@ -92,7 +92,7 @@ module mod_constant
   #:endif
   integer(2), parameter :: id_gpumpi = 0
   #:if COMMZ and RESCALE
-    $:error('COMMZ=True with RESCALE=True is not supported (no zdec_rescale procedure exists)')
+    #:stop 'COMMZ=True with RESCALE=True is not supported (no zdec_rescale procedure exists)'
   #:endif
   #:if RESTART
   logical, parameter :: id_recal = .true.

@@ -157,7 +157,7 @@ The **value** of these parameters is always 0; only the **type kind** matters fo
 
 ## MPI Decomposition
 
-**x-direction (default):** 1D decomposition via `3D_solver/src/calc_para.f90.fypp`. Default is 2 MPI ranks (`mpirun -n 2 a.out`), with `mygpu = myrank / 2` (2 ranks per GPU). GPU-aware MPI is optional via `id_gpumpi`.
+**x-direction (default):** 1D decomposition via `3D_solver/src/calc_para.f90.fypp`. Default is 2 MPI ranks (`mpirun -n 2 a.out`); each compute/IO rank pair shares one GPU, chosen from the rank's position within its node (`mygpu = mod(rank_node / 2, ndevices)` in `main.f90`/`sbli.f90`). GPU-aware MPI is optional via `id_gpumpi`.
 
 **z-direction (COMMZ=True):** Enabled for cases like STZ and SWLBLI. Overlapped communication: non-blocking z-halo exchange is posted, the stencil-safe interior fluxes are computed while MPI is in flight, then the ghost-dependent fluxes are completed (`calc_EFG_halo`; the exact plane/face ranges are documented at the top of `3D_solver/src/calc_flux_base.f90.fypp` and in `3D_solver/CLAUDE.md`). The `overlap` depth equals `ORDER // 2` (1/2/3 for 2nd/4th/6th order). `MPI='GPU'` passes device buffers to MPI directly and needs the `cudaDeviceSynchronize` in `start_exchange_z`. `COMMZ=True` and `RESCALE=True` cannot be combined. With 2 MPI ranks (one compute rank) the exchange is a self-copy identical to `set_bc_cyclic_z`, so COMMZ=True must reproduce COMMZ=False bit for bit.
 
@@ -186,7 +186,7 @@ See `3D_solver/CLAUDE.md` for adding a 3D Cartesian case, or `2D_solver/CLAUDE.m
 * `id_accuracy` controls ghost-cell count for both convective and viscous stencils.
 * Do not add `contiguous` and `shared` attributes when passing shared memory as an argument.
 * `cpu_gpu_mpi.f90` will be modified in the future.
-* When modifying `.f90.fypp` templates, always verify the generated output in `build/` for all affected cases — a fypp condition that looks correct may silently produce wrong code for one combination of config variables. In particular, no current case sets `VISC_ORDER=4` for an NS/LES build (all NS/LES cases use `ORDER=6` or `2`), so that branch of every viscous-kernel template only gets exercised by deliberately overriding `VISC_ORDER` in a case's `config.fypp` and rebuilding — do this before trusting changes to the `VISC_ORDER==4` branches.
+* When modifying `.f90.fypp` templates, always verify the generated output in `build/` for all affected cases — a fypp condition that looks correct may silently produce wrong code for one combination of config variables. In particular, the only NS case with a 4th-order viscous stencil is STZ (`ORDER=4`, KEEP, COMMZ, so only the `_koff`/z-decomposed kernels), and no case sets `VISC_ORDER` separately from `ORDER`; the remaining `VISC_ORDER==4` branches only get exercised by deliberately overriding `VISC_ORDER` in a case's `config.fypp` and rebuilding — do this before trusting changes to them.
 
 ## Strict Tooling Rules
 - MCP servers are strictly prohibited.

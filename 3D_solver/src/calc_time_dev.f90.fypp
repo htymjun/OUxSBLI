@@ -162,10 +162,10 @@ contains
 
 
 #:if RK == 3 and RESCALE and not COMMZ
-  !> 3rd-order TVD Runge-Kutta with re-scaling for density clipping/limiting
-  !> Combines TVD RK3 time stepping with optional density-based re-scaling for stability
-  !> When density becomes negative or too small, re-scale conserved variables at marker plane
-  !> Similar TVD RK3 stages as above, plus calls to step_rescale() for non-conservative correction
+  !> 3rd-order TVD Runge-Kutta with recycling-rescaling of the turbulent inflow (RESCALE):
+  !> each stage, step_rescale() hands the recycling plane nre2 (and, at stage 1, the
+  !> running-mean profile Qm) to the I/O rank rerank+1, whose rescale_recv_send()
+  !> rescales it on the host and returns the inlet plane that set_bc imposes.
   subroutine RungeKutta(myrank, mygpu, nx, ny, nz, x, dx_cpu, y, dy_cpu, z, dz_cpu, Jacobian_cpu, Q)
     integer, intent(in)    :: myrank, mygpu, nx, ny, nz
     real(8), intent(in)    :: x(nx), dx_cpu(nx-1)
@@ -390,9 +390,8 @@ contains
 
 
 #:if RK == 4 and RESCALE and not COMMZ
-  !> 4th-order Runge-Kutta with re-scaling for density clipping at monitoring plane
-  !> Combines high-order 4-4 RK accuracy with non-conservative re-scaling correction
-  !> Step-rescale calls handle inter-rank communication for marking critical planes
+  !> Classical 4th-order Runge-Kutta with recycling-rescaling of the turbulent inflow
+  !> (same step_rescale()/rescale_recv_send() exchange per stage as the RK3 loop above)
   subroutine RungeKutta(myrank, mygpu, nx, ny, nz, x, dx_cpu, y, dy_cpu, z, dz_cpu, Jacobian_cpu, Q)
     integer, intent(in)    :: myrank, mygpu, nx, ny, nz
     real(8), intent(in)    :: x(nx), dx_cpu(nx-1)
