@@ -164,16 +164,41 @@
   end function KEEP6
 
 
-  attributes(device) subroutine SLAU_common(rho1, rho2, over_rho1, over_rho2, u1, u2, v1, v2, &
+#! ---- SLAU-family face fluxes: SLAU1, HRSLAU2 and LFflux share one argument list
+#:set W12  = 'w1, w2, ' if DIM == 3 else ''
+#:set FOUT = 'F1, F2, F3, F4' + (', F5' if DIM == 3 else '')
+#:set FE   = 'F5' if DIM == 3 else 'F4'
+#:def flux_head(name, kind, use_line)
+  attributes(device) subroutine ${name}$(id_slau, rho1, rho2, u1, u2, v1, v2, ${W12}$un1, un2, p1, p2, Norm, HR, ${FOUT}$)
+    ${use_line}$
+    integer(${kind}$), intent(in), value :: id_slau
+    real(8), intent(in)           :: rho1, rho2, u1, u2, v1, v2, ${W12}$un1, un2, p1, p2, Norm(5)
+    real(sp), intent(in), value   :: HR
+    real(8), intent(out)          :: ${FOUT}$
+#:enddef
+#! over_rho1/2 and the kinetic energies k1/k2
+#:def flux_state()
+    over_rho1 = 1.d0 / rho1
+    over_rho2 = 1.d0 / rho2
+#:enddef
+#:def flux_kinetic()
+    k1 = 0.5d0 * (u1*u1 + v1*v1${' + w1*w1' if DIM == 3 else ''}$)
+    k2 = 0.5d0 * (u2*u2 + v2*v2${' + w2*w2' if DIM == 3 else ''}$)
+#:enddef
+#! upwinded mass flux and pressure -> F1..${FE}$ (SLAU1 and HRSLAU2)
+#:def slau_fluxes()
+      F1 = mass1       + mass2
+      !F2 = mass1 * u1 + mass2 * u2 + pres * Norm(2)
+      F2 = fma(mass1, u1, fma(mass2, u2, pres * Norm(2)))
+      F3 = fma(mass1, v1, fma(mass2, v2, pres * Norm(3)))
   #:if DIM == 3
-                                                 w1, w2, &
+      F4 = fma(mass1, w1, fma(mass2, w2, pres * Norm(4)))
   #:endif
-                                                 un1, un2, p1, p2, c, over_c, Mp, Mm, bp, bm, dp, Vtp, Vtm)
-    real(8), intent(in)  :: rho1, rho2, over_rho1, over_rho2, u1, u2, v1, v2, &
-  #:if DIM == 3
-                             w1, w2, &
-  #:endif
-                             un1, un2, p1, p2
+      ${FE}$ = mass1 * phi(rho1, k1, p1, over_rho1) + mass2 * phi(rho2, k2, p2, over_rho2)
+#:enddef
+  attributes(device) subroutine SLAU_common(rho1, rho2, over_rho1, over_rho2, u1, u2, v1, v2, ${W12}$un1, un2, p1, p2, &
+                                             c, over_c, Mp, Mm, bp, bm, dp, Vtp, Vtm)
+    real(8), intent(in)  :: rho1, rho2, over_rho1, over_rho2, u1, u2, v1, v2, ${W12}$un1, un2, p1, p2
     real(8), intent(out) :: c, over_c, Mp, Mm, bp, bm, dp, Vtp, Vtm
     block
       real(8) cl, cr
@@ -205,37 +230,22 @@
     use mod_globals, only : gamma
     use mod_constant, only : over_gamma_1
     real(8), intent(in) :: rho, k, p, over_rho
-    real(8), parameter :: gamma_over_gamma_1 = gamma * over_gamma_1
+    ! deliberately not a `parameter`: as a compile-time constant nvfortran folds it into
+    ! the callers' expressions differently and every SLAU-family result changes in the
+    ! last bits (checked: NSTGV, OS, SWTBLI)
+    real(8) :: gamma_over_gamma_1 = gamma * over_gamma_1
     real(8) ans
     ans = (p * gamma_over_gamma_1 + rho * k) * over_rho
   end function phi
 
 
-  attributes(device) subroutine SLAU1(id_slau, rho1, rho2, u1, u2, v1, v2, &
-  #:if DIM == 3
-                                           w1, w2, &
-  #:endif
-                                           un1, un2, p1, p2, Norm, HR, F1, F2, F3, F4${', F5' if DIM == 3 else ''}$)
-    use mod_globals, only : sp
-    integer(2), intent(in), value :: id_slau
-    real(8), intent(in)           :: rho1, rho2, u1, u2, v1, v2, &
-  #:if DIM == 3
-                                      w1, w2, &
-  #:endif
-                                      un1, un2, p1, p2, Norm(5)
-    real(sp), intent(in), value   :: HR
-    real(8), intent(out)          :: F1, F2, F3, F4${', F5' if DIM == 3 else ''}$
+$:flux_head('SLAU1', 2, 'use mod_globals, only : sp')
     real(8) c, over_c, Mp, Mm, M, x
     real(8) Vtp, Vtm, dp, bp, bm, mass, mass1, mass2, over_rho1, over_rho2, k1, k2
-    over_rho1 = 1.d0 / rho1
-    over_rho2 = 1.d0 / rho2
-    call SLAU_common(rho1, rho2, over_rho1, over_rho2, u1, u2, v1, v2, &
-  #:if DIM == 3
-                     w1, w2, &
-  #:endif
-                     un1, un2, p1, p2, c, over_c, Mp, Mm, bp, bm, dp, Vtp, Vtm)
-    k1 = 0.5d0 * (u1*u1 + v1*v1${' + w1*w1' if DIM == 3 else ''}$)
-    k2 = 0.5d0 * (u2*u2 + v2*v2${' + w2*w2' if DIM == 3 else ''}$)
+$:flux_state()
+    call SLAU_common(rho1, rho2, over_rho1, over_rho2, u1, u2, v1, v2, ${W12}$un1, un2, p1, p2, &
+                     c, over_c, Mp, Mm, bp, bm, dp, Vtp, Vtm)
+$:flux_kinetic()
     M  = fmin(1.d0, sqrt(k1 + k2) * over_c)
     x  = (1.d0 - M) ** 2
     !mass = 0.25d0 * (rho1 * (un1 + Vtp) + rho2 * (un2 - Vtm) - x * dp * over_c)
@@ -258,47 +268,18 @@
         term_p   = term * p_sum
         pres     = 0.5d0 * fma(dp, b_diff, term_p) ! dp * b_diff + term_p
       end block
-      F1 = mass1       + mass2
-      !F2 = mass1 * u1 + mass2 * u2 + pres * Norm(2)
-      !F3 = mass1 * v1 + mass2 * v2 + pres * Norm(3)
-      F2 = fma(mass1, u1, fma(mass2, u2, pres * Norm(2)))
-      F3 = fma(mass1, v1, fma(mass2, v2, pres * Norm(3)))
-  #:if DIM == 3
-      !F4 = mass1 * w1 + mass2 * w2 + pres * Norm(4)
-      F4 = fma(mass1, w1, fma(mass2, w2, pres * Norm(4)))
-      F5 = mass1 * phi(rho1, k1, p1, over_rho1) + mass2 * phi(rho2, k2, p2, over_rho2)
-  #:else
-      F4 = mass1 * phi(rho1, k1, p1, over_rho1) + mass2 * phi(rho2, k2, p2, over_rho2)
-  #:endif
+$:slau_fluxes()
     end block
   end subroutine SLAU1
 
 
-  attributes(device) subroutine HRSLAU2(id_slau, rho1, rho2, u1, u2, v1, v2, &
-  #:if DIM == 3
-                                             w1, w2, &
-  #:endif
-                                             un1, un2, p1, p2, Norm, HR, F1, F2, F3, F4${', F5' if DIM == 3 else ''}$)
-    use mod_globals, only : sp
-    integer(4), intent(in), value :: id_slau
-    real(8), intent(in)           :: rho1, rho2, u1, u2, v1, v2, &
-  #:if DIM == 3
-                                      w1, w2, &
-  #:endif
-                                      un1, un2, p1, p2, Norm(5)
-    real(sp), intent(in), value   :: HR
-    real(8), intent(out)          :: F1, F2, F3, F4${', F5' if DIM == 3 else ''}$
+$:flux_head('HRSLAU2', 4, 'use mod_globals, only : sp')
     real(8) c, over_c, Mp, Mm
     real(8) Vtp, Vtm, dp, bp, bm, mass, mass1, mass2, Vec2, over_rho1, over_rho2, k1, k2
-    over_rho1 = 1.d0 / rho1
-    over_rho2 = 1.d0 / rho2
-    call SLAU_common(rho1, rho2, over_rho1, over_rho2, u1, u2, v1, v2, &
-  #:if DIM == 3
-                     w1, w2, &
-  #:endif
-                     un1, un2, p1, p2, c, over_c, Mp, Mm, bp, bm, dp, Vtp, Vtm)
-    k1   = 0.5d0 * (u1*u1 + v1*v1${' + w1*w1' if DIM == 3 else ''}$)
-    k2   = 0.5d0 * (u2*u2 + v2*v2${' + w2*w2' if DIM == 3 else ''}$)
+$:flux_state()
+    call SLAU_common(rho1, rho2, over_rho1, over_rho2, u1, u2, v1, v2, ${W12}$un1, un2, p1, p2, &
+                     c, over_c, Mp, Mm, bp, bm, dp, Vtp, Vtm)
+$:flux_kinetic()
     Vec2 = sqrt(k1 + k2)
     block
       real(8) M, x
@@ -325,18 +306,7 @@
         term     = fma(dp, b_diff, p_sum)            ! dp * b_diff + p_sum
         pres     = 0.5d0 * fma(coeff, rho_sum, term) ! 0.5d0 * (coeff * rho_sum + term)
       end block
-      F1 = mass1       + mass2
-      !F2 = mass1 * u1 + mass2 * u2 + pres * Norm(2)
-      !F3 = mass1 * v1 + mass2 * v2 + pres * Norm(3)
-      F2 = fma(mass1, u1, fma(mass2, u2, pres * Norm(2)))
-      F3 = fma(mass1, v1, fma(mass2, v2, pres * Norm(3)))
-  #:if DIM == 3
-      !F4 = mass1 * w1 + mass2 * w2 + pres * Norm(4)
-      F4 = fma(mass1, w1, fma(mass2, w2, pres * Norm(4)))
-      F5 = mass1 * phi(rho1, k1, p1, over_rho1) + mass2 * phi(rho2, k2, p2, over_rho2)
-  #:else
-      F4 = mass1 * phi(rho1, k1, p1, over_rho1) + mass2 * phi(rho2, k2, p2, over_rho2)
-  #:endif
+$:slau_fluxes()
     end block
   end subroutine HRSLAU2
 
@@ -348,26 +318,10 @@
   !>   F = 0.5*(F(q1) + F(q2)) - 0.5*a*(U2 - U1),  a = max(|un1|+c1, |un2|+c2)
   !> Norm(2..${DIM+1}$) is the unit face normal of the Cartesian solvers, so the
   !> sound speeds need no metric factor.
-  attributes(device) subroutine LFflux(id_slau, rho1, rho2, u1, u2, v1, v2, &
-  #:if DIM == 3
-                                            w1, w2, &
-  #:endif
-                                            un1, un2, p1, p2, Norm, HR, F1, F2, F3, F4${', F5' if DIM == 3 else ''}$)
-    use mod_globals, only : sp, gamma
-    use mod_constant, only : over_gamma_1
-    integer(8), intent(in), value :: id_slau
-    real(8), intent(in)           :: rho1, rho2, u1, u2, v1, v2, &
-  #:if DIM == 3
-                                      w1, w2, &
-  #:endif
-                                      un1, un2, p1, p2, Norm(5)
-    real(sp), intent(in), value   :: HR
-    real(8), intent(out)          :: F1, F2, F3, F4${', F5' if DIM == 3 else ''}$
+$:flux_head('LFflux', 8, 'use mod_globals, only : sp, gamma; use mod_constant, only : over_gamma_1')
     real(8) over_rho1, over_rho2, k1, k2, a, m1, m2, ps
-    over_rho1 = 1.d0 / rho1
-    over_rho2 = 1.d0 / rho2
-    k1 = 0.5d0 * (u1*u1 + v1*v1${' + w1*w1' if DIM == 3 else ''}$)
-    k2 = 0.5d0 * (u2*u2 + v2*v2${' + w2*w2' if DIM == 3 else ''}$)
+$:flux_state()
+$:flux_kinetic()
     a  = max(abs(un1) + sqrt(gamma * p1 * over_rho1), &
              abs(un2) + sqrt(gamma * p2 * over_rho2))
     m1 = rho1 * un1
@@ -378,10 +332,7 @@
     F3 = 0.5d0 * (m1 * v1 + m2 * v2 + ps * Norm(3) - a * (rho2 * v2 - rho1 * v1))
   #:if DIM == 3
     F4 = 0.5d0 * (m1 * w1 + m2 * w2 + ps * Norm(4) - a * (rho2 * w2 - rho1 * w1))
-    F5 = 0.5d0 * (m1 * phi(rho1, k1, p1, over_rho1) + m2 * phi(rho2, k2, p2, over_rho2) &
-                  - a * ((p2 - p1) * over_gamma_1 + rho2 * k2 - rho1 * k1))
-  #:else
-    F4 = 0.5d0 * (m1 * phi(rho1, k1, p1, over_rho1) + m2 * phi(rho2, k2, p2, over_rho2) &
-                  - a * ((p2 - p1) * over_gamma_1 + rho2 * k2 - rho1 * k1))
   #:endif
+    ${FE}$ = 0.5d0 * (m1 * phi(rho1, k1, p1, over_rho1) + m2 * phi(rho2, k2, p2, over_rho2) &
+                  - a * ((p2 - p1) * over_gamma_1 + rho2 * k2 - rho1 * k1))
   end subroutine LFflux
