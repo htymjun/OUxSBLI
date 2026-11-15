@@ -46,6 +46,8 @@ _ALIAS = {
     "recon":      "RECON",
     "weno_prec":  "WENO_PREC",
     "riemann":    "RIEMANN",
+    "prec":       "PREC",
+    "keep_prec":  "KEEP_PREC",
 }
 
 # ---------------------------------------------------------------------------
@@ -59,7 +61,9 @@ _VALUE_NORMALIZE: dict[str, dict[str, str]] = {
                      "minmod": "tvd", "muscl4": "hybrid"},  # backward-compat aliases
     "SLAU_VARIANT": {"slau": "SLAU", "hrslau2": "HRSLAU2"},
     "RECON":        {"muscl": "MUSCL", "weno": "WENO"},
-    "WENO_PREC":    {"fp64": "FP64", "w32p64": "W32P64"},
+    "WENO_PREC":    {"fp64": "FP64", "w32p64": "W32P64", "mixed": "MIXED"},
+    "PREC":         {"fp64": "FP64", "df": "DF"},
+    "KEEP_PREC":    {"fp64": "FP64", "mixed": "MIXED", "mixed_cell": "MIXED_CELL"},
     "RIEMANN":      {"slau": "SLAU", "lf": "LF"},
 }
 
@@ -98,6 +102,11 @@ class Case:
         # config.fypp comparisons are case-sensitive (e.g. 'Euler' ≠ 'EULER').
         # Expand IC/BC specs into flat parameter dicts before alias expansion.
         raw = dict(params)
+        # OUXSBLI_CONFIG="prec=df,keep_prec=mixed" adds overrides to every Case,
+        # so an existing test runs unchanged in another precision mode
+        for kv in filter(None, os.environ.get("OUXSBLI_CONFIG", "").split(",")):
+            k, v = kv.split("=", 1)
+            raw[k.strip()] = v.strip()
         ic_spec = raw.pop("ic", None)
         bc_spec = raw.pop("bc", None)
         if ic_spec is not None:
@@ -151,7 +160,7 @@ class Case:
             if k == "RK" and isinstance(v, str):
                 v = _RK_NORMALIZE.get(v.lower(), v)
 
-            if any(_is_macro_line(line, k) for line in config_lines):
+            if k in _VALUE_NORMALIZE or any(_is_macro_line(line, k) for line in config_lines):
                 # param lives in config.fypp — apply fypp-correct casing for strings
                 if isinstance(v, str) and k in _VALUE_NORMALIZE:
                     v = _VALUE_NORMALIZE[k].get(v.lower(), v)
