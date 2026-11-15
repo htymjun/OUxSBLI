@@ -19,7 +19,8 @@ What is gated, and why the solver gate is not 5th order:
   * test_os_weno -- Rankine-Hugoniot within 3% (shared helper), boundary-
     aware kernels: WENO inside, MUSCL delta4 / first order next to the walls.
 W32P64 has no grid-convergence gate (by decision); it is exercised by the
-reconstruction driver (reported, not gated) and by the OS shock case.
+reconstruction driver (reported, not gated) and by the OS shock case. MIXED
+(diffFP32 'mixed': FP32 increments too) is reported by the driver, not gated.
 """
 import os
 import pathlib
@@ -73,7 +74,7 @@ def test_weno5z_reconstruction_order(tmp_path):
     out = subprocess.run([str(exe)], check=True, capture_output=True, text=True).stdout
     rows = [l.split() for l in out.splitlines() if re.match(r"\s*\d+\s+\d+\s", l)]
     table = {(int(r[0]), int(r[1])): [float(x) for x in r[2:]] for r in rows}
-    labels = ["FP64 v-", "FP64 v+", "W32P64 v-", "W32P64 v+"]
+    labels = ["FP64 v-", "FP64 v+", "W32P64 v-", "W32P64 v+", "MIXED v-", "MIXED v+"]
     for (case, n), errs in sorted(table.items()):
         print(f"  case {case} N={n:5d} " + "  ".join(f"{l}={e:.3e}" for l, e in zip(labels, errs)))
     assert all(np.isfinite(e) for errs in table.values() for e in errs)
