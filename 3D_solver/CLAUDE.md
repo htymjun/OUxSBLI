@@ -13,11 +13,9 @@ This file documents the 3D Cartesian solver. See the repository root `CLAUDE.md`
 | `3D_solver/src/calc_para.f90.fypp` | MPI halo exchange: x-direction pack/unpack and the COMMZ z-halo `start_exchange_z`/`finish_exchange_z` (`MPI='CPU'` host staging or `MPI='GPU'` CUDA-aware) |
 | `3D_solver/src/calc_keep_kernel.f90.fypp` | KEEP convective kernel |
 | `3D_solver/src/calc_slau_kernel.f90.fypp` | SLAU convective kernel |
-| `3D_solver/src/calc_roe_kernel.f90.fypp` | Roe convective kernel |
 | `3D_solver/src/calc_hybrid_kernel.f90.fypp` | Hybrid KEEP↔SLAU kernel |
 | `3D_solver/src/calc_keep_kernel_internal.f90.fypp` | Interior-only KEEP variant |
 | `3D_solver/src/calc_slau_kernel_internal.f90.fypp` | Interior-only SLAU variant |
-| `3D_solver/src/calc_roe_kernel_internal.f90.fypp` | Interior-only Roe variant |
 | `3D_solver/src/calc_hybrid_kernel_internal.f90.fypp` | Interior-only Hybrid variant |
 | `3D_solver/src/calc_visc2.f90.fypp` | 2nd-order viscous kernels |
 | `3D_solver/src/calc_visc_high.f90.fypp` | 4th/6th-order viscous kernels (`VISC_ORDER`-controlled), boundary-aware (interior/fallback branch per point) |
@@ -30,7 +28,7 @@ This file documents the 3D Cartesian solver. See the repository root `CLAUDE.md`
 
 Source is split across directories; CMake/vpath merges them at build time:
 
-- `src/` — shared templates and utilities: `mod_constant.f90.fypp`, `main.f90`, `cpu_gpu_mpi.f90`, `calc_muscl.f90`, `calc_physical_quantities.f90`, `print.f90`, `set_coordinate.f90`, `set_compressible_bl.f90`
+- `src/` — shared templates and utilities: `mod_constant.f90.fypp`, `main.f90`, `cpu_gpu_mpi.f90`, `calc_muscl.f90.fypp`, `calc_physical_quantities.f90`, `print.f90.fypp`, `set_coordinate.f90`, `set_compressible_bl.f90`
 - `3D_solver/src/` — solver kernels (mostly `.f90.fypp` templates): convective/viscous scheme modules, time-integration, preprocessing
 - `3D_solver/<CASE>/` — per-case configuration: `mod_globals.f90` (grid/physical params, thread blocks), `set.f90` (grid/IC/BC), `config.fypp` (build-time scheme/method flags), `CMakeLists.txt`, `calc.sh`
 
@@ -240,7 +238,6 @@ python -m ouxsbli.analysis.tbl_stats report tbl_acc.npz
 |--------|-------|----------|
 | KEEP (Kinetic Energy & Entropy Preserving) | `calc_keep_kernel.f90.fypp`, `calc_keep_kernel_internal.f90.fypp` | Smooth vortical flows (TGV, KHI) |
 | SLAU (Simple Low-dissipation AUSM) | `calc_slau_kernel.f90.fypp`, `calc_slau_kernel_internal.f90.fypp` | Compressible turbulence with shocks (SBLI, TBL) |
-| Roe | `calc_roe_kernel.f90.fypp`, `calc_roe_kernel_internal.f90.fypp` | Supersonic/hypersonic discontinuities |
 | Hybrid (KEEP↔SLAU via Ducros sensor) | `calc_hybrid_kernel.f90.fypp`, `calc_hybrid_kernel_internal.f90.fypp` | Mixed smooth/shocked regions |
 
 Viscous discretization: `calc_visc2.f90.fypp` (Gaitonde & Visbal 2nd-order, `VISC_ORDER=2`) or `calc_visc_high.f90.fypp` + `calc_visc_high_internal.f90.fypp` (4th/6th-order, `VISC_ORDER=4` or `6`).
@@ -447,7 +444,7 @@ Rules that make this correct, and that any edit must preserve:
 ## Notice
 * From an occupancy perspective, the subroutines invoked within `calc_flux_base.f90` should not be executed on separate streams.
 * `calc_flux_base.f90` and `calc_steps.f90` are the main bottleneck. You should optimize them. `calc_flux_base.f90` calls `calc_*_kernel.f90`, `calc_*_kernel_internal.f90`, `calc_visc*.f90`, and `calc_div.f90` (runs once per RK stage, right after `calc_quantities_T_3D`, for `VISC_ORDER>2`).
-* Roe scheme is not used. KEEP, SLAU, Hybrid schemes should be optimized.
+* KEEP, SLAU, Hybrid schemes should be optimized (the unused Roe kernels were removed).
 * STZ case exists specifically to validate the z-direction halo exchange (COMMZ=True, BC_Z=True; currently NS, KEEP, 4th order, `MPI='GPU'`). The 6th-order NS path is exercised by SWLBLI with `COMMZ=True`; see the COMMZ section above.
 * `calc_time_dev.f90.fypp`'s RK3 and RK4 loops (with and without COMMZ) call `set_bc` with the extra `(x, z, phi_l_gpu, phi_m_gpu, t_now)` arguments only when the case's `config.fypp` sets `BC_FORCING = True` (SWLBLI); every other case keeps the plain signature. Adding a case-specific argument to `set_bc` again must go through such a flag, or every other 3D case stops compiling.
 * `RESTART=True` + `RESCALE=True` used to abort on startup: `pre_rescale`
@@ -472,6 +469,6 @@ Rules that make this correct, and that any edit must preserve:
   `np*(t2-1)+t1` rather than `nt*(t2-1)+t1`, which makes the time column of
   `data/rescaling.d` a sawtooth but does not affect the running mean (`calc_mean` keeps
   its own counter).
-* `calc_hybrid.f90`'s `calc_Ducros` shock sensor (used by SLAU/Roe/Hybrid schemes) recomputes its own full velocity-gradient tensor via always-2nd-order central differences, independent of `calc_div`'s higher-order `ux,vy,wz` — reusing `calc_div`'s output there would change the sensor's numerical values (mixed-order dilatation vs. vorticity) and needs a fallback for the edge band `calc_div` doesn't cover, so it hasn't been done; flagged as a known optimization candidate for SLAU/Hybrid NS/LES cases (currently: SBLI).
+* `calc_hybrid.f90`'s `calc_Ducros` shock sensor (used by SLAU/Hybrid schemes) recomputes its own full velocity-gradient tensor via always-2nd-order central differences, independent of `calc_div`'s higher-order `ux,vy,wz` — reusing `calc_div`'s output there would change the sensor's numerical values (mixed-order dilatation vs. vorticity) and needs a fallback for the edge band `calc_div` doesn't cover, so it hasn't been done; flagged as a known optimization candidate for SLAU/Hybrid NS/LES cases (currently: SBLI).
 * Nsight Compute profiling captures live in `3D_solver/nsys_ncu/*.ncu-rep` (open with `ncu --import <file> --print-summary per-kernel`, or the `.csv` triage exports); use these before speculating about kernel performance.
 * `preprocess.f90.fypp`'s `pre_calc` (the initial t=0 snapshot send) used to hardcode `real(4)`/`MPI_REAL4` for its flux-flat buffers regardless of `OUTPUT_PRECISION`, unlike `print.f90.fypp`'s `send_recv_for_print_even/odd3`, which already dispatched on the `io` kind parameter. This was never exercised because no case had set `OUTPUT_PRECISION=8` before EVC/BL/OS's tests needed it (float32 can't resolve a 6th-order convergence trend or tight Cf tolerances); fixed to use `real(io)` and branch on `io` like the rest of the pipeline. No existing case's behavior changes (`io` still resolves to 4 for all of them).

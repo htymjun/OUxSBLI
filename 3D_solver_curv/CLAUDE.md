@@ -4,7 +4,7 @@ This file documents the curvilinear O-grid solver. See the repository root `CLAU
 
 ## Architecture
 
-Implements a 2D O-grid curvilinear mesh (ξ, η plane) with a uniform spanwise z direction. Entry point is `main_curv.f90` instead of `main.f90`.
+Implements a 2D O-grid curvilinear mesh (ξ, η plane) with a uniform spanwise z direction. Entry point is `main_curv.f90.fypp` instead of `main.f90`.
 
 Key differences from the Cartesian solver:
 
