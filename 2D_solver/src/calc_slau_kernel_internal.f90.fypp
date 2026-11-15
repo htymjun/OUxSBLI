@@ -29,7 +29,7 @@ module calc_slau_kernel_internal
 contains
   include 'calc_scheme_math.f90'
 
-  $:interp_routines('interp', ['rho', 'u', 'v', 'p'], (6, 4, 2))
+  $:interp_routines('interp', PRIM, (6, 4, 2))
 
 
   attributes(global) subroutine calc_slau_x_in(nx, ny, Q_1, Q_2, Q_3, Q_4, sensor, E)

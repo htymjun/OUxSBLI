@@ -1,4 +1,5 @@
 #:include 'config.fypp'
+#:include 'recon_macros.fypp'
 module calc_slau_kernel
   use mod_globals, only : gamma, threadsE, threadsF
   use mod_constant, only : over_gamma_1, id_slau, R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
@@ -57,22 +58,13 @@ contains
     fdx = 0.5_sp * (sensor(i,j) + sensor(i+1,j))
 #:if ORDER == 6
     if (3 <= i .and. i <= nx-3) then
-      call delta6(fdx, rho(idx-2:idx+3), rhol, rhor(idx_r))
-      call delta6(fdx,   u(idx-2:idx+3),   ul,   ur(idx_r))
-      call delta6(fdx,   v(idx-2:idx+3),   vl,   vr(idx_r))
-      call delta6(fdx,   p(idx-2:idx+3),   pl,   pr(idx_r))
+      $:delta_calls(6, 'fdx', 'r(idx_r)')
       fdx = wiggle_detector(p(idx-1:idx+2))
     elseif (2 <= i .and. i <= nx-2) then
-      call delta4(fdx, rho(idx-1:idx+2), rhol, rhor(idx_r))
-      call delta4(fdx,   u(idx-1:idx+2),   ul,   ur(idx_r))
-      call delta4(fdx,   v(idx-1:idx+2),   vl,   vr(idx_r))
-      call delta4(fdx,   p(idx-1:idx+2),   pl,   pr(idx_r))
+      $:delta_calls(4, 'fdx', 'r(idx_r)')
       fdx = wiggle_detector(p(idx-1:idx+2))
     else
-      rhol = rho(idx); rhor(idx_r) = rho(idx+1)
-        ul =   u(idx);   ur(idx_r) =   u(idx+1)
-        vl =   v(idx);   vr(idx_r) =   v(idx+1)
-        pl =   p(idx);   pr(idx_r) =   p(idx+1)
+      $:copy_lr('r(idx_r)')
        fdx = 1.0_sp
     endif
     associate(un1 => ul, un2 => ur(idx_r))
@@ -82,16 +74,10 @@ contains
     end associate
 #:elif ORDER == 4
     if (2 <= i .and. i <= nx-2) then
-      call delta4(fdx, rho(idx-1:idx+2), rhol, rhor(idx_r))
-      call delta4(fdx,   u(idx-1:idx+2),   ul,   ur(idx_r))
-      call delta4(fdx,   v(idx-1:idx+2),   vl,   vr(idx_r))
-      call delta4(fdx,   p(idx-1:idx+2),   pl,   pr(idx_r))
+      $:delta_calls(4, 'fdx', 'r(idx_r)')
       fdx = wiggle_detector(p(idx-1:idx+2))
     else
-      rhol = rho(idx); rhor(idx_r) = rho(idx+1)
-        ul =   u(idx);   ur(idx_r) =   u(idx+1)
-        vl =   v(idx);   vr(idx_r) =   v(idx+1)
-        pl =   p(idx);   pr(idx_r) =   p(idx+1)
+      $:copy_lr('r(idx_r)')
        fdx = 1.0_sp
     endif
     associate(un1 => ul, un2 => ur(idx_r))
@@ -150,22 +136,13 @@ contains
     fdy = 0.5_sp * (sensor(i,j) + sensor(i,j+1))
 #:if ORDER == 6
     if (3 <= j .and. j <= ny-3) then
-      call delta6(fdy, rho(idx-2:idx+3), rhol, rhor(idx_r))
-      call delta6(fdy,   u(idx-2:idx+3),   ul,   ur(idx_r))
-      call delta6(fdy,   v(idx-2:idx+3),   vl,   vr(idx_r))
-      call delta6(fdy,   p(idx-2:idx+3),   pl,   pr(idx_r))
+      $:delta_calls(6, 'fdy', 'r(idx_r)')
       fdy = wiggle_detector(p(idx-1:idx+2))
     elseif (2 <= j .and. j <= ny-2) then
-      call delta4(fdy, rho(idx-1:idx+2), rhol, rhor(idx_r))
-      call delta4(fdy,   u(idx-1:idx+2),   ul,   ur(idx_r))
-      call delta4(fdy,   v(idx-1:idx+2),   vl,   vr(idx_r))
-      call delta4(fdy,   p(idx-1:idx+2),   pl,   pr(idx_r))
+      $:delta_calls(4, 'fdy', 'r(idx_r)')
       fdy = wiggle_detector(p(idx-1:idx+2))
     else
-      rhol = rho(idx); rhor(idx_r) = rho(idx+1)
-        ul =   u(idx);   ur(idx_r) =   u(idx+1)
-        vl =   v(idx);   vr(idx_r) =   v(idx+1)
-        pl =   p(idx);   pr(idx_r) =   p(idx+1)
+      $:copy_lr('r(idx_r)')
        fdy = 1.0_sp
     endif
     associate(un1 => vl, un2 => vr(idx_r))
@@ -175,16 +152,10 @@ contains
     end associate
 #:elif ORDER == 4
     if (2 <= j .and. j <= ny-2) then
-      call delta4(fdy, rho(idx-1:idx+2), rhol, rhor(idx_r))
-      call delta4(fdy,   u(idx-1:idx+2),   ul,   ur(idx_r))
-      call delta4(fdy,   v(idx-1:idx+2),   vl,   vr(idx_r))
-      call delta4(fdy,   p(idx-1:idx+2),   pl,   pr(idx_r))
+      $:delta_calls(4, 'fdy', 'r(idx_r)')
       fdy = wiggle_detector(p(idx-1:idx+2))
     else
-      rhol = rho(idx); rhor(idx_r) = rho(idx+1)
-        ul =   u(idx);   ur(idx_r) =   u(idx+1)
-        vl =   v(idx);   vr(idx_r) =   v(idx+1)
-        pl =   p(idx);   pr(idx_r) =   p(idx+1)
+      $:copy_lr('r(idx_r)')
        fdy = 1.0_sp
     endif
     associate(un1 => vl, un2 => vr(idx_r))

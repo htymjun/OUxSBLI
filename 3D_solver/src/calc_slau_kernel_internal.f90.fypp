@@ -39,7 +39,7 @@ module calc_slau_kernel_internal
 contains
   include 'calc_scheme_math.f90'
 
-  $:interp_routines('interp', ['rho', 'u', 'v', 'w', 'p'], (6, 4, 2))
+  $:interp_routines('interp', PRIM, (6, 4, 2))
 
 
 #:for is_koff in KOFF_VARIANTS

@@ -57,3 +57,21 @@
   end subroutine delta_r${N}$
   #:endfor
 #:enddef
+#!
+#! Primitive variables carried by the convective kernels
+#:set PRIM = ['rho', 'u', 'v', 'w', 'p'] if DIM == 3 else ['rho', 'u', 'v', 'p']
+#!
+#! delta_calls(N, fd, right): N-point reconstruction of every primitive at the face
+#! between idx and idx+1 of the shared-memory line; the left state goes to <v>l, the
+#! right state to <v><right> (e.g. 'r(idx_r)' -> rhor(idx_r), '_r' -> rho_r)
+#:def delta_calls(N, fd, right)
+  #:for v in PRIM
+      call delta${N}$(${fd}$, ${v}$(idx-${N//2-1}$:idx+${N//2}$), ${v}$l, ${v}$${right}$)
+  #:endfor
+#:enddef
+#! copy_lr(right): first-order face states (the two cells next to the face)
+#:def copy_lr(right)
+  #:for v in PRIM
+      ${v}$l = ${v}$(idx); ${v}$${right}$ = ${v}$(idx+1)
+  #:endfor
+#:enddef

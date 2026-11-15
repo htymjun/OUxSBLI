@@ -55,7 +55,7 @@ contains
   include 'calc_scheme_math.f90'
   #:include 'calc_visc_cent.f90.fypp'
 
-  $:interp_routines('recon', ['rho', 'u', 'v', 'w', 'p'], (6,), numbered=False)
+  $:interp_routines('recon', PRIM, (6,), numbered=False)
 
 
   attributes(global) subroutine calc_slauv_x_in(nx, ny, nz, dx, dy, dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, sensor, vy, wz, E)

@@ -1,4 +1,5 @@
 #:include 'config.fypp'
+#:include 'recon_macros.fypp'
 module calc_hybrid_kernel
   use libm
   use mod_globals, only : gamma, threshold, threadsE, threadsF
@@ -81,10 +82,7 @@ contains
           end associate
         end block
       else
-        call delta6(fdx, rho(idx-2:idx+3), rhol, rho_r)
-        call delta6(fdx,   u(idx-2:idx+3),   ul,   u_r)
-        call delta6(fdx,   v(idx-2:idx+3),   vl,   v_r)
-        call delta6(fdx,   p(idx-2:idx+3),   pl,   p_r)
+        $:delta_calls(6, 'fdx', '_r')
         compute_slau = .true.
       endif
     elseif (2 <= i .and. i <= nx-2) then
@@ -98,10 +96,7 @@ contains
           end associate
         end block
       else
-        call delta4(fdx, rho(idx-1:idx+2), rhol, rho_r)
-        call delta4(fdx,   u(idx-1:idx+2),   ul,   u_r)
-        call delta4(fdx,   v(idx-1:idx+2),   vl,   v_r)
-        call delta4(fdx,   p(idx-1:idx+2),   pl,   p_r)
+        $:delta_calls(4, 'fdx', '_r')
         compute_slau = .true.
       endif
     else
@@ -115,10 +110,7 @@ contains
           end associate
         end block
       else
-        rhol = rho(idx); rho_r = rho(idx+1)
-        ul   =   u(idx);   u_r =   u(idx+1)
-        vl   =   v(idx);   v_r =   v(idx+1)
-        pl   =   p(idx);   p_r =   p(idx+1)
+        $:copy_lr('_r')
         compute_slau = .true.
       endif
     endif
@@ -134,10 +126,7 @@ contains
           end associate
         end block
       else
-        call delta4(fdx, rho(idx-1:idx+2), rhol, rho_r)
-        call delta4(fdx,   u(idx-1:idx+2),   ul,   u_r)
-        call delta4(fdx,   v(idx-1:idx+2),   vl,   v_r)
-        call delta4(fdx,   p(idx-1:idx+2),   pl,   p_r)
+        $:delta_calls(4, 'fdx', '_r')
         compute_slau = .true.
       endif
     else
@@ -151,10 +140,7 @@ contains
           end associate
         end block
       else
-        rhol = rho(idx); rho_r = rho(idx+1)
-        ul   =   u(idx);   u_r =   u(idx+1)
-        vl   =   v(idx);   v_r =   v(idx+1)
-        pl   =   p(idx);   p_r =   p(idx+1)
+        $:copy_lr('_r')
         compute_slau = .true.
       endif
     endif
@@ -169,10 +155,7 @@ contains
         end associate
       end block
     else
-      rhol = rho(idx); rho_r = rho(idx+1)
-      ul   =   u(idx);   u_r =   u(idx+1)
-      vl   =   v(idx);   v_r =   v(idx+1)
-      pl   =   p(idx);   p_r =   p(idx+1)
+      $:copy_lr('_r')
       compute_slau = .true.
     endif
     #:endif
@@ -236,10 +219,7 @@ contains
           end associate
         end block
       else
-        call delta6(fdy, rho(idx-2:idx+3), rhol, rho_r)
-        call delta6(fdy,   u(idx-2:idx+3),   ul,   u_r)
-        call delta6(fdy,   v(idx-2:idx+3),   vl,   v_r)
-        call delta6(fdy,   p(idx-2:idx+3),   pl,   p_r)
+        $:delta_calls(6, 'fdy', '_r')
         compute_slau = .true.
       endif
     elseif (2 <= j .and. j <= ny-2) then
@@ -253,10 +233,7 @@ contains
           end associate
         end block
       else
-        call delta4(fdy, rho(idx-1:idx+2), rhol, rho_r)
-        call delta4(fdy,   u(idx-1:idx+2),   ul,   u_r)
-        call delta4(fdy,   v(idx-1:idx+2),   vl,   v_r)
-        call delta4(fdy,   p(idx-1:idx+2),   pl,   p_r)
+        $:delta_calls(4, 'fdy', '_r')
         compute_slau = .true.
       endif
     else
@@ -270,10 +247,7 @@ contains
           end associate
         end block
       else
-        rhol = rho(idx); rho_r = rho(idx+1)
-        ul   =   u(idx);   u_r =   u(idx+1)
-        vl   =   v(idx);   v_r =   v(idx+1)
-        pl   =   p(idx);   p_r =   p(idx+1)
+        $:copy_lr('_r')
         compute_slau = .true.
       endif
     endif
@@ -289,10 +263,7 @@ contains
           end associate
         end block
       else
-        call delta4(fdy, rho(idx-1:idx+2), rhol, rho_r)
-        call delta4(fdy,   u(idx-1:idx+2),   ul,   u_r)
-        call delta4(fdy,   v(idx-1:idx+2),   vl,   v_r)
-        call delta4(fdy,   p(idx-1:idx+2),   pl,   p_r)
+        $:delta_calls(4, 'fdy', '_r')
         compute_slau = .true.
       endif
     else
@@ -306,10 +277,7 @@ contains
           end associate
         end block
       else
-        rhol = rho(idx); rho_r = rho(idx+1)
-        ul   =   u(idx);   u_r =   u(idx+1)
-        vl   =   v(idx);   v_r =   v(idx+1)
-        pl   =   p(idx);   p_r =   p(idx+1)
+        $:copy_lr('_r')
         compute_slau = .true.
       endif
     endif
@@ -324,10 +292,7 @@ contains
         end associate
       end block
     else
-      rhol = rho(idx); rho_r = rho(idx+1)
-      ul   =   u(idx);   u_r =   u(idx+1)
-      vl   =   v(idx);   v_r =   v(idx+1)
-      pl   =   p(idx);   p_r =   p(idx+1)
+      $:copy_lr('_r')
       compute_slau = .true.
     endif
     #:endif
