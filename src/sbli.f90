@@ -1,3 +1,6 @@
+!> Main program of the two-domain SWTBLI case (4 MPI ranks): ranks 0/1 run the
+!> recycling-rescaling TBL generator, ranks 2/3 the SBLI domain. The single-domain
+!> counterpart is 3D_solver/src/main.f90; the shared steps are in main_common.
 program main
   use cudafor
   use mpi
@@ -7,16 +10,13 @@ program main
   use mod_constant, only : id_recal
   use set_coordinate
   use calc_time_dev
+  use main_common
   implicit none
-  integer i, j, l, mygpu, m, s, nx, ny, nz, ios, errorcode
+  integer mygpu, nx, ny, nz
   real(8) Lx, Ly, Lz, t_start, t_end
   real(8), allocatable :: x(:), dx(:), y(:), dy(:), z(:), dz(:), Jacobian(:,:), Q(:,:,:,:)
-  character(len=8) header
-  character(len=40) filename
-  logical is_sequential
   ! MPI
   integer nranks, myrank, ierr
-  integer comm_node, rank_node, ndevices, cstat
 
   call MPI_INIT(ierr)
   call MPI_COMM_SIZE(MPI_COMM_WORLD, nranks, ierr)
@@ -43,50 +43,20 @@ program main
     Ly = Ly2
     Lz = Lz2
   endif
-  ! GPU from the rank's position within its node (as in 3D_solver/src/main.f90):
   ! each compute/IO pair shares one device, so with two visible GPUs the TBL pair
   ! runs on device 0 and the SBLI pair on device 1; with one GPU both share it.
-  call MPI_COMM_SPLIT_TYPE(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, comm_node, ierr)
-  call MPI_COMM_RANK(comm_node, rank_node, ierr)
-  call MPI_COMM_FREE(comm_node, ierr)
-  cstat = cudaGetDeviceCount(ndevices)
-  if (cstat /= 0 .or. ndevices < 1) then
-    print *, "rank", myrank, ": no CUDA device visible (cudaGetDeviceCount status", cstat, ")"
-    call MPI_ABORT(MPI_COMM_WORLD, 1, ierr)
-  endif
-  mygpu = mod(rank_node / 2, ndevices)
+  call select_gpu(myrank, mygpu)
   call execute_command_line('mkdir -p recal data/1 data/3', wait=.true., exitstat=ierr)
 
   call set_block_3D(nx, ny, nz, threads, threadsE, threadsEv, threadsF, threadsFv, threadsG, threadsGv, &
                     blocks, blocksE, blocksEv, blocksF, blocksFv, blocksG, blocksGv)
   allocate(Q(nx,ny,nz,5), x(nx), dx(nx), y(ny), dy(ny), z(nz), dz(nz), Jacobian(nx,ny))
 
-  ! set grid information
+  ! set grid information (the I/O ranks take the grid of their compute rank)
   if (mod(myrank,2) == 0) then
     call set_grid(myrank, nx, ny, nz, Lx, Ly, Lz, 0.9d0 * Lx1, x, y, z, dx, dy, dz)
     if (id_recal) then
-      write(filename, "(a, i5.5, a)") "recal/Q", int(myrank/2+1), ".dat"
-      open(10, file=filename, action="read", form="unformatted", access="sequential", status="old", iostat=ios)
-      if (ios /= 0) then
-        print *, "Error opening file."
-        call MPI_ABORT(MPI_COMM_WORLD, errorcode, ierr)
-        stop
-      endif
-      read(10, iostat=ios) header
-      close(10)
-      is_sequential = (ios == 0 .and. header == 'SEQFMT01')
-      if (is_sequential) then
-        open(10, file=filename, action="read", form="unformatted", access="sequential", status="old")
-        read(10) header
-        read(10) Q
-        print *, "myrank is ", myrank, "simulation has been restarted. access is sequential"
-      else
-        open(10, file=filename, action="read", form="unformatted", access="stream", status="old")
-        rewind(10)
-        read(10) Q
-        print *, "myrank is ", myrank, "simulation has been restarted. access is stream"
-      endif
-      close(10)
+      call read_restart(myrank, nx, ny, nz, Q)
     else
       print *, "myrank is ", myrank, "set initial condition"
       call set_init(myrank, nx, ny, nz, x, y, z, Q)
@@ -101,36 +71,8 @@ program main
   call RungeKutta(myrank, mygpu, nx, ny, nz, x, dx, y, dy, z, dz, Jacobian, Q)
   call cpu_time(t_end)
 
-  if (mod(myrank,2) == 0) then
-    ! calculation time
-    if (t_end - t_start <= 60.d0) then
-      s = int(t_end - t_start)
-      print *, "calculation time:", s, " [sec]"
-    else
-      m = int(t_end - t_start) / 60
-      s = int(t_end - t_start) - 60 * m
-      print *, "calculation time:", m, " [min] ", s, " [sec]"
-    endif
-    ! save data
-    do l = 1, nz
-      do j = 1, ny
-        do m = 1, 5
-          do i = 1, nx
-            Q(i,j,l,m) = Jacobian(i,j) * Q(i,j,l,m)
-    enddo;enddo;enddo;enddo
-    call cpu_time(t_start)
-    write(filename, "(a, i5.5, a)") "recal/Q", int(myrank/2+1), ".dat"
-    open(10,file=filename,status="replace",action="write",form="unformatted",access="stream")
-    !header = 'SEQFMT01'
-    !write(10) header
-    write(10) Q
-    close(10)
-    call cpu_time(t_end)
-    s = t_end - t_start
-    print *, "output time:", s, " [sec]"
-  endif
+  if (mod(myrank,2) == 0) call report_and_save(myrank, nx, ny, nz, Jacobian, Q, t_end - t_start)
 
-  deallocate(Q,x,dx,y,dy,z,dz,Jacobian)
+  deallocate(Q, x, dx, y, dy, z, dz, Jacobian)
   call MPI_FINALIZE(ierr)
 end program main
-

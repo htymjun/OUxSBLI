@@ -7,6 +7,7 @@ This file documents the 3D Cartesian solver. See the repository root `CLAUDE.md`
 | Template (in `src/` or `3D_solver/src/`) | Purpose |
 |------------------------------------------|---------|
 | `src/mod_constant.f90.fypp` | Kind-dispatch Fortran parameters from config values |
+| `src/recon_macros.fypp` | fypp macros `#:include`d by the SLAU-family kernels of 2D and 3D: `interp_routines`/`delta_r_routines` (order dispatch of the face reconstruction) and `delta_calls`/`copy_lr` (the per-primitive `delta4`/`delta6` calls). Not compiled on its own; CMake passes `-I src` to fypp |
 | `src/calc_weno.f90.fypp` | WENO5-Z face reconstruction (FP64, W32P64), called by `calc_muscl`'s `delta6` when `RECON='WENO'` |
 | `3D_solver/src/calc_flux_base.f90.fypp` | Top-level flux dispatcher (convective + viscous) |
 | `3D_solver/src/calc_time_dev.f90.fypp` | RK time-stepping orchestration |
@@ -28,7 +29,7 @@ This file documents the 3D Cartesian solver. See the repository root `CLAUDE.md`
 
 Source is split across directories; CMake/vpath merges them at build time:
 
-- `src/` — shared templates and utilities: `mod_constant.f90.fypp`, `sbli.f90` (SWTBLI's two-domain main; the single-domain `main.f90` is in `3D_solver/src/`), `cpu_gpu_mpi.f90`, `calc_muscl.f90.fypp`, `calc_physical_quantities.f90`, `print.f90.fypp`, `set_coordinate.f90`, `set_compressible_bl.f90`
+- `src/` — shared templates and utilities: `mod_constant.f90.fypp`, `sbli.f90` (SWTBLI's two-domain main; the single-domain `main.f90` is in `3D_solver/src/`, and both take GPU selection, restart input and the final restart output from `3D_solver/src/main_common.f90`), `cpu_gpu_mpi.f90`, `calc_muscl.f90.fypp`, `calc_physical_quantities.f90`, `print.f90.fypp`, `set_coordinate.f90`, `set_compressible_bl.f90`
 - `3D_solver/src/` — solver kernels (mostly `.f90.fypp` templates): convective/viscous scheme modules, time-integration, preprocessing
 - `3D_solver/<CASE>/` — per-case configuration: `mod_globals.f90` (grid/physical params, thread blocks), `set.f90` (grid/IC/BC), `config.fypp` (build-time scheme/method flags), `CMakeLists.txt`, `calc.sh`
 
@@ -470,5 +471,9 @@ Rules that make this correct, and that any edit must preserve:
   `data/rescaling.d` a sawtooth but does not affect the running mean (`calc_mean` keeps
   its own counter).
 * `calc_hybrid.f90`'s `calc_Ducros` shock sensor (used by SLAU/Hybrid schemes) recomputes its own full velocity-gradient tensor via always-2nd-order central differences, independent of `calc_div`'s higher-order `ux,vy,wz` — reusing `calc_div`'s output there would change the sensor's numerical values (mixed-order dilatation vs. vorticity) and needs a fallback for the edge band `calc_div` doesn't cover, so it hasn't been done; flagged as a known optimization candidate for SLAU/Hybrid NS/LES cases.
+* Verifying a template refactor: expand every template for every case (and for configs no case uses: other `ORDER`/`RK`/`SCHEME`/`RECON`/`COMMZ` values) with fypp before and after, and compare the Fortran statements; then compare the `recal/Q*.dat` and VTK files of short runs bit for bit. Three things to know when doing that:
+  * `phi` in `src/calc_scheme_math.f90.fypp` keeps `gamma_over_gamma_1` as an initialised local on purpose. As a `parameter` nvfortran folds it into the callers differently and every SLAU-family run changes in the last bits.
+  * A `!$cuf kernel do` sum reduction is not reproducible from run to run (last bits). SWTBLI's `f_top` used one and the SBLI domain gave three different results from the same restart; it now sums per-column means on the host. Keep reductions that feed back into the solution on the host or in a serial inner loop.
+  * `3D_solver_curv` (CORN, NACA) is not bit-reproducible from run to run even with an unchanged binary (cause not investigated), so only its generated code can be compared.
 * Nsight Compute profiling captures live in `3D_solver/nsys_ncu/*.ncu-rep` (open with `ncu --import <file> --print-summary per-kernel`, or the `.csv` triage exports); use these before speculating about kernel performance.
 * `preprocess.f90.fypp`'s `pre_calc` (the initial t=0 snapshot send) used to hardcode `real(4)`/`MPI_REAL4` for its flux-flat buffers regardless of `OUTPUT_PRECISION`, unlike `print.f90.fypp`'s `send_recv_for_print_even/odd3`, which already dispatched on the `io` kind parameter. This was never exercised because no case had set `OUTPUT_PRECISION=8` before EVC/BL/OS's tests needed it (float32 can't resolve a 6th-order convergence trend or tight Cf tolerances); fixed to use `real(io)` and branch on `io` like the rest of the pipeline. No existing case's behavior changes (`io` still resolves to 4 for all of them).
