@@ -82,6 +82,10 @@ inside them over the whole run. max |ke/ke0 - FP64| over the run: KEEP2 DF 6.1e-
 5.2e-3, MIXED_CELL 5.8e-3; KEEP6 DF 2.2e-3, MIXED 6.2e-3, MIXED_CELL 5.9e-3 (round-off
 growth of the inviscid TGV; DF also departs from FP64, as in diffFP32).
 
+Existing suites in DF (`OUXSBLI_CONFIG=prec=df`, commit 4ff0ee0): test_etgv 1 passed,
+test_evc_3d 2 passed (KEEP4/6 orders), test_os_3d 1 passed (Rankine-Hugoniot), test_bl_3d 6
+passed (Blasius), test_nstgv_ke_eps 2 passed (KEEP and SLAU budgets); test_tbl skipped (its
+reference data is not in this checkout).
 Existing suites: `pytest -m "not slow"` 33 passed / 14 skipped (same as d911d5a);
 `OUXSBLI_CONFIG=keep_prec=mixed|keep_prec=mixed_cell|prec=df pytest test_etgv.py` pass;
 `OUXSBLI_CONFIG=keep_prec=mixed pytest test_nstgv_ke_eps.py` (fused KEEP+NS) passes;
