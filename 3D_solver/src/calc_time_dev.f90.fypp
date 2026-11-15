@@ -11,6 +11,9 @@
 #! phases, current step) for a time-dependent blowing/suction strip. Only
 #! SWLBLI defines it; every other case keeps the plain set_bc signature.
 #:set bc_extra = 'x, z, phi_l_gpu, phi_m_gpu, t_now, ' if BC_FORCING else ''
+#! Initial value of the running-mean counter of the rescaling profile Qm: a restart
+#! resumes from recal/Qm.dat with the weight of 2000 steps (see calc_mean, pre_rescale).
+#:set QM_STEP0 = 2001 if RESTART else 1
 #:if BC_FORCING and RESCALE
   #:stop 'BC_FORCING is only implemented for the RESCALE=False time loops (RK=3 and RK=4, with or without COMMZ)'
 #:endif
@@ -172,9 +175,7 @@ contains
     integer i, j, k, l, t1, t2, ierr, nranks, ndevices, stat, ireq, ireq2(2)
     integer istat(MPI_STATUS_SIZE), istat2(MPI_STATUS_SIZE,2)
     ! rescal_cpu!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! running-mean counter of the rescaling profile Qm; a restart resumes from
-    ! recal/Qm.dat with the weight of 2000 steps (see calc_mean, pre_rescale)
-    integer :: step = ${'2001' if RESTART else '1'}$, flag_re = 0, flag_req
+    integer :: step = ${QM_STEP0}$, flag_re = 0, flag_req
     real(8), allocatable, device :: Qre_1(:), Qre_2(:), Qre_3(:), Qre_4(:), Qre_5(:)
     real(8), allocatable, device :: Qm_1(:), Qm_2(:), Qm_3(:), Qm_4(:), Qm_5(:)
     real(8), allocatable, pinned :: Qm_cpu_1(:), Qm_cpu_2(:), Qm_cpu_3(:), Qm_cpu_4(:), Qm_cpu_5(:)
@@ -401,9 +402,7 @@ contains
     integer i, j, k, l, t1, t2, ierr, nranks, ndevices, stat, ireq, ireq2(2)
     integer istat(MPI_STATUS_SIZE), istat2(MPI_STATUS_SIZE,2)
     ! rescale !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! running-mean counter of the rescaling profile Qm; a restart resumes from
-    ! recal/Qm.dat with the weight of 2000 steps (see calc_mean, pre_rescale)
-    integer :: step = ${'2001' if RESTART else '1'}$, flag_re = 0, flag_req
+    integer :: step = ${QM_STEP0}$, flag_re = 0, flag_req
     real(8), allocatable, device :: Qre_1(:), Qre_2(:), Qre_3(:), Qre_4(:), Qre_5(:)
     real(8), allocatable, device :: Qm_1(:), Qm_2(:), Qm_3(:), Qm_4(:), Qm_5(:)
     real(8), allocatable, pinned :: Qm_cpu_1(:), Qm_cpu_2(:), Qm_cpu_3(:), Qm_cpu_4(:), Qm_cpu_5(:)

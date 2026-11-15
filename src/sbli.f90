@@ -1,5 +1,4 @@
 program main
-  use, intrinsic :: iso_fortran_env
   use cudafor
   use mpi
   use mod_globals,  only : nx1, nx2, ny1, ny2, nz1, nz2, Lx1, Lx2, Ly1, Ly2, Lz1, Lz2, &
@@ -16,7 +15,7 @@ program main
   character(len=40) filename
   logical is_sequential
   ! MPI
-  integer nranks, myrank, ierr, ireq, istat(MPI_STATUS_SIZE)
+  integer nranks, myrank, ierr
   integer comm_node, rank_node, ndevices, cstat
 
   call MPI_INIT(ierr)
@@ -47,7 +46,6 @@ program main
   ! GPU from the rank's position within its node (as in 3D_solver/src/main.f90):
   ! each compute/IO pair shares one device, so with two visible GPUs the TBL pair
   ! runs on device 0 and the SBLI pair on device 1; with one GPU both share it.
-  ! mygpu1/mygpu2 in mod_globals are no longer used.
   call MPI_COMM_SPLIT_TYPE(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, comm_node, ierr)
   call MPI_COMM_RANK(comm_node, rank_node, ierr)
   call MPI_COMM_FREE(comm_node, ierr)

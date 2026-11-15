@@ -24,13 +24,6 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 from ouxsbli.analysis.swtbli_stats import case_params, make_y  # noqa: E402
 
-GAMMA = 1.4
-
-
-def parse_int(src, name):
-    import re
-    return int(re.search(r"::\s*" + name + r"\s*=\s*(\d+)", src).group(1))
-
 
 def smooth(a, axis, n=3, periodic=False):
     w = np.exp(-0.5 * (np.arange(-n, n + 1) / (n / 3.0)) ** 2)
@@ -79,13 +72,8 @@ def main():
     src, dst = sys.argv[1], sys.argv[2]
     amp = float(sys.argv[sys.argv.index("--amp") + 1]) if "--amp" in sys.argv else 0.01
     seed = int(sys.argv[sys.argv.index("--seed") + 1]) if "--seed" in sys.argv else 1
-    here = os.path.dirname(os.path.abspath(__file__))
-    rundir = os.path.dirname(os.path.abspath(src))
-    mg = os.path.join(rundir, "mod_globals.f90")
-    P = case_params(rundir)
-    s = open(mg).read()
-    nx1, ny1, nz = parse_int(s, "nx1"), parse_int(s, "ny1"), parse_int(s, "nz1")
-    nx2, ny2 = parse_int(s, "nx2"), parse_int(s, "ny2")
+    P = case_params(os.path.dirname(os.path.abspath(src)))
+    nx1, ny1, nz, nx2, ny2 = (P[k] for k in ("nx1", "ny1", "nz1", "nx2", "ny2"))
     blt = P["blt"]
     y_all = make_y(P, ny2)
     os.makedirs(dst, exist_ok=True)

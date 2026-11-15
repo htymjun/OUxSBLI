@@ -22,10 +22,6 @@ module mod_globals
   real(8), parameter :: Cf_init = 3.783d-3
   real(8), parameter :: dnu0    = 9.952d-6    ! inlet viscous length (composite profile)
 
-  ! unused since src/sbli.f90 selects the GPU node-locally; kept for its interface
-  integer, parameter :: mygpu1 = 0
-  integer, parameter :: mygpu2 = 1
-
   ! ---- spanwise (shared by both domains); nz counts 3+3 periodic ghost planes
   real(8), parameter :: Lz1 = 4.d0 * blt
   integer, parameter :: nz1 = 114

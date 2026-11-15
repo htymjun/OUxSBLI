@@ -160,9 +160,8 @@ contains
     real(8), intent(inout), allocatable, device :: Qre_1(:), Qre_2(:), Qre_3(:), Qre_4(:), Qre_5(:)
     real(8), intent(inout), allocatable, device :: Qm_1(:), Qm_2(:), Qm_3(:), Qm_4(:), Qm_5(:)
     real(8), intent(inout), allocatable         :: Qm_cpu_1(:), Qm_cpu_2(:), Qm_cpu_3(:), Qm_cpu_4(:), Qm_cpu_5(:)
-    character(len=40) filename
-    logical exists
-    integer j, stat, ilen, ireq, ierr, errorcode
+    real(8) Qm_cpu(ny,5)
+    integer stat, ilen, ierr
     type(cudaDeviceProp) prop
     if (myrank == rerank) then
       call MPI_IRECV(flag_re, 1, MPI_INTEGER, rerank+1, 1001, MPI_COMM_WORLD, flag_req, ierr)
@@ -184,17 +183,8 @@ contains
       ! the running mean of the rescaling profile continues from the checkpoint
       ! (it used to stay frozen at the restored profile for the whole run)
       if (myrank == rerank) then
-        block
-          real(8) :: q1(ny), q2(ny), q3(ny), q4(ny), q5(ny)
-          open(10, file="recal/Qm.dat", status='old', action='read', form='unformatted', access='stream', iostat=ierr)
-          if (ierr /= 0) then
-            print *, "Qm is required but doesn't exist"
-            call MPI_ABORT(MPI_COMM_WORLD, errorcode, ierr)
-          endif
-          read(10) q1, q2, q3, q4, q5
-          close(10)
-          Qm_1 = q1; Qm_2 = q2; Qm_3 = q3; Qm_4 = q4; Qm_5 = q5
-        end block
+        call read_Qm(ny, Qm_cpu)
+        Qm_1 = Qm_cpu(:,1); Qm_2 = Qm_cpu(:,2); Qm_3 = Qm_cpu(:,3); Qm_4 = Qm_cpu(:,4); Qm_5 = Qm_cpu(:,5)
       endif
 #:endif
     elseif (myrank == rerank+1) then
@@ -202,37 +192,29 @@ contains
       stat = cudaGetDeviceProperties(prop, 0)
       ilen = verify(prop%name, ' ', .true.)
       print '(1x, a, a, i1, a)', prop%name(1:ilen), " (GPU", 0, ") calculates rescaling"
+      ! filled by the first rescale_recv_send(num = 1) before set_rescale reads it
       allocate(Qm_cpu_1(ny), Qm_cpu_2(ny), Qm_cpu_3(ny), Qm_cpu_4(ny), Qm_cpu_5(ny))
-#:if RESTART
-      write(filename, "(a)") "recal/Qm.dat"
-      inquire(file=filename, exist=exists)
-      if (exists) then
-        open(10, file=filename, status='old', action='read', form='unformatted', access='stream')
-        read(10) Qm_cpu_1, Qm_cpu_2, Qm_cpu_3, Qm_cpu_4, Qm_cpu_5
-        close(10)
-#:if not RESCALE
-        print *, "Qm exists (not fixed value)"
-#:endif
-        do j = 1, ny
-          if (Qm_cpu_1(j) /= Qm_cpu_1(j) .or. Qm_cpu_2(j) /= Qm_cpu_2(j) .or. Qm_cpu_3(j) /= Qm_cpu_3(j) .or. &
-              Qm_cpu_4(j) /= Qm_cpu_4(j) .or. Qm_cpu_5(j) /= Qm_cpu_5(j)) then
-            print *, "Qm is NaN"
-            call MPI_ABORT(MPI_COMM_WORLD, errorcode, ierr)
-          endif
-        enddo
-      else
-#:if RESCALE
-        print *, "Qm is required but doesn't exist"
-        call MPI_ABORT(MPI_COMM_WORLD, errorcode, ierr)
-#:endif
-        Qm_cpu_1(:) = 0.d0
-        Qm_cpu_2(:) = 0.d0
-        Qm_cpu_3(:) = 0.d0
-        Qm_cpu_4(:) = 0.d0
-        Qm_cpu_5(:) = 0.d0
-        print *, "Qm doesn't exist"
-      endif
-#:endif
     endif
   end subroutine pre_rescale
+
+#:if RESTART and RESCALE
+  !> Read the rescaling reference profile checkpoint recal/Qm.dat
+  !> (rho, u, v, w, p as written by calc_rescale's write_Qm_restart).
+  subroutine read_Qm(ny, Qm)
+    integer, intent(in)  :: ny
+    real(8), intent(out) :: Qm(ny,5)
+    integer ierr
+    open(10, file="recal/Qm.dat", status='old', action='read', form='unformatted', access='stream', iostat=ierr)
+    if (ierr /= 0) then
+      print *, "Qm is required but doesn't exist"
+      call MPI_ABORT(MPI_COMM_WORLD, 1, ierr)
+    endif
+    read(10) Qm
+    close(10)
+    if (any(Qm /= Qm)) then
+      print *, "Qm is NaN"
+      call MPI_ABORT(MPI_COMM_WORLD, 1, ierr)
+    endif
+  end subroutine read_Qm
+#:endif
 end module preprocess

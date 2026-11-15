@@ -12,58 +12,44 @@ contains
     real(8), intent(in), device    :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8), intent(inout), device :: Qm_1(ny), Qm_2(ny), Qm_3(ny), Qm_4(ny), Qm_5(ny)
     real(8) Q1, Q2, Q3, Q4, Q5, rhoinv, Jacobian_tmp, volinv, step1, step2
-    logical arrived
+    logical arrived, first
     integer i, k, istat, ierr
     volinv = 1.d0 / dble((nre2 - nre1 + 1) * (nz - 6))
     call MPI_TEST(ireq, arrived, MPI_STATUS_IGNORE, ierr)
     ! step == 1: no history yet, take the instantaneous profile. A restart enters
     ! with step > 1 (calc_time_dev) and the restored recal/Qm.dat on the device
     ! (pre_rescale), so the running mean continues instead of being reset.
-    if (flag_re == 0 .and. step == 1) then
-      !$cuf kernel do <<<*,*>>>
-      do j = 1, ny
-        Q1 = 0.d0; Q2 = 0.d0; Q3 = 0.d0; Q4 = 0.d0; Q5 = 0.d0
-        do k = 4, nz-3
-          do i = nre1, nre2
-            Jacobian_tmp = Jacobian(i,j)
-            rhoinv = 1.d0 / QJ_1(i,j,k)
-            Q1 = Q1 + QJ_1(i,j,k) * Jacobian_tmp
-            Q2 = Q2 + QJ_2(i,j,k) * rhoinv
-            Q3 = Q3 + QJ_3(i,j,k) * rhoinv
-            Q4 = Q4 + QJ_4(i,j,k) * rhoinv
-            Q5 = Q5 + gamma_1 * Jacobian_tmp * (QJ_5(i,j,k) &
-                    - 0.5d0 * (QJ_2(i,j,k)**2 + QJ_3(i,j,k)**2 + QJ_4(i,j,k)**2) * rhoinv)
-        enddo;enddo
+    first = flag_re == 0 .and. step == 1
+    step1 = dble(step-1); step2 = 1.d0 / dble(step)
+    !$cuf kernel do <<<*,*>>>
+    do j = 1, ny
+      Q1 = 0.d0; Q2 = 0.d0; Q3 = 0.d0; Q4 = 0.d0; Q5 = 0.d0
+      do k = 4, nz-3
+        do i = nre1, nre2
+          Jacobian_tmp = Jacobian(i,j)
+          rhoinv = 1.d0 / QJ_1(i,j,k)
+          Q1 = Q1 + QJ_1(i,j,k) * Jacobian_tmp
+          Q2 = Q2 + QJ_2(i,j,k) * rhoinv
+          Q3 = Q3 + QJ_3(i,j,k) * rhoinv
+          Q4 = Q4 + QJ_4(i,j,k) * rhoinv
+          Q5 = Q5 + gamma_1 * Jacobian_tmp * (QJ_5(i,j,k) &
+                  - 0.5d0 * (QJ_2(i,j,k)**2 + QJ_3(i,j,k)**2 + QJ_4(i,j,k)**2) * rhoinv)
+      enddo;enddo
+      if (first) then
         Qm_1(j) = Q1 * volinv
         Qm_2(j) = Q2 * volinv
         Qm_3(j) = Q3 * volinv
         Qm_4(j) = Q4 * volinv
         Qm_5(j) = Q5 * volinv
-      enddo
-    else
-      step1 = dble(step-1); step2 = 1.d0 / dble(step)
-      !$cuf kernel do <<<*,*>>>
-      do j = 1, ny
-        Q1 = 0.d0; Q2 = 0.d0; Q3 = 0.d0; Q4 = 0.d0; Q5 = 0.d0
-        do k = 4, nz-3
-          do i = nre1, nre2
-            Jacobian_tmp = Jacobian(i,j)
-            rhoinv = 1.d0 / QJ_1(i,j,k)
-            Q1 = Q1 + QJ_1(i,j,k) * Jacobian_tmp
-            Q2 = Q2 + QJ_2(i,j,k) * rhoinv
-            Q3 = Q3 + QJ_3(i,j,k) * rhoinv
-            Q4 = Q4 + QJ_4(i,j,k) * rhoinv
-            Q5 = Q5 + gamma_1 * Jacobian_tmp * (QJ_5(i,j,k) &
-                    - 0.5d0 * (QJ_2(i,j,k)**2 + QJ_3(i,j,k)**2 + QJ_4(i,j,k)**2) * rhoinv)
-        enddo;enddo
+      else
         Qm_1(j) = (step1 * Qm_1(j) + Q1 * volinv) * step2
         Qm_2(j) = (step1 * Qm_2(j) + Q2 * volinv) * step2
         Qm_3(j) = (step1 * Qm_3(j) + Q3 * volinv) * step2
         Qm_4(j) = (step1 * Qm_4(j) + Q4 * volinv) * step2
         Qm_5(j) = (step1 * Qm_5(j) + Q5 * volinv) * step2
-      enddo
-      step = step + 1
-    endif
+      endif
+    enddo
+    if (.not. first) step = step + 1
     istat = cudaDeviceSynchronize() ! This line is necessary for next MPI_SEND
   end subroutine calc_mean
 
@@ -146,7 +132,6 @@ contains
     real(8), intent(in)    :: y(ny), Jacobian(nx,ny)
     real(8), intent(inout) :: Qm_cpu_1(ny), Qm_cpu_2(ny), Qm_cpu_3(ny), Qm_cpu_4(ny), Qm_cpu_5(ny)
     real(8)         :: Qre_cpu(ny*(nz-6)*5), Qm_cpu_flat(ny*5), bltre
-    real(8)         :: Qre_cpu_1(ny*(nz-6)), Qre_cpu_2(ny*(nz-6)), Qre_cpu_3(ny*(nz-6)), Qre_cpu_4(ny*(nz-6)), Qre_cpu_5(ny*(nz-6))
     real(8), device ::     Qre(ny*(nz-6)*5), Qm(ny*5)
     integer stat, errorcode, ierr, ireq, ireqs(2), flag_req, n
     integer istat(MPI_STATUS_SIZE), istats(MPI_STATUS_SIZE,2), j
@@ -181,18 +166,8 @@ contains
       print *, "Qre cudaMemcpy failed:", trim(cudaGetErrorString(stat))
     endif
     stat = cudaDeviceSynchronize()
-    Qre_cpu_1 = Qre_cpu(1:n)
-    Qre_cpu_2 = Qre_cpu(n+1:2*n)
-    Qre_cpu_3 = Qre_cpu(2*n+1:3*n)
-    Qre_cpu_4 = Qre_cpu(3*n+1:4*n)
-    Qre_cpu_5 = Qre_cpu(4*n+1:5*n)
     call set_rescale(flag_re, step, nx, ny, nz-6, y, Jacobian, Qm_cpu_1, Qm_cpu_2, Qm_cpu_3, Qm_cpu_4, Qm_cpu_5, bltre, &
-                      Qre_cpu_1, Qre_cpu_2, Qre_cpu_3, Qre_cpu_4, Qre_cpu_5)
-    Qre_cpu(1:n)       = Qre_cpu_1
-    Qre_cpu(n+1:2*n)   = Qre_cpu_2
-    Qre_cpu(2*n+1:3*n) = Qre_cpu_3
-    Qre_cpu(3*n+1:4*n) = Qre_cpu_4
-    Qre_cpu(4*n+1:5*n) = Qre_cpu_5
+                      Qre_cpu(1:n), Qre_cpu(n+1:2*n), Qre_cpu(2*n+1:3*n), Qre_cpu(3*n+1:4*n), Qre_cpu(4*n+1:5*n))
     stat = cudaMemcpy(Qre, Qre_cpu, 5*ny*(nz-6), cudaMemcpyHostToDevice)
     call CPUGPU_MPI_SEND(id_gpumpi, Qre, 5*ny*(nz-6), 0, 0, MPI_COMM_WORLD, ireq, ierr)
     if (flag_re == 1) then
@@ -212,15 +187,9 @@ contains
         call write_Qm_restart(ny, Qm_cpu_1, Qm_cpu_2, Qm_cpu_3, Qm_cpu_4, Qm_cpu_5)
       endif
       t = nt * step * dt
-      if (flag_re >= 1 .and. step >= start_rescale) then
-        open(10, file=filename, position="append")
-        write(10, "(2e12.4, a)") t, bltre/blt, " rescale"
-        close(10)
-      else
-        open(10, file=filename, position="append")
-        write(10, "(2e12.4, a)") t, bltre/blt, " cyclic"
-        close(10)
-      endif
+      open(10, file=filename, position="append")
+      write(10, "(2e12.4, a)") t, bltre/blt, trim(merge(" rescale", " cyclic ", flag_re >= 1 .and. step >= start_rescale))
+      close(10)
     endif
   end subroutine rescale_recv_send
 

@@ -79,7 +79,7 @@ def cons(rho, u, v, w, p):
     return np.stack([rho, rho * u, rho * v, rho * w, p / (GAMMA - 1) + 0.5 * rho * (u * u + v * v + w * w)], -1)
 
 
-def wall_rows(Q, x, y):
+def wall_rows(Q, y):
     """span-mean Cf and p_w along x (instantaneous)."""
     rho, u, v, w, p = prim(Q[:, :, 3:-3, :])
     um = u.mean(2).T                     # (ny, nx)
@@ -176,8 +176,8 @@ def main():
     r, uu, vv, ww, pp = prim(N2)
     print(f"SBLI new field: min rho/rho0 = {r.min() / Po['rho0']:.3f}, min p/p0 = {pp.min() / Po['p0']:.3f}, "
           f"max p/p0 = {pp.max() / Po['p0']:.3f}, finite = {np.isfinite(N2).all()}")
-    tau_o, pw_o = wall_rows(Q2, xo, yo)
-    tau_n, pw_n = wall_rows(N2, xn, yn)
+    tau_o, pw_o = wall_rows(Q2, yo)
+    tau_n, pw_n = wall_rows(N2, yn)
     q0 = 0.5 * Po["rho0"] * Po["u0"] ** 2
     print("   xi    Cf_old*1e3  Cf_new*1e3   pw_old/p0  pw_new/p0   (span-mean, instantaneous)")
     for xi in (-30, -26, -20, -12, -8, -6, -4, -2, 0, 2, 5, 10, 18, 22):

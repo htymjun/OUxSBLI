@@ -56,6 +56,13 @@ SUTH_S = 110.4
 NGHOST = 3  # periodic ghost planes on each z end
 
 
+def _plt():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    return plt
+
+
 def mu_suth(T):
     return SUTH_C * np.asarray(T) ** 1.5 / (np.asarray(T) + SUTH_S)
 
@@ -110,7 +117,7 @@ def case_params(rundir):
             return default
 
     P = {k: get(k) for k in ("blt", "M0", "p_tot", "T_tot", "theta_deg", "ximp_in",
-                             "endT", "dt", "dnu0", "y_str")}
+                             "endT", "dt", "dnu0")}
     P["np"] = int(get("np"))
     P["step_offset"] = int(get("step_offset"))
     P["nre1"], P["nre2"] = int(get("nre1")), int(get("nre2"))
@@ -377,7 +384,6 @@ def cmd_track(rundirs, out, ref=None, prev=None):
     os.makedirs(out, exist_ok=True)
     pw_base = None
     rows = []
-    geo = None
     prev_arr = dict(np.load(prev)) if prev else None
     t_base = float(prev_arr["t"][-1]) if prev_arr is not None else 0.0
     for rd, P, items in stage_times(rundirs):
@@ -386,8 +392,6 @@ def cmd_track(rundirs, out, ref=None, prev=None):
                 continue
             t += t_base
             s = load(fs)
-            if geo is None:
-                geo = geometry(P, s["x"], s["y"])
             if ref and (pw_base is None or len(pw_base[0]) != len(s["x"])):
                 pw_base = _sbli_mean_rows(ref, 1e9, s["x"])
             G = geometry(P, s["x"], s["y"])
@@ -420,9 +424,7 @@ def cmd_track(rundirs, out, ref=None, prev=None):
 
 
 def _plot_track(arr, out):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    plt = _plt()
     fig, ax = plt.subplots(3, 1, figsize=(9, 9), sharex=True)
     for k, c in (("x_sh", "C0"), ("x_0", "C1"), ("x_sep", "C2"), ("x_reat", "C3")):
         ax[0].plot(arr["t"], arr[k], ".-", ms=2, lw=0.8, color=c, label=k)
@@ -444,14 +446,11 @@ def _plot_track(arr, out):
 # turbulence check of the TBL generator
 # ----------------------------------------------------------------------------
 def cmd_turb(rundir, out, last_du=60.0, x_lo=6.0, x_hi=9.0):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    plt = _plt()
     os.makedirs(out, exist_ok=True)
     (rd, P, items), = stage_times([rundir])
     blt, u0, rho0, p0 = P["blt"], P["u0"], P["rho0"], P["p0"]
     tl = np.array([t for _, _, t in items])
-    use = [it for it in items if it[2] >= tl[-1] - last_du]
     hist = {"t": [], "cf": [], "urms_peak": []}
     acc = None
     spec = None
@@ -507,7 +506,6 @@ def cmd_turb(rundir, out, last_du=60.0, x_lo=6.0, x_hi=9.0):
     jpk = int(np.argmax(urms * mork))
     shear = (-m["r"] * uv / tau)
     spec_n = spec / spec[1:].sum()
-    nz = len(s["z"])
     kz_ic = int(round(P["Lz"] / (0.5 * 2.0 * P["blt"])))  # IC streak wavelength = 1 delta -> mode Lz/1delta
     frac_ic = float(spec_n[kz_ic]) if kz_ic < len(spec_n) else float("nan")
     srt = np.sort(spec_n[1:])[::-1]
@@ -564,15 +562,13 @@ def cmd_turb(rundir, out, last_du=60.0, x_lo=6.0, x_hi=9.0):
 
 def _plane_figure(rundir, item, P, path):
     """Instantaneous u' at y+~15 (x-z) and u at mid-span (x-y), both domains."""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    plt = _plt()
     ft, fs, t = item
     a, b = load(ft), load(fs)
     blt = P["blt"]
     fig, ax = plt.subplots(2, 1, figsize=(16, 7))
     j15 = int(np.argmin(abs(a["y"] - 15 * P["dnu0"])))
-    for s, cut in ((a, None), (b, None)):
+    for s in (a, b):
         up = s["u"][:, j15, :] - s["u"][:, j15, :].mean(0, keepdims=True)
         ax[0].pcolormesh(s["x"] / blt, s["z"] / blt, up / P["u0"], cmap="RdBu_r", vmin=-0.25, vmax=0.25, shading="auto")
         km = len(s["z"]) // 2
@@ -708,9 +704,7 @@ def _top_reflection_landing(P, G, xb, yb, pw):
 
 
 def cmd_report(rundir, out, last_du=100.0, ref=None):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    plt = _plt()
     os.makedirs(out, exist_ok=True)
     (rd, P, items), = stage_times([rundir])
     blt, u0, p0, rho0 = P["blt"], P["u0"], P["p0"], P["rho0"]
@@ -721,10 +715,8 @@ def cmd_report(rundir, out, last_du=100.0, ref=None):
     out_neg_inst = []
     for ft, fs, t in use:
         a, b = load(ft), load(fs)
-        fa = {"p": a["p"].mean(0), "pp": (a["p"] ** 2).mean(0), "u": a["u"].mean(0), "r": a["rho"].mean(0),
-              "Tw": (a["p"][:, 0] / (R_GAS * a["rho"][:, 0])).mean(0)}
-        fb = {"p": b["p"].mean(0), "pp": (b["p"] ** 2).mean(0), "u": b["u"].mean(0), "r": b["rho"].mean(0),
-              "Tw": (b["p"][:, 0] / (R_GAS * b["rho"][:, 0])).mean(0)}
+        fa, fb = ({"p": d["p"].mean(0), "pp": (d["p"] ** 2).mean(0), "u": d["u"].mean(0), "r": d["rho"].mean(0),
+                   "Tw": (d["p"][:, 0] / (R_GAS * d["rho"][:, 0])).mean(0)} for d in (a, b))
         out_neg_inst.append(float((b["u"][:, 1:-1, -2] < 0).mean()))
         if A is None:
             A = {k: np.zeros_like(v) for k, v in fa.items()}
@@ -778,7 +770,6 @@ def cmd_report(rundir, out, last_du=100.0, ref=None):
         R["top_vs_reference_upstream_maxdev"] = float(np.abs(B["p"][jt, up_] / pt_ref[up_] - 1).max())
     R["top"] = {"p_top_over_p0_upstream_maxdev": float(np.abs(B["p"][jt, up_] / p0 - 1).max()),
                 "p_top_over_p2_behind_incident_maxdev": float(np.abs(B["p"][jt, mid] / P["p2"] - 1).max()) if mid.any() else None}
-    ju = yb > P["y_str"]
     xs_unif = (xb > G["x_in"] + blt) & (xb < G["x_imp"] + (P["xdown"] - 1) * blt)
     prof = prms_b[:, xs_unif].mean(1)
     j95 = int(np.argmin(abs(yb - P["y_str"])))
@@ -1020,9 +1011,7 @@ def cmd_wall_report(npzs, out, compare=(), ref_csv=None):
     (``compare``: wall_acc.npz paths, comma separated, e.g. theta = 9.5 deg) and
     digitised literature data (``ref_csv``) in the IUSTI normalisation
     x* = (x - x_imp)/L_int, p* = (p_w - p1)/(p3 - p1)."""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    plt = _plt()
     os.makedirs(out, exist_ok=True)
     R, D = wall_stats(npzs)
     others = []
@@ -1090,9 +1079,7 @@ def cmd_wall_report(npzs, out, compare=(), ref_csv=None):
 # GIF animations
 # ----------------------------------------------------------------------------
 def cmd_gif(rundir, out, frames=150, track_npz=None):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    plt = _plt()
     from matplotlib.animation import PillowWriter
     os.makedirs(out, exist_ok=True)
     (rd, P, items), = stage_times([rundir])
@@ -1109,13 +1096,6 @@ def cmd_gif(rundir, out, frames=150, track_npz=None):
         if mine.any():
             t_first = float(tr["t"][mine].min())
             t_off = t_first if t_first == float(tr["t"].min()) else t_first - P["dt_out"] / P["tU"]
-
-    def joined(a, b, key, sl):
-        """field(...) of TBL up to the SBLI inlet followed by SBLI (x concatenated)."""
-        na = int(np.argmin(abs(a["x"] - b["x"][0])))
-        fa = sl(a[key])[..., :na] if a is not None else None
-        fb = sl(b[key])
-        return np.concatenate([fa, fb], axis=-1)
 
     names = ["schlieren", "u_bubble", "uprime_y15", "wall_pressure"]
     figs, writers = {}, {}

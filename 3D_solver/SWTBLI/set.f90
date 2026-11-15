@@ -31,20 +31,19 @@
 module set
   use cudafor
   use mpi
-  use mod_globals, only : nx1, ny1, nz1, nx2, ny2, nbuf, nre2, nin, gamma, R, u0, p0, T0, rho0, M0, blt, dt, &
-                          rf, Taw, Cf_init, dnu0, dx0, dyw0, y_str, gy_top, theta_deg, ximp_in, Lz1
-  use mod_constant, only : Cp, gamma_1, over_gamma, over_gamma_1, mu0_T0_S_over_T0_2_3, id_rescale
+  use mod_globals, only : ny1, nz1, nbuf, nre2, nin, gamma, R, u0, p0, T0, rho0, M0, blt, dt, &
+                          rf, Taw, Cf_init, dx0, dyw0, y_str, gy_top, theta_deg, ximp_in, Lz1
+  use mod_constant, only : gamma_1, over_gamma_1, mu0_T0_S_over_T0_2_3, id_rescale
   use set_bc_common
-  use set_init_common, only : calc_Gaussian_filter_x, calc_Gaussian_filter_y, calc_Gaussian_filter_z
+  use set_init_common, only : calc_Gaussian_filter_x, calc_Gaussian_filter_z
   use calc_para, only : flatten_rescale, reconstruct_sbli_inlet
   implicit none
   private
   public set_grid, set_init, set_bc, set_bc_mut
 
   real(8), parameter :: pi = 3.14159265358979323846d0
-  ! states behind the incident (2) and reflected (3) shocks, filled by init_shock
+  ! state behind the incident shock (2), filled by init_shock
   real(8), save :: rho2s = 0.d0, u2s = 0.d0, v2s = 0.d0, p2s = 0.d0
-  real(8), save :: rho3s = 0.d0, u3s = 0.d0, v3s = 0.d0, p3s = 0.d0
   real(8), save :: beta1 = 0.d0, x_imp = 0.d0, x_top = 0.d0, x_dyn = 0.d0
   ! host copy of this rank's x (set_grid), turned into per-column exterior states
   real(8), allocatable, save :: x_host(:)
@@ -65,8 +64,10 @@ module set
   real(8), save :: f_top = 1.d0
   logical, save :: ftop_init = .false.
   integer, save :: i_up0 = 0, i_up1 = 0, ncall_top = 0
-  ! time constant of the running mean imposed above the TBL domain at the SBLI inlet
+  ! time constant of the running means (inlet rows above the TBL domain, top boundary)
   real(8), parameter :: tau_mavg = 10.d0   ! [blt/u0]
+  ! their relaxation factor per set_bc call: set_bc runs once per RK stage, 3 times per dt
+  real(8), parameter :: eps_mavg = dt / (3.d0 * tau_mavg * blt / u0)
   real(8), allocatable, pinned, save :: q1d_h(:)
   integer, parameter :: tag_inlet = 4242
 contains
@@ -189,11 +190,11 @@ contains
   subroutine init_shock(rank_domain, nx, ny, x, y)
     integer, intent(in) :: rank_domain, nx, ny
     real(8), intent(in) :: x(nx), y(ny)
-    real(8) th, M2, M3, br, c2, c3, V2
+    real(8) th, M2, M3, br, c2, V2, rho3, p3
     th = theta_deg * pi / 180.d0
     if (theta_deg <= 0.d0) then
       rho2s = rho0; u2s = u0; v2s = 0.d0; p2s = p0
-      rho3s = rho0; u3s = u0; v3s = 0.d0; p3s = p0
+      p3 = p0
       beta1 = asin(1.d0 / M0)
     else
       beta1 = beta_weak(M0, th)
@@ -203,10 +204,8 @@ contains
       u2s =  V2 * cos(th)
       v2s = -V2 * sin(th)
       br = beta_weak(M2, th)
-      call oblique_rh(M2, br, th, rho2s, p2s, rho3s, p3s, M3)
-      c3 = sqrt(gamma * p3s / rho3s)
-      u3s = M3 * c3
-      v3s = 0.d0
+      ! state 3 (behind the reflected shock) is only reported, not imposed
+      call oblique_rh(M2, br, th, rho2s, p2s, rho3, p3, M3)
     endif
     if (rank_domain >= 2) then
       x_imp = x(1) + ximp_in * blt
@@ -214,7 +213,7 @@ contains
       x_dyn = x_top + 3.d0 * blt
       if (rank_domain == 2) then
         print '(a,f6.2,a,f7.3,a,f7.4,a,f7.4)', " SBLI: theta = ", theta_deg, " deg, beta1 = ", beta1*180.d0/pi, &
-              " deg, p2/p1 = ", p2s/p0, ", p3/p1 = ", p3s/p0
+              " deg, p2/p1 = ", p2s/p0, ", p3/p1 = ", p3/p0
         print '(a,f8.3,a,f8.3,a,f8.3,a)', " SBLI: x(1) = ", x(1)/blt, " delta, x_top = ", x_top/blt, &
               " delta, x_imp = ", x_imp/blt, " delta"
       endif
@@ -430,17 +429,16 @@ contains
     real(8), intent(in), device    :: Jacobian(nx,ny)
     real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8), intent(in), device, optional :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
-    integer i, j, k, offset, n, ireq, ierr, istat
+    integer i, j, k, offset, n, ierr
     integer mstat(MPI_STATUS_SIZE)
     real(8) p_wall, Jt, rhoin, uin, vin, win, pin, cin, rhox, ux, vx, px, cx, Rp, Rm, vb, cb, sb, ub, wb, rhob, pb
-    real(8) m1, m2, m3, m4, rr
     ! exterior states as plain scalars for the CUF kernels
-    real(8) r3, u3, v3, p3, v2half, eps, psum, fp, fr, r2, u2, v2, p2, sx
+    real(8) v2half, psum, fp, fr, r2, u2, v2, p2, sx
     real(8) dyt, alpha, xsrc, wa, ra, ua, va, wwa, pa, rb2, ub2, vb2, wb2, pb2
     integer ii
 
     if (.not. dev_ready) call setup_device(myrank, nx, ny, nz)
-    r3 = rho3s; u3 = u3s; v3 = v3s; p3 = p3s; v2half = 0.5d0 * v2s
+    v2half = 0.5d0 * v2s
     r2 = rho2s; u2 = u2s; v2 = v2s; p2 = p2s
     dyt = dy_top
     n = 3 * (ny1 - 2) * (nz - 6) * 5
@@ -465,38 +463,12 @@ contains
       q1d_d = q1d_h
       call reconstruct_sbli_inlet(nx, ny1, ny, nz, 3, q1d_d, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
       ! spanwise mean of the TBL row ny1-1 (primitive), per inlet column
-      !$cuf kernel do(1)<<<*,*>>>
-      do i = 1, 3
-        m1 = 0.d0; m2 = 0.d0; m3 = 0.d0; m4 = 0.d0
-        do k = 4, nz-3
-          rr = QJ_1(i,ny1-1,k) * Jacobian(i,ny1-1)
-          m1 = m1 + rr
-          m2 = m2 + QJ_2(i,ny1-1,k) / QJ_1(i,ny1-1,k)
-          m3 = m3 + QJ_3(i,ny1-1,k) / QJ_1(i,ny1-1,k)
-          m4 = m4 + gamma_1 * Jacobian(i,ny1-1) * (QJ_5(i,ny1-1,k) - 0.5d0 * (QJ_2(i,ny1-1,k)**2 &
-               + QJ_3(i,ny1-1,k)**2 + QJ_4(i,ny1-1,k)**2) / QJ_1(i,ny1-1,k))
-        enddo
-        mrow_d(i,1) = m1 / dble(nz-6)
-        mrow_d(i,2) = m2 / dble(nz-6)
-        mrow_d(i,3) = m3 / dble(nz-6)
-        mrow_d(i,4) = m4 / dble(nz-6)
-      enddo
+      call span_mean_row(nx, ny, nz, 3, ny1-1, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, mrow_d)
       ! Above y = Ly1 impose a running (exponential) time mean of that row, not the
       ! instantaneous spanwise mean: the latter carries the TBL domain's acoustic
       ! fluctuations as column-uniform density/pressure pulses, which convect down the
       ! SBLI domain as vertical fronts (seen in the first A1 schlieren).
-      ! set_bc runs once per RK stage, i.e. 3 times per dt.
-      if (.not. mavg_init) then
-        mavg_d = mrow_d
-        mavg_init = .true.
-      else
-        eps = dt / (3.d0 * tau_mavg * blt / u0)
-        !$cuf kernel do(2)<<<*,*>>>
-        do k = 1, 4
-          do i = 1, 3
-            mavg_d(i,k) = (1.d0 - eps) * mavg_d(i,k) + eps * mrow_d(i,k)
-        enddo;enddo
-      endif
+      call running_mean(3, mrow_d, mavg_d, mavg_init)
       !$cuf kernel do(3)<<<*,*>>>
       do k = 4, nz-3
         do j = ny1, ny-1
@@ -544,14 +516,13 @@ contains
         f_top = psum
         ftop_init = .true.
       else
-        f_top = f_top + dt / (3.d0 * tau_mavg * blt / u0) * (psum - f_top)
+        f_top = f_top + eps_mavg * (psum - f_top)
       endif
       fp = f_top
       fr = f_top**(1.d0 / gamma)
       ncall_top = ncall_top + 1
       if (mod(ncall_top, 15000) == 1) print '(a,i8,a,f9.5,a,f9.5)', " SBLI top level: call ", ncall_top, &
                                                 ", instantaneous p/p0 = ", psum, ", running f = ", f_top
-      r3 = r3 * fr; p3 = p3 * fp
       r2 = r2 * fr; p2 = p2 * fp
       ! Downstream of x_dyn the flow under the top boundary has crossed the reflected
       ! (separation) shock and is not a known uniform state: with a large bubble it is
@@ -560,33 +531,8 @@ contains
       ! a fan of parallel waves from the top where the reflected shock leaves). Use
       ! the running mean of the local state instead: the boundary then imposes no mean
       ! state of its own and the fluctuations leave through the Riemann condition.
-      !$cuf kernel do(1)<<<*,*>>>
-      do i = 1, nx
-        m1 = 0.d0; m2 = 0.d0; m3 = 0.d0; m4 = 0.d0
-        do k = 4, nz-3
-          rr = QJ_1(i,ny-1,k) * Jacobian(i,ny-1)
-          m1 = m1 + rr
-          m2 = m2 + QJ_2(i,ny-1,k) / QJ_1(i,ny-1,k)
-          m3 = m3 + QJ_3(i,ny-1,k) / QJ_1(i,ny-1,k)
-          m4 = m4 + gamma_1 * Jacobian(i,ny-1) * (QJ_5(i,ny-1,k) - 0.5d0 * (QJ_2(i,ny-1,k)**2 &
-               + QJ_3(i,ny-1,k)**2 + QJ_4(i,ny-1,k)**2) / QJ_1(i,ny-1,k))
-        enddo
-        itop_d(i,1) = m1 / dble(nz-6)
-        itop_d(i,2) = m2 / dble(nz-6)
-        itop_d(i,3) = m3 / dble(nz-6)
-        itop_d(i,4) = m4 / dble(nz-6)
-      enddo
-      if (.not. etop_init) then
-        etop_d = itop_d
-        etop_init = .true.
-      else
-        eps = dt / (3.d0 * tau_mavg * blt / u0)
-        !$cuf kernel do(2)<<<*,*>>>
-        do k = 1, 4
-          do i = 1, nx
-            etop_d(i,k) = (1.d0 - eps) * etop_d(i,k) + eps * itop_d(i,k)
-        enddo;enddo
-      endif
+      call span_mean_row(nx, ny, nz, nx, ny-1, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, itop_d)
+      call running_mean(nx, itop_d, etop_d, etop_init)
     endif
 
     ! ---------------- top (Riemann invariants) and adiabatic no-slip wall ----------------
@@ -609,7 +555,7 @@ contains
           alpha = asin(min(1.d0, sqrt(gamma * etop_d(i,4) / etop_d(i,1)) &
                   / sqrt(etop_d(i,2)**2 + etop_d(i,3)**2))) + atan(etop_d(i,3) / etop_d(i,2))
           xsrc = x_d(i) - dyt / tan(alpha)
-          ii = i
+          ii = min(i, nx-1)   ! keeps ii+1 inside the row if the characteristic runs downstream
           do while (ii > 1 .and. x_d(ii) > xsrc)
             ii = ii - 1
           enddo
@@ -682,6 +628,53 @@ contains
       call MPI_SEND(q1d_h, n, MPI_REAL8, 2, tag_inlet, MPI_COMM_WORLD, ierr)
     endif
   end subroutine set_bc
+
+
+  !> Spanwise mean of the primitive state (rho, u, v, p) on row j, columns 1..n
+  subroutine span_mean_row(nx, ny, nz, n, j, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, m)
+    integer, intent(in), value   :: nx, ny, nz, n, j
+    real(8), intent(in), device  :: Jacobian(nx,ny)
+    real(8), intent(in), device  :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    real(8), intent(out), device :: m(n,4)
+    real(8) m1, m2, m3, m4, rr
+    integer i, k
+    !$cuf kernel do(1)<<<*,*>>>
+    do i = 1, n
+      m1 = 0.d0; m2 = 0.d0; m3 = 0.d0; m4 = 0.d0
+      do k = 4, nz-3
+        rr = QJ_1(i,j,k) * Jacobian(i,j)
+        m1 = m1 + rr
+        m2 = m2 + QJ_2(i,j,k) / QJ_1(i,j,k)
+        m3 = m3 + QJ_3(i,j,k) / QJ_1(i,j,k)
+        m4 = m4 + gamma_1 * Jacobian(i,j) * (QJ_5(i,j,k) - 0.5d0 * (QJ_2(i,j,k)**2 &
+             + QJ_3(i,j,k)**2 + QJ_4(i,j,k)**2) / QJ_1(i,j,k))
+      enddo
+      m(i,1) = m1 / dble(nz-6)
+      m(i,2) = m2 / dble(nz-6)
+      m(i,3) = m3 / dble(nz-6)
+      m(i,4) = m4 / dble(nz-6)
+    enddo
+  end subroutine span_mean_row
+
+
+  !> Exponential running mean (time constant tau_mavg) of inst; the first call copies it
+  subroutine running_mean(n, inst, avg, init)
+    integer, intent(in), value     :: n
+    real(8), intent(in), device    :: inst(n,4)
+    real(8), intent(inout), device :: avg(n,4)
+    logical, intent(inout)         :: init
+    integer i, k
+    if (.not. init) then
+      avg = inst
+      init = .true.
+    else
+      !$cuf kernel do(2)<<<*,*>>>
+      do k = 1, 4
+        do i = 1, n
+          avg(i,k) = (1.d0 - eps_mavg) * avg(i,k) + eps_mavg * inst(i,k)
+      enddo;enddo
+    endif
+  end subroutine running_mean
 
 
   subroutine set_bc_mut(nx, ny, nz, mut, qc2)
