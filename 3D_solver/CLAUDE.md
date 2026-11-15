@@ -197,6 +197,38 @@ orders over 64/128/256:
 The reconstruction alone is 5th order: see `ouxsbli/tests/test_weno.py`, which gates that
 together with FP64 WENO + LF on EVC and the OS shock.
 
+### Precision modes (`PREC`, `KEEP_PREC`, `WENO_PREC='MIXED'`)
+
+Ports of the diffFP32 study (`~/diffFP32`); measurements in `docs/precision_modes.md`.
+
+* **`KEEP_PREC='MIXED'` / `'MIXED_CELL'`** (FP64 state). The unchanged KEEP2/4/6 run on
+  `type(dev)` (`src/mod_prec.f90.fypp`): an FP32 base value and the deviation from it, an FP64
+  difference narrowed to FP32. Its sums and products are exact identities, so KEEP returns
+  `F(q) - F(base)` without cancellation. `MIXED` adds the FP64 point flux of the left cell
+  (`KEEPm*`, picked by `interface KEEP` from the real(8) arguments): every KEEP kernel uses it
+  and the scheme stays conservative. `MIXED_CELL` is diffFP32's form: centre-cell base, the
+  cell difference in FP32 (`KEEPc*` in the internal KEEP kernels, one more right halo cell)
+  stored in the right-face slot, and `calc_R` drops the left face (`-DKEEP_CELL`).
+* **`PREC='DF'`**: state, RK stages, primitives and fluxes in `type(fltflt)` (FmaX,
+  `extern/FmaX`). Declarations are spelled `${RT}$` (templates, `src/prec.fypp`) or `REAL_T`
+  (plain sources, cpp from CMake); `mod_prec` extends the intrinsics/assignment, and KEEP is
+  instantiated per type (`KEEP_INST`). Only all-periodic Euler KEEP is wired; SLAU/MUSCL/WENO
+  and the viscous kernels are not instantiated for fltflt.
+* **nvfortran 26.5 traps hit on the way** (each gave a wrong result, not a compile error):
+  - CUF kernels cannot run fltflt arithmetic (host-scope locals/literals; at run time even a
+    device function call misbehaves) → `prim_df` kernel; CUF *copies* of fltflt arrays restored
+    stale values → `set_bc_cyclic`/`copy3` move the state as 8-byte words (`IGNORE_TKR`).
+  - At -O2, repeated updates of a fltflt dummy array element were dropped (`R(l) = fma(..,R(l))`
+    in `calc_R` lost its z term) → accumulate in scalars.
+  - A derived-type function result that is also an argument (`ruu = fma(.., ruu)` in `mom`)
+    was corrupted → accumulate in a local.
+  - `associate(uu => u)` on fltflt shared tiles is an ICE → pass `u` directly.
+* **Findings so far** (RTX PRO 6000): DF keeps FP64 accuracy (EVC KEEP4/6 errors equal to
+  FP64) and its KEEP6 kernels take 0.73x the FP64 time. The mixed forms floor at L2(rho) ~
+  3e-10 on EVC (fail diffFP32's rule at n = 256) and save no FP64-pipe work for KEEP6, because
+  every face narrows 6-point differences of 7 variables. Gates: `test_prec_difffp32.py`
+  (slow; mixed modes are xfail), cost: `python -m ouxsbli.analysis.bench_prec`.
+
 ## Cell-Center Velocity Gradients (`ux`, `vy`, `wz`)
 
 For `VISC_ORDER > 2` (NS/LES), `calc_div.f90` precomputes the three diagonal velocity
