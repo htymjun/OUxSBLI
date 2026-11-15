@@ -9,17 +9,35 @@ NVIDIA HPC SDK 26.5, 2 MPI ranks (one compute rank). Branch `fp32fp64-dfmix`.
 ## Correctness against FP64
 
 DF and the mixed forms against FP64 on the same build. Metric: max |q - q_FP64| / max |q_FP64| of the
-last snapshot (`OUTPUT_PRECISION=8`).
+last snapshot (`OUTPUT_PRECISION=8`). DF (`PREC='DF'`), 40 steps (SWLBLI 2 steps, analytic
+start; NSTGV at 65^3):
 
-| case | steps | DF | MIXED | MIXED_CELL |
+| case | features | rho | p | velocity |
 |---|---|---|---|---|
-| ETGV 66^3 KEEP6 RK4, dt 0.01 | 200 | 1.2e-13 (rho) | 1.1e-8 | 1.5e-8 |
-| ETGV 66^3 KEEP2 RK4 | 40 | 2.9e-14 | | |
-| KHI 130^3 KEEP6 RK3 | 40 | 3.8e-13 | | |
-| EVC KEEP4 RK4 | 40 | 1.0e-12 (velocity) | | |
+| ETGV | Euler KEEP6, RK4, periodic | 5.5e-14 | 2.9e-14 | 4.0e-14 |
+| EVC | Euler KEEP6 | 3.8e-14 | 3.9e-14 | 1.4e-12 |
+| KHI | Euler KEEP6, RK3 | 1.9e-13 | 3.8e-13 | 9.9e-14 |
+| DHIT | NS fused KEEP6 | 8.6e-14 | 6.6e-14 | 4.4e-14 |
+| IVST | NS, walls | 8.7e-14 | 1.6e-13 | 5.4e-14 |
+| STZ | NS KEEP4, COMMZ (MPI='GPU') | 1.2e-15 | 4.2e-15 | (u = 0) |
+| TBL | NS KEEP6, RESCALE, walls | 2.0e-13 | 2.3e-13 | 1.4e-13 |
+| NSTGV, 1 step | NS fused SLAU (plain SLAU) | 1.1e-14 | 9.1e-15 | 1.1e-14 |
+| BL, 1 step | NS SLAU, walls (plain SLAU) | 7.4e-15 | 8.2e-15 | 2.4e-14 |
+| OS, 1 step | Euler SLAU, shock (plain SLAU) | 2.3e-15 | 9.8e-15 | 6.2e-15 |
+| SWTBLI, 1 step | two domains, RESCALE (plain SLAU) | 1.1e-14 | 3.8e-14 | 1.4e-14 |
+| SWLBLI | NS SLAU, BC_FORCING (plain SLAU) | 2.1e-14 | 2.8e-14 | 1.3e-14 |
+| DHIT, 1 step | LES | 9.3e-15 | 1.4e-14 | 1.2e-14 |
+| EVC, 1 step | Hybrid / WENO+LF | 4.8e-15 / 5.4e-15 | 6.3e-15 / 7.1e-15 | 1.2e-13 / 7.5e-14 |
+| NSTGV, 1 step | VISC_ORDER=4 (separate viscous kernels) | 1.1e-14 | 9.1e-15 | 1.1e-14 |
 
-KEEP6 face flux alone (unit test, 6-point stencil with 1 % variations): MIXED 4e-10 relative,
-DF 6e-15. Default FP64 builds: ETGV output bit-identical to d911d5a.
+With the configured HR-SLAU2, NSTGV / BL / OS / SWTBLI differ at 1e-9..1e-3: its wiggle
+detector is a 0/1 switch on the sign of products of pressure differences, which are exactly 0
+in FP64 at symmetry planes and in uniform regions and +-1e-30 under DF. FP64 default builds:
+output bit-identical to d911d5a in every case (SWTBLI's second domain is nondeterministic
+already in d911d5a); 2D_solver and 3D_solver_curv SASS identical.
+
+Mixed forms (FP64 state), ETGV 66^3 KEEP6, 200 steps: MIXED 1.1e-8 (rho), MIXED_CELL 1.5e-8.
+KEEP6 face flux alone (unit test, 6-point stencil with 1 % variations): MIXED 4e-10 relative.
 
 ## diffFP32's rules (`ouxsbli/tests/test_prec_difffp32.py`, slow)
 
