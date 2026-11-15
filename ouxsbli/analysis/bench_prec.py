@@ -20,8 +20,7 @@ from pathlib import Path
 
 from ouxsbli import Case
 
-MODES = {"FP64": {}, "DF": {"prec": "df"}, "MIXED": {"keep_prec": "mixed"},
-         "MIXED_CELL": {"keep_prec": "mixed_cell"}}
+MODES = {"FP64": {}, "DF": {"prec": "df"}, "MIXED": {"keep_prec": "mixed"}}
 FP64_OP = re.compile(r"\b(DADD|DMUL|DFMA|DSETP|DMNMX)\b|\b[FI]2[FI]\.[^ ;]*64")
 FP32_OP = re.compile(r"\b(FADD|FMUL|FFMA|FSETP|FMNMX|FSEL|MUFU)\b")
 

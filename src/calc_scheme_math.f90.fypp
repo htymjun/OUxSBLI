@@ -196,24 +196,6 @@
   end function KEEPm${n}$
 
 
-  !> MIXED_CELL KEEP${n}$: F(i+1/2) - F(i-1/2) of the centre cell b = ${n//2+1}$ of an
-  !> ${n+1}$-point stencil, both faces as deviations from b (F(b) cancels), FP32.
-  attributes(device) function KEEPc${n}$(id_accuracy, rho, ${VARG}$, uu, p, T, Normal) result(D)
-    integer(${kd}$), intent(in), value :: id_accuracy
-    real(8), intent(in), dimension(${n+1}$) :: rho, ${VARG}$, uu, p, T
-    real(8), intent(in), dimension(5) :: Normal
-    real(8) D(${NEQ}$)
-    type(dev) Fr(${NEQ}$), Fl(${NEQ}$)
-    type(dev), dimension(${n+1}$) :: drho, ${', '.join('d' + v for v in VELS)}$, duu, dp, dT
-    integer, parameter :: b = ${n // 2 + 1}$
-    drho = to_dev(rho, b); duu = to_dev(uu, b); dp = to_dev(p, b); dT = to_dev(T, b)
-    #:for v in VELS
-    d${v}$ = to_dev(${v}$, b)
-    #:endfor
-    Fr = KEEP${n}$(id_accuracy, drho(2:), ${', '.join('d%s(2:)' % v for v in VELS)}$, duu(2:), dp(2:), dT(2:), Normal)
-    Fl = KEEP${n}$(id_accuracy, drho(:${n}$), ${', '.join('d%s(:%d)' % (v, n) for v in VELS)}$, duu(:${n}$), dp(:${n}$), dT(:${n}$), Normal)
-    D = dble(Fr%d - Fl%d)
-  end function KEEPc${n}$
 
 #:endfor
 #:endif

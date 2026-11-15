@@ -1,12 +1,5 @@
-! KEEP_PREC = 'MIXED_CELL' (-DKEEP_CELL): the convective kernels store the cell
-! difference F(i+1/2) - F(i-1/2) in the right-face slot, so the left face drops out.
 #ifdef PREC_DF
 #define __stcs store
-#endif
-#ifdef KEEP_CELL
-#define LEFT(f) 0.d0
-#else
-#define LEFT(f) f
 #endif
 module calc_steps
   use cudafor
@@ -32,25 +25,25 @@ contains
     REAL_T v0, v1
     ! x direction
     !R(1) = dtdydz * (-E(i,j,k,1) + E(i+1,j,k,1))
-    v0 = LEFT(E(i,j,k,1)); v1 = E(i+1,j,k,1); R(1) = dtdydz * (v1 - v0)
-    v0 = LEFT(E(i,j,k,2)); v1 = E(i+1,j,k,2); R(2) = dtdydz * (v1 - v0)
-    v0 = LEFT(E(i,j,k,3)); v1 = E(i+1,j,k,3); R(3) = dtdydz * (v1 - v0)
-    v0 = LEFT(E(i,j,k,4)); v1 = E(i+1,j,k,4); R(4) = dtdydz * (v1 - v0)
-    v0 = LEFT(E(i,j,k,5)); v1 = E(i+1,j,k,5); R(5) = dtdydz * (v1 - v0)
+    v0 = E(i,j,k,1); v1 = E(i+1,j,k,1); R(1) = dtdydz * (v1 - v0)
+    v0 = E(i,j,k,2); v1 = E(i+1,j,k,2); R(2) = dtdydz * (v1 - v0)
+    v0 = E(i,j,k,3); v1 = E(i+1,j,k,3); R(3) = dtdydz * (v1 - v0)
+    v0 = E(i,j,k,4); v1 = E(i+1,j,k,4); R(4) = dtdydz * (v1 - v0)
+    v0 = E(i,j,k,5); v1 = E(i+1,j,k,5); R(5) = dtdydz * (v1 - v0)
     ! y direction
     !R(1) = R(1) + dtdzdx * (-F(i,j,k,1) + F(i,j+1,k,1))
-    v0 = LEFT(F(i,j,k,1)); v1 = F(i,j+1,k,1); R(1) = fma(dtdzdx, v1 - v0, R(1))
-    v0 = LEFT(F(i,j,k,2)); v1 = F(i,j+1,k,2); R(2) = fma(dtdzdx, v1 - v0, R(2))
-    v0 = LEFT(F(i,j,k,3)); v1 = F(i,j+1,k,3); R(3) = fma(dtdzdx, v1 - v0, R(3))
-    v0 = LEFT(F(i,j,k,4)); v1 = F(i,j+1,k,4); R(4) = fma(dtdzdx, v1 - v0, R(4))
-    v0 = LEFT(F(i,j,k,5)); v1 = F(i,j+1,k,5); R(5) = fma(dtdzdx, v1 - v0, R(5))
+    v0 = F(i,j,k,1); v1 = F(i,j+1,k,1); R(1) = fma(dtdzdx, v1 - v0, R(1))
+    v0 = F(i,j,k,2); v1 = F(i,j+1,k,2); R(2) = fma(dtdzdx, v1 - v0, R(2))
+    v0 = F(i,j,k,3); v1 = F(i,j+1,k,3); R(3) = fma(dtdzdx, v1 - v0, R(3))
+    v0 = F(i,j,k,4); v1 = F(i,j+1,k,4); R(4) = fma(dtdzdx, v1 - v0, R(4))
+    v0 = F(i,j,k,5); v1 = F(i,j+1,k,5); R(5) = fma(dtdzdx, v1 - v0, R(5))
     ! z direction
     !R(1) = R(1) + dtdxdy * (-G(i,j,k,1) + G(i,j,k+1,1))
-    v0 = LEFT(G(i,j,k,1)); v1 = G(i,j,k+1,1); R(1) = fma(dtdxdy, v1 - v0, R(1))
-    v0 = LEFT(G(i,j,k,2)); v1 = G(i,j,k+1,2); R(2) = fma(dtdxdy, v1 - v0, R(2))
-    v0 = LEFT(G(i,j,k,3)); v1 = G(i,j,k+1,3); R(3) = fma(dtdxdy, v1 - v0, R(3))
-    v0 = LEFT(G(i,j,k,4)); v1 = G(i,j,k+1,4); R(4) = fma(dtdxdy, v1 - v0, R(4))
-    v0 = LEFT(G(i,j,k,5)); v1 = G(i,j,k+1,5); R(5) = fma(dtdxdy, v1 - v0, R(5))
+    v0 = G(i,j,k,1); v1 = G(i,j,k+1,1); R(1) = fma(dtdxdy, v1 - v0, R(1))
+    v0 = G(i,j,k,2); v1 = G(i,j,k+1,2); R(2) = fma(dtdxdy, v1 - v0, R(2))
+    v0 = G(i,j,k,3); v1 = G(i,j,k+1,3); R(3) = fma(dtdxdy, v1 - v0, R(3))
+    v0 = G(i,j,k,4); v1 = G(i,j,k+1,4); R(4) = fma(dtdxdy, v1 - v0, R(4))
+    v0 = G(i,j,k,5); v1 = G(i,j,k+1,5); R(5) = fma(dtdxdy, v1 - v0, R(5))
   end subroutine calc_R
 
 

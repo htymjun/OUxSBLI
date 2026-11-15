@@ -56,6 +56,10 @@ KEEP6 face flux alone (unit test, 6-point stencil with 1 % variations): MIXED 4e
 | 6 | MIXED | 3.774e-09 | 3.406e-10 | 2.601e-10 | 1.93 | 189 | fail |
 | 6 | MIXED_CELL | 3.755e-09 | 2.936e-10 | 3.040e-10 | 1.81 | 221 | fail |
 
+Decision: `KEEP_PREC='MIXED'` (face form) is kept; the cell form (`MIXED_CELL`, rows above
+and below) was removed after this comparison -- same density floor, 5x larger velocity
+error, and not conservative.
+
 Where the mixed floor comes from (EVC KEEP6, n = 256):
 
 * The algebra is exact: `type(dev)` with real(8) components reproduces FP64 (L2 1.3754e-12).

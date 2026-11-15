@@ -102,12 +102,9 @@ macro(add_ouxsbli_case)
   add_custom_target(${_CASE}_scheme_math DEPENDS ${_SCHEME_MATH_OUT})
   add_executable(${_CASE} ${_BASE} ${CASE_MAIN_SOURCE} ${CASE_EXTRA_SOURCES} ${_GEN})
   add_dependencies(${_CASE} ${_CASE}_scheme_math)
-  # PREC / KEEP_PREC (src/prec.fypp) as cpp macros for the plain .f90 sources
-  file(STRINGS "${_CASE_DIR}/config.fypp" _prec REGEX "^#:set +(KEEP_)?PREC *=")
-  if(_prec MATCHES "KEEP_PREC *= *'MIXED_CELL'")
-    target_compile_definitions(${_CASE} PRIVATE KEEP_CELL)
-  endif()
-  if(_prec MATCHES "set +PREC *= *'DF'")
+  # PREC (src/prec.fypp) as cpp macros for the plain .f90 sources
+  file(STRINGS "${_CASE_DIR}/config.fypp" _prec REGEX "^#:set +PREC *=")
+  if(_prec MATCHES "'DF'")
     target_sources(${_CASE} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../extern/FmaX/FmaX/fltflt.f90")
     target_compile_definitions(${_CASE} PRIVATE PREC_DF "REAL_T=type(fltflt)")
     # -O1 instead of -fast (= -O2 ... -Mflushz): nvfortran 26.5 at -O2 drops updates

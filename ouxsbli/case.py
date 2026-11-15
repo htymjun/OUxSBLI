@@ -63,7 +63,7 @@ _VALUE_NORMALIZE: dict[str, dict[str, str]] = {
     "RECON":        {"muscl": "MUSCL", "weno": "WENO"},
     "WENO_PREC":    {"fp64": "FP64", "w32p64": "W32P64", "mixed": "MIXED"},
     "PREC":         {"fp64": "FP64", "df": "DF"},
-    "KEEP_PREC":    {"fp64": "FP64", "mixed": "MIXED", "mixed_cell": "MIXED_CELL"},
+    "KEEP_PREC":    {"fp64": "FP64", "mixed": "MIXED"},
     "RIEMANN":      {"slau": "SLAU", "lf": "LF"},
 }
 

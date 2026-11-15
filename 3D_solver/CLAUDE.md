@@ -201,14 +201,14 @@ together with FP64 WENO + LF on EVC and the OS shock.
 
 Ports of the diffFP32 study (`~/diffFP32`); measurements in `docs/precision_modes.md`.
 
-* **`KEEP_PREC='MIXED'` / `'MIXED_CELL'`** (FP64 state). The unchanged KEEP2/4/6 run on
-  `type(dev)` (`src/mod_prec.f90.fypp`): an FP32 base value and the deviation from it, an FP64
-  difference narrowed to FP32. Its sums and products are exact identities, so KEEP returns
-  `F(q) - F(base)` without cancellation. `MIXED` adds the FP64 point flux of the left cell
-  (`KEEPm*`, picked by `interface KEEP` from the real(8) arguments): every KEEP kernel uses it
-  and the scheme stays conservative. `MIXED_CELL` is diffFP32's form: centre-cell base, the
-  cell difference in FP32 (`KEEPc*` in the internal KEEP kernels, one more right halo cell)
-  stored in the right-face slot, and `calc_R` drops the left face (`-DKEEP_CELL`).
+* **`KEEP_PREC='MIXED'`** (FP64 state). The unchanged KEEP2/4/6 run on `type(dev)`
+  (`src/mod_prec.f90.fypp`): an FP32 base value and the deviation from it, an FP64 difference
+  narrowed to FP32. Its sums and products are exact identities, so KEEP returns
+  `F(q) - F(base)` without cancellation; the FP64 point flux of the left cell is added
+  (`KEEPm*`, picked by `interface KEEP` from the real(8) arguments). Every KEEP kernel uses it
+  and the scheme stays conservative. diffFP32's cell form (FP32 `F(i+1/2) - F(i-1/2)`) was
+  implemented, measured and removed: same density floor, 5x larger velocity error, not
+  conservative (docs/precision_modes.md).
 * **`PREC='DF'`** (every configuration): state, RK stages, primitives, fluxes and all
   convective/viscous/LES arithmetic in `type(fltflt)` (FmaX, `extern/FmaX`). Declarations are
   `${RT}$` (templates, `src/prec.fypp`) or `REAL_T` (plain sources, cpp from CMake); `mod_prec`
@@ -241,7 +241,7 @@ Ports of the diffFP32 study (`~/diffFP32`); measurements in `docs/precision_mode
   SLAU) and keeps FP64 accuracy (EVC KEEP2/4/6 errors equal to FP64); its KEEP6 kernels take
   0.73x the FP64 time. The mixed forms reach FP64 accuracy at KEEP2 but floor at L2(rho) ~
   3e-10 on EVC KEEP4/6 (accumulated FP32 rounding of the deviations) and save no FP64-pipe
-  work for KEEP6; MIXED (face) is preferred to MIXED_CELL. Gates: `test_prec_difffp32.py`
+  work for KEEP6. Gates: `test_prec_difffp32.py`
   (slow), cost: `python -m ouxsbli.analysis.bench_prec`.
 
 ## Cell-Center Velocity Gradients (`ux`, `vy`, `wz`)

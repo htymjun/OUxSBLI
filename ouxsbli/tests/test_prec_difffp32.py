@@ -4,8 +4,7 @@ applied to the OUxSBLI precision modes of KEEP (Euler, all-periodic):
 
   FP64        reference
   DF          PREC='DF'              whole state in FmaX double-float
-  MIXED       KEEP_PREC='MIXED'      difference-first FP32, face form
-  MIXED_CELL  KEEP_PREC='MIXED_CELL' difference-first FP32, cell form (diffFP32)
+  MIXED       KEEP_PREC='MIXED'      difference-first FP32 (face form, conservative)
 
 Rules (a mode keeps FP64 accuracy only if all hold):
   * convergence (3D EVC, KEEP2/4/6, n = 64/128/256): L2(rho) within 1.5x of
@@ -31,7 +30,7 @@ from .utils.evc_common import GRIDS, convergence_order
 
 pytestmark = pytest.mark.slow
 
-MODES = {"FP64": "", "DF": "prec=df", "MIXED": "keep_prec=mixed", "MIXED_CELL": "keep_prec=mixed_cell"}
+MODES = {"FP64": "", "DF": "prec=df", "MIXED": "keep_prec=mixed"}
 L2_FACTOR, ORDER_TOL, COLLAPSE_TOL = 1.5, 0.1, 0.1
 
 
@@ -46,7 +45,7 @@ FLOOR = pytest.mark.xfail(strict=True, reason="FP32 rounding of the deviations a
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("mode", ["DF", "MIXED", "MIXED_CELL"])
+@pytest.mark.parametrize("mode", ["DF", "MIXED"])
 @pytest.mark.parametrize("accuracy", [2, 4, 6])
 def test_evc_convergence_vs_fp64(request, monkeypatch, accuracy, mode):
     if mode != "DF" and accuracy > 2:
