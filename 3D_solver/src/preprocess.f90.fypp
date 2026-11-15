@@ -1,4 +1,4 @@
-#:include 'config.fypp'
+#:include 'prec.fypp'
 #:if not defined('MIXED_FORK')
   #:set MIXED_FORK = False
 #:endif
@@ -6,6 +6,7 @@ module preprocess
   use cudafor
   use mpi
   use print
+  use mod_prec
   use calc_flux_base, only : init_sensor
   implicit none
 contains
@@ -35,10 +36,10 @@ contains
     real(8), intent(out), allocatable, device :: dtdxdy(:,:), dtdydz(:,:), dtdzdx(:,:)
     real(8), intent(out), allocatable, device :: xix(:), etay(:), zetaz(:)
     real(8), intent(out), allocatable, device :: Jacobian(:,:)
-    real(8), intent(out), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
-    real(8), intent(out), allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
-    real(8), intent(out), allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
-    real(8), intent(out), allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
+    ${RT}$, intent(out), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
+    ${RT}$, intent(out), allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
+    ${RT}$, intent(out), allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
+    ${RT}$, intent(out), allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
     integer ierr
     allocate(Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), &
              E(nx-1,ny-2,nz-2,5), F(nx-2,ny-1,nz-2,5), G(nx-2,ny-2,nz-1,5), stat=ierr)
@@ -79,8 +80,8 @@ contains
     real(8), intent(out), device, contiguous :: dtdxdy(nx-2,ny-2), dtdydz(ny-2,nz-2), dtdzdx(nx-2,nz-2)
     real(8), intent(out), device, contiguous :: xix(nx-1), etay(ny-1), zetaz(nz-1)
     real(8), intent(out), device, contiguous :: Jacobian(nx,ny)
-    real(8), intent(out), device, contiguous :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
-    real(8), intent(out), device, contiguous :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    ${RT}$, intent(out), device, contiguous :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
+    ${RT}$, intent(out), device, contiguous :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(4), intent(inout)                   :: ke0, entropy0
     #:if MIXED_FORK
     real(4), intent(out), device, contiguous :: xix_r4(nx-1), etay_r4(ny-1), zetaz_r4(nz-1)

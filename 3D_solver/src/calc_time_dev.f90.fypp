@@ -1,6 +1,6 @@
 !> Module for time-stepping orchestration and time integration schemes
 !> Implements 3rd-order and 4th-order Runge-Kutta time stepping with MPI/GPU support
-#:include 'config.fypp'
+#:include 'prec.fypp'
 #:if not defined('MPI')
   #:set MPI = 'CPU'
 #:endif
@@ -11,6 +11,8 @@
 #! phases, current step) for a time-dependent blowing/suction strip. Only
 #! SWLBLI defines it; every other case keeps the plain set_bc signature.
 #:set bc_extra = 'x, z, phi_l_gpu, phi_m_gpu, t_now, ' if BC_FORCING else ''
+#! PREC='DF' (all-periodic): set_bc_cyclic directly, it copies the fltflt state as 8-byte words
+#:set set_bc = 'set_bc_cyclic(id_accuracy, nx, ny, nz, ' if PREC == 'DF' else 'set_bc(myrank, nx, ny, nz, ' + bc_extra + 'Jacobian, '
 #:if BC_FORCING and RESCALE
   #:stop 'BC_FORCING is only implemented for the RESCALE=False time loops (RK=3 and RK=4, with or without COMMZ)'
 #:endif
@@ -21,9 +23,10 @@ module calc_time_dev
   use mod_globals, only : nt, np, nre2, rerank, &
   & blocks, threads, blocksE, blocksF, blocksG, threadsE, threadsF, threadsG, &
   & blocksEv, blocksFv, blocksGv, threadsEv, threadsFv, threadsGv
-  use mod_constant, only : one_third
+  use mod_constant, only : one_third${', id_accuracy' if PREC == 'DF' else ''}$
   use calc_flux_base
   use calc_steps
+  use mod_prec
   use calc_rescale
   use calc_para
   use set
@@ -58,12 +61,12 @@ contains
     integer i, j, k, l, t1, t2, ierr, nranks, ndevices, stat, ireq, ireq2(2)
     integer istat(MPI_STATUS_SIZE), istat2(MPI_STATUS_SIZE,2)
     ! GPU !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    real(8), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
-    real(8), allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
-    real(8), allocatable, device :: QJ2_1(:,:,:), QJ2_2(:,:,:), QJ2_3(:,:,:), QJ2_4(:,:,:), QJ2_5(:,:,:)
-    real(8), allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
-    real(8), allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
-    real(8), allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
+    ${RT}$, allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
+    ${RT}$, allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
+    ${RT}$, allocatable, device :: QJ2_1(:,:,:), QJ2_2(:,:,:), QJ2_3(:,:,:), QJ2_4(:,:,:), QJ2_5(:,:,:)
+    ${RT}$, allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
+    ${RT}$, allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
+    ${RT}$, allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
     real(8), allocatable, device :: xix(:), etay(:), zetaz(:), Jacobian(:,:), dtdxdy(:,:), dtdydz(:,:), dtdzdx(:,:)
     ! for plot
     real(4) :: ke0 = 1.d0, entropy0 = 1.d0
@@ -129,17 +132,17 @@ contains
           ! Step 2a: TVD RK3 Stage 1 - compute Q(1), store in QJ2
           call calc_step1<<<blocks,threads>>>(nx, ny, nz, 1.d0, dtdxdy, dtdydz, dtdzdx, E, F, G, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
           ! Enforce boundary conditions at cell interfaces (extrapolation or characteristic-based)
-          call set_bc(myrank, nx, ny, nz, ${bc_extra}$Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
+          call ${set_bc}$QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
 
           ! Step 2b: TVD RK3 Stage 2 - blend Q(1) with Q^n, store in QJ2
           call calc_EFG(nx, ny, nz, xix, etay, zetaz, Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
           call calc_step2_3<<<blocks,threads>>>(nx, ny, nz, 0.75d0, 0.25d0, 0.25d0, 1.d0, dtdxdy, dtdydz, dtdzdx, E, F, G, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
-          call set_bc(myrank, nx, ny, nz, ${bc_extra}$Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
+          call ${set_bc}$QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
 
           ! Step 2c: TVD RK3 Stage 3 - final solution Q^(n+1), store in QJ (swap arrays)
           call calc_EFG(nx, ny, nz, xix, etay, zetaz, Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
           call calc_step2_3<<<blocks,threads>>>(nx, ny, nz, 2.d0, 1.d0, 2.d0, one_third, dtdxdy, dtdydz, dtdzdx, E, F, G, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
-          call set_bc(myrank, nx, ny, nz, ${bc_extra}$Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
+          call ${set_bc}$QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
         enddo
       endif
       if (mod(myrank, 2) == 0) then
@@ -177,12 +180,12 @@ contains
     real(8), allocatable, device :: Qm_1(:), Qm_2(:), Qm_3(:), Qm_4(:), Qm_5(:)
     real(8), allocatable, pinned :: Qm_cpu_1(:), Qm_cpu_2(:), Qm_cpu_3(:), Qm_cpu_4(:), Qm_cpu_5(:)
     ! GPU !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    real(8), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
-    real(8), allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
-    real(8), allocatable, device :: QJ2_1(:,:,:), QJ2_2(:,:,:), QJ2_3(:,:,:), QJ2_4(:,:,:), QJ2_5(:,:,:)
-    real(8), allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
-    real(8), allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
-    real(8), allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
+    ${RT}$, allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
+    ${RT}$, allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
+    ${RT}$, allocatable, device :: QJ2_1(:,:,:), QJ2_2(:,:,:), QJ2_3(:,:,:), QJ2_4(:,:,:), QJ2_5(:,:,:)
+    ${RT}$, allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
+    ${RT}$, allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
+    ${RT}$, allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
     real(8), allocatable, device :: xix(:), etay(:), zetaz(:), Jacobian(:,:), dtdxdy(:,:), dtdydz(:,:), dtdzdx(:,:)
     ! for plot
     real(4) :: ke0 = 1.d0, entropy0 = 1.d0
@@ -285,13 +288,13 @@ contains
     integer i, j, k, l, t1, t2, ierr, nranks, ndevices, stat, ireq, ireq2(2)
     integer istat(MPI_STATUS_SIZE), istat2(MPI_STATUS_SIZE,2)
     ! GPU !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    real(8), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
-    real(8), allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
-    real(8), allocatable, device :: QJs_1(:,:,:), QJs_2(:,:,:), QJs_3(:,:,:), QJs_4(:,:,:), QJs_5(:,:,:)
-    real(8), allocatable, device :: Rs(:,:,:,:)
-    real(8), allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
-    real(8), allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
-    real(8), allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
+    ${RT}$, allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
+    ${RT}$, allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
+    ${RT}$, allocatable, device :: QJs_1(:,:,:), QJs_2(:,:,:), QJs_3(:,:,:), QJs_4(:,:,:), QJs_5(:,:,:)
+    ${RT}$, allocatable, device :: Rs(:,:,:,:)
+    ${RT}$, allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
+    ${RT}$, allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
+    ${RT}$, allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
     real(8), allocatable, device :: xix(:), etay(:), zetaz(:), Jacobian(:,:), dtdxdy(:,:), dtdydz(:,:), dtdzdx(:,:)
     ! for plot
     real(4) :: ke0 = 1.d0, entropy0 = 1.d0
@@ -352,22 +355,22 @@ contains
           ! Stage 1: k1 = RHS(Q^n), coefficients: 0.5*dt applied, weight 1.0 to Rs
           call calc_EFG(nx, ny, nz, xix, etay, zetaz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
           call calc_step<<<blocks,threads>>>(nx, ny, nz, 0.5d0, 1.d0, dtdxdy, dtdydz, dtdzdx, E, F, G, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5, Rs) ! QJs = Q2 = Q^n + 0.5*dt*k1
-          call set_bc(myrank, nx, ny, nz, ${bc_extra}$Jacobian, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5)
+          call ${set_bc}$QJs_1, QJs_2, QJs_3, QJs_4, QJs_5)
 
           ! Stage 2: k2 = RHS(Q^n + 0.5*dt*k1), weight 2.0 to Rs for (2*k2 term)
           call calc_EFG(nx, ny, nz, xix, etay, zetaz, Jacobian, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
           call calc_step<<<blocks,threads>>>(nx, ny, nz, 0.5d0, 2.d0, dtdxdy, dtdydz, dtdzdx, E, F, G, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5, Rs) ! QJs = Q3 = Q^n + 0.5*dt*k2
-          call set_bc(myrank, nx, ny, nz, ${bc_extra}$Jacobian, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5)
+          call ${set_bc}$QJs_1, QJs_2, QJs_3, QJs_4, QJs_5)
 
           ! Stage 3: k3 = RHS(Q^n + 0.5*dt*k2), weight 2.0 for (2*k3 term)
           call calc_EFG(nx, ny, nz, xix, etay, zetaz, Jacobian, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
           call calc_step<<<blocks,threads>>>(nx, ny, nz, 1.0d0, 2.d0, dtdxdy, dtdydz, dtdzdx, E, F, G, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5, Rs) ! QJs = Q4 = Q^n + dt*k3
-          call set_bc(myrank, nx, ny, nz, ${bc_extra}$Jacobian, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5)
+          call ${set_bc}$QJs_1, QJs_2, QJs_3, QJs_4, QJs_5)
 
           ! Stage 4: k4 = RHS(Q^n + dt*k3), weight 1.0, assemble final Q^(n+1)
           call calc_EFG(nx, ny, nz, xix, etay, zetaz, Jacobian, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5, Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
           call calc_step4<<<blocks,threads>>>(nx, ny, nz, dtdxdy, dtdydz, dtdzdx, E, F, G, Rs, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)  ! QJ = Q^(n+1)
-          call set_bc(myrank, nx, ny, nz, ${bc_extra}$Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
+          call ${set_bc}$QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
         enddo
       endif
       if (mod(myrank, 2) == 0) then
@@ -404,13 +407,13 @@ contains
     real(8), allocatable, device :: Qm_1(:), Qm_2(:), Qm_3(:), Qm_4(:), Qm_5(:)
     real(8), allocatable, pinned :: Qm_cpu_1(:), Qm_cpu_2(:), Qm_cpu_3(:), Qm_cpu_4(:), Qm_cpu_5(:)
     ! GPU !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    real(8), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
-    real(8), allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
-    real(8), allocatable, device :: QJs_1(:,:,:), QJs_2(:,:,:), QJs_3(:,:,:), QJs_4(:,:,:), QJs_5(:,:,:)
-    real(8), allocatable, device :: Rs(:,:,:,:)
-    real(8), allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
-    real(8), allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
-    real(8), allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
+    ${RT}$, allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
+    ${RT}$, allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
+    ${RT}$, allocatable, device :: QJs_1(:,:,:), QJs_2(:,:,:), QJs_3(:,:,:), QJs_4(:,:,:), QJs_5(:,:,:)
+    ${RT}$, allocatable, device :: Rs(:,:,:,:)
+    ${RT}$, allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
+    ${RT}$, allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
+    ${RT}$, allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
     real(8), allocatable, device :: xix(:), etay(:), zetaz(:), Jacobian(:,:), dtdxdy(:,:), dtdydz(:,:), dtdzdx(:,:)
     ! for plot
     real(4) :: ke0 = 1.d0, entropy0 = 1.d0
@@ -525,12 +528,12 @@ contains
     integer req_z(4)
     integer istat(MPI_STATUS_SIZE)
     ! GPU arrays (compute ranks only)
-    real(8), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
-    real(8), allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
-    real(8), allocatable, device :: QJ2_1(:,:,:), QJ2_2(:,:,:), QJ2_3(:,:,:), QJ2_4(:,:,:), QJ2_5(:,:,:)
-    real(8), allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
-    real(8), allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
-    real(8), allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
+    ${RT}$, allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
+    ${RT}$, allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
+    ${RT}$, allocatable, device :: QJ2_1(:,:,:), QJ2_2(:,:,:), QJ2_3(:,:,:), QJ2_4(:,:,:), QJ2_5(:,:,:)
+    ${RT}$, allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
+    ${RT}$, allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
+    ${RT}$, allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
     real(8), allocatable, device :: xix(:), etay(:), zetaz(:), Jacobian(:,:)
     real(8), allocatable, device :: dtdxdy(:,:), dtdydz(:,:), dtdzdx(:,:)
     real(8), allocatable, device :: Qs1d_lo(:), Qs1d_hi(:), Qr1d_lo(:), Qr1d_hi(:)
@@ -614,7 +617,7 @@ contains
           call calc_EFG_halo(nx, ny, nz, xix, etay, zetaz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, &
                                 Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
           call calc_step1<<<blocks,threads>>>(nx, ny, nz, 1.d0, dtdxdy, dtdydz, dtdzdx, E, F, G, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
-          call set_bc(myrank, nx, ny, nz, ${bc_extra}$Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
+          call ${set_bc}$QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
 
           call start_exchange_z(myrank, nranks, overlap, nx, ny, nz, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, &
                                      Qs1d_lo, Qs1d_hi, Qr1d_lo, Qr1d_hi, &
@@ -626,7 +629,7 @@ contains
                                 Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
           call calc_step2_3<<<blocks,threads>>>(nx, ny, nz, 0.75d0, 0.25d0, 0.25d0, 1.d0, &
                                                 dtdxdy, dtdydz, dtdzdx, E, F, G, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
-          call set_bc(myrank, nx, ny, nz, ${bc_extra}$Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
+          call ${set_bc}$QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5)
 
           call start_exchange_z(myrank, nranks, overlap, nx, ny, nz, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, &
                                      Qs1d_lo, Qs1d_hi, Qr1d_lo, Qr1d_hi, &
@@ -638,7 +641,7 @@ contains
                                 Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
           call calc_step2_3<<<blocks,threads>>>(nx, ny, nz, 2.d0, 1.d0, 2.d0, one_third, &
                                                 dtdxdy, dtdydz, dtdzdx, E, F, G, QJ2_1, QJ2_2, QJ2_3, QJ2_4, QJ2_5, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
-          call set_bc(myrank, nx, ny, nz, ${bc_extra}$Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
+          call ${set_bc}$QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
         enddo
         ! Refresh the z ghost planes before output so the VTK slab (and the
         ! final restart dump) carries the neighbours' data instead of the
@@ -682,13 +685,13 @@ contains
     integer req_z(4)
     integer istat(MPI_STATUS_SIZE)
     ! GPU arrays (compute ranks only)
-    real(8), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
-    real(8), allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
-    real(8), allocatable, device :: QJs_1(:,:,:), QJs_2(:,:,:), QJs_3(:,:,:), QJs_4(:,:,:), QJs_5(:,:,:)
-    real(8), allocatable, device :: Rs(:,:,:,:)
-    real(8), allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
-    real(8), allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
-    real(8), allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
+    ${RT}$, allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
+    ${RT}$, allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
+    ${RT}$, allocatable, device :: QJs_1(:,:,:), QJs_2(:,:,:), QJs_3(:,:,:), QJs_4(:,:,:), QJs_5(:,:,:)
+    ${RT}$, allocatable, device :: Rs(:,:,:,:)
+    ${RT}$, allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
+    ${RT}$, allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
+    ${RT}$, allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
     real(8), allocatable, device :: xix(:), etay(:), zetaz(:), Jacobian(:,:)
     real(8), allocatable, device :: dtdxdy(:,:), dtdydz(:,:), dtdzdx(:,:)
     real(8), allocatable, device :: Qs1d_lo(:), Qs1d_hi(:), Qr1d_lo(:), Qr1d_hi(:)
@@ -768,7 +771,7 @@ contains
           call calc_EFG_halo(nx, ny, nz, xix, etay, zetaz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, &
                                 Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
           call calc_step<<<blocks,threads>>>(nx, ny, nz, 0.5d0, 1.d0, dtdxdy, dtdydz, dtdzdx, E, F, G, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5, Rs)
-          call set_bc(myrank, nx, ny, nz, ${bc_extra}$Jacobian, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5)
+          call ${set_bc}$QJs_1, QJs_2, QJs_3, QJs_4, QJs_5)
 
           call start_exchange_z(myrank, nranks, overlap, nx, ny, nz, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5, &
                                      Qs1d_lo, Qs1d_hi, Qr1d_lo, Qr1d_hi, &
@@ -779,7 +782,7 @@ contains
           call calc_EFG_halo(nx, ny, nz, xix, etay, zetaz, Jacobian, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5, &
                                 Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
           call calc_step<<<blocks,threads>>>(nx, ny, nz, 0.5d0, 2.d0, dtdxdy, dtdydz, dtdzdx, E, F, G, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5, Rs)
-          call set_bc(myrank, nx, ny, nz, ${bc_extra}$Jacobian, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5)
+          call ${set_bc}$QJs_1, QJs_2, QJs_3, QJs_4, QJs_5)
 
           call start_exchange_z(myrank, nranks, overlap, nx, ny, nz, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5, &
                                      Qs1d_lo, Qs1d_hi, Qr1d_lo, Qr1d_hi, &
@@ -790,7 +793,7 @@ contains
           call calc_EFG_halo(nx, ny, nz, xix, etay, zetaz, Jacobian, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5, &
                                 Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
           call calc_step<<<blocks,threads>>>(nx, ny, nz, 1.0d0, 2.d0, dtdxdy, dtdydz, dtdzdx, E, F, G, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5, Rs)
-          call set_bc(myrank, nx, ny, nz, ${bc_extra}$Jacobian, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5)
+          call ${set_bc}$QJs_1, QJs_2, QJs_3, QJs_4, QJs_5)
 
           call start_exchange_z(myrank, nranks, overlap, nx, ny, nz, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5, &
                                      Qs1d_lo, Qs1d_hi, Qr1d_lo, Qr1d_hi, &
@@ -801,7 +804,7 @@ contains
           call calc_EFG_halo(nx, ny, nz, xix, etay, zetaz, Jacobian, QJs_1, QJs_2, QJs_3, QJs_4, QJs_5, &
                                 Q_1, Q_2, Q_3, Q_4, Q_5, T, mu, mut, qc2, ux, vy, wz, E, F, G)
           call calc_step4<<<blocks,threads>>>(nx, ny, nz, dtdxdy, dtdydz, dtdzdx, E, F, G, Rs, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
-          call set_bc(myrank, nx, ny, nz, ${bc_extra}$Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
+          call ${set_bc}$QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
           Rs = 0.d0
         enddo
         ! Refresh the z ghost planes before output (see the RK3 loop above).

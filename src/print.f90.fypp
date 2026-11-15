@@ -1,4 +1,4 @@
-#:include 'config.fypp'
+#:include 'prec.fypp'
 #:if not defined('OUTPUT_PRECISION')
   #:set OUTPUT_PRECISION = 4
 #:endif
@@ -6,6 +6,9 @@ module print
   use mpi
   use mod_globals, only : nt, np, dt, step_offset, gamma, R, dimension
   use mod_constant, only : id_accuracy
+  #:if PREC == 'DF'
+  use mod_prec
+  #:endif
   implicit none
   integer, parameter :: io = ${OUTPUT_PRECISION}$
   integer, parameter :: IO_UNIT_VTK = 10
@@ -280,7 +283,7 @@ contains
                                        QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Q, ke0, entropy0)
     integer, intent(in)         :: myrank, nranks, step, nx, ny, nz
     real(8), intent(in)         :: x(nx), y(ny), z(nz), Jacobian_cpu(nx,ny)
-    real(8), intent(in), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    ${RT}$, intent(in), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8), intent(inout)      :: Q(nx,ny,nz,5)
     real(4), intent(inout)      :: ke0, entropy0
     integer ireq3(3), istat3(MPI_STATUS_SIZE,3), ierr

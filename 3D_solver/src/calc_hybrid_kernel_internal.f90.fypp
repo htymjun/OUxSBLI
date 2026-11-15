@@ -36,7 +36,7 @@ module calc_hybrid_kernel_internal
 #:endif
 
   interface KEEP
-    module procedure KEEP2, KEEP4, KEEP6${', KEEPm2, KEEPm4, KEEPm6' if KEEP_PREC != 'FP64' else ''}$
+    module procedure ${KEEP_PROCS}$
   end interface KEEP
 
   interface SLAU

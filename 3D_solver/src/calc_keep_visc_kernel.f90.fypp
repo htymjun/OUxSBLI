@@ -42,7 +42,7 @@ module calc_keep_visc_kernel_internal
   integer(8), parameter :: id_acc = 0_8
 
   interface KEEP
-    module procedure KEEP2, KEEP4, KEEP6${', KEEPm2, KEEPm4, KEEPm6' if KEEP_PREC != 'FP64' else ''}$
+    module procedure ${KEEP_PROCS}$
   end interface KEEP
 contains
   include 'calc_scheme_math.f90'

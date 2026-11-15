@@ -1,11 +1,44 @@
 #:include 'prec.fypp'
 !> Arithmetic types selected by PREC / KEEP_PREC (see src/prec.fypp).
+!> PREC = 'DF': the intrinsics and assignments the solver uses, extended to FmaX
+!> fltflt, so the FP64 source runs unchanged on double-float state. FP64 <-> DF
+!> conversions happen only in the host <-> device array assignments (up/download).
+
 !> KEEP_PREC = 'MIXED*': type(dev) = (b, d) carries the FP32 base-stencil value b
 !> and the deviation d from it (an FP64 difference narrowed to FP32). Sums and
 !> products follow the exact identities (B1+D1)(B2+D2) - B1*B2 = B1*D2 + D1*(B2+D2),
 !> so KEEP evaluated on dev returns F(q) - F(base) in FP32 without cancellation.
 module mod_prec
+#:if PREC == 'DF'
+  use fltflt
+#:endif
   implicit none
+#:if PREC == 'DF'
+  interface sqrt
+    procedure fltflt_sqrt
+  end interface
+  interface abs
+    procedure fltflt_abs
+  end interface
+  interface max
+    module procedure max_ff
+  end interface
+  interface min
+    module procedure min_ff
+  end interface
+  interface fma
+    module procedure fma_fff, fma_rff
+  end interface
+  interface dble
+    module procedure dble_ff
+  end interface
+  interface store
+    module procedure store_ff
+  end interface
+  interface assignment(=)
+    module procedure set_ff_r8, set_r8_ff, upload3, download3, copy3, fill4
+  end interface
+#:endif
 #:if KEEP_PREC != 'FP64'
   type dev
     real(4) :: b, d
@@ -22,7 +55,99 @@ module mod_prec
   interface fma
     module procedure fma_vvv, fma_rvv
   end interface
+#:endif
+#:if PREC == 'DF' or KEEP_PREC != 'FP64'
 contains
+#:endif
+#:if PREC == 'DF'
+  attributes(device) type(fltflt) function max_ff(a, b)
+    type(fltflt), intent(in) :: a, b
+    max_ff = fltflt_max(a, b)
+  end function max_ff
+
+  attributes(device) type(fltflt) function min_ff(a, b)
+    type(fltflt), intent(in) :: a, b
+    min_ff = fltflt_min(a, b)
+  end function min_ff
+
+  attributes(device) type(fltflt) function fma_fff(a, b, c)
+    type(fltflt), intent(in) :: a, b, c
+    fma_fff = fltflt_fma(a, b, c)
+  end function fma_fff
+
+  attributes(device) type(fltflt) function fma_rff(a, b, c)
+    real(8), intent(in)      :: a
+    type(fltflt), intent(in) :: b, c
+    fma_rff = a * b + c
+  end function fma_rff
+
+  attributes(host, device) real(8) function dble_ff(a)
+    type(fltflt), intent(in) :: a
+    dble_ff = dble(a%hi) + dble(a%lo)
+  end function dble_ff
+
+  attributes(device) subroutine store_ff(a, b)
+    type(fltflt), intent(out) :: a
+    type(fltflt), intent(in)  :: b
+    a = b
+  end subroutine store_ff
+
+  attributes(host, device) subroutine set_ff_r8(a, b)
+    type(fltflt), intent(out) :: a
+    real(8), intent(in)       :: b
+    a = fltflt_init(b)
+  end subroutine set_ff_r8
+
+  attributes(host, device) subroutine set_r8_ff(a, b)
+    real(8), intent(out)     :: a
+    type(fltflt), intent(in) :: b
+    a = dble(b%hi) + dble(b%lo)
+  end subroutine set_r8_ff
+
+  subroutine upload3(a, b)
+    type(fltflt), device, intent(out) :: a(:,:,:)
+    real(8), intent(in)               :: b(:,:,:)
+    type(fltflt), allocatable :: t(:,:,:)
+    integer i, j, k
+    allocate(t(size(b,1), size(b,2), size(b,3)))
+    do k = 1, size(b,3); do j = 1, size(b,2); do i = 1, size(b,1)
+      t(i,j,k) = fltflt_init(b(i,j,k))
+    enddo; enddo; enddo
+    a = t
+  end subroutine upload3
+
+  subroutine download3(b, a)
+    real(8), intent(out)             :: b(:,:,:)
+    type(fltflt), device, intent(in) :: a(:,:,:)
+    type(fltflt), allocatable :: t(:,:,:)
+    allocate(t(size(a,1), size(a,2), size(a,3)))
+    t = a
+    b = dble(t%hi) + dble(t%lo)
+  end subroutine download3
+
+  subroutine copy3(a, b)
+    type(fltflt), device, intent(out) :: a(:,:,:)
+    type(fltflt), device, intent(in)  :: b(:,:,:)
+    call copy8(size(a), a, b)
+  end subroutine copy3
+
+  !> device-to-device copy as 8-byte words (CUF loops over fltflt arrays are not
+  !> reliable in nvfortran 26.5: they silently restored stale values)
+  subroutine copy8(n, a, b)
+    integer, intent(in)              :: n
+    real(8), device, intent(out)     :: a(n)
+    real(8), device, intent(in)      :: b(n)
+    !DIR$ IGNORE_TKR (tkr) a, b
+    a = b
+  end subroutine copy8
+
+  subroutine fill4(a, b)
+    type(fltflt), device, intent(out) :: a(:,:,:,:)
+    real(8), intent(in)               :: b
+    a = fltflt_init(b)
+  end subroutine fill4
+#:endif
+#:if KEEP_PREC != 'FP64'
   pure attributes(device) type(dev) function add_vv(x, y)
     type(dev), intent(in) :: x, y
     add_vv = dev(x%b + y%b, x%d + y%d)

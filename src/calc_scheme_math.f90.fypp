@@ -5,7 +5,8 @@
 #:set VELS = ['u', 'v', 'w'] if DIM == 3 else ['u', 'v']
 #:set NEQ  = DIM + 2
 #:set VARG = ', '.join(VELS)
-  pure attributes(device) function KEEP2(id_accuracy, rho, ${VARG}$,  uu, p, T, Normal) result(F)
+#:for KT, S in KEEP_INST
+  ${'pure ' if S == '' else ''}$attributes(device) function KEEP2${S}$(id_accuracy, rho, ${VARG}$,  uu, p, T, Normal) result(F)
     integer(2), intent(in), value     :: id_accuracy
     ${KT}$, intent(in), dimension(2) :: rho, ${VARG}$, uu, p, T
     real(8), intent(in), dimension(5) :: Normal
@@ -17,10 +18,10 @@
     F(${NEQ}$) = F(1) * 0.5d0 * (T(1) + T(2)) * R_over_gamma_1 ! internal energy
     F(${NEQ}$) = F(${NEQ}$) + 0.5d0 * (uu(1) * p(2) + uu(2) * p(1)) ! pressure diffusion
     F(${NEQ}$) = F(${NEQ}$) + 0.5d0 * F(1) * (${' + '.join(v + '(1) * ' + v + '(2)' for v in VELS)}$ ) ! kinetic energy
-  end function KEEP2
+  end function KEEP2${S}$
 
 
-  attributes(device) function KEEP4(id_accuracy, rho, ${VARG}$, uu, p, T, Normal) result(F)
+  attributes(device) function KEEP4${S}$(id_accuracy, rho, ${VARG}$, uu, p, T, Normal) result(F)
     integer(4), intent(in), value     :: id_accuracy
     ${KT}$, intent(in), dimension(4) :: rho, ${VARG}$, uu, p, T
     real(8), intent(in), dimension(5) :: Normal
@@ -68,11 +69,11 @@
       F(${NEQ}$) = fma(two_third, uu(2)*p(3) + uu(3)*p(2), &
                  fma(-one_twelfth, uu(2)*p(4) + uu(4)*p(2) + uu(1)*p(3) + uu(3)*p(1), ene))
     end block
-  end function KEEP4
+  end function KEEP4${S}$
 
 
   !$dir inline
-  attributes(device) function mom(u, pres, RV4, RV6, &
+  attributes(device) function mom${S}$(u, pres, RV4, RV6, &
                                        RV2_RV5, RV3_RV5, &
                                        RV1_RV2_RV4, RV1_RV3_RV6) result(ruu)
     ${KT}$, intent(in)        :: u(6)
@@ -85,10 +86,10 @@
     r = fma(RV1_RV2_RV4, u(3), r)
     r = fma(RV3_RV5, u(2), r)
     ruu = fma(RV6, u(1), r)  ! accumulate in a local: a derived-type result must not be an argument
-  end function mom
+  end function mom${S}$
 
 
-  attributes(device) function KEEP6(id_accuracy, rho, ${VARG}$, uu, p, T, Normal) result(F)
+  attributes(device) function KEEP6${S}$(id_accuracy, rho, ${VARG}$, uu, p, T, Normal) result(F)
     integer(8), intent(in), value     :: id_accuracy
     ${KT}$, intent(in), dimension(6) :: rho, ${VARG}$, uu, p, T
     real(8), intent(in), dimension(5) :: Normal
@@ -123,7 +124,7 @@
       end block
       #:for i, v in enumerate(VELS)
       !ru${v}$ = RV6*${v}$(1) + RV3_RV5*${v}$(2) + RV1_RV2_RV4*${v}$(3) + RV1_RV3_RV6*${v}$(4) + RV2_RV5*${v}$(5) + RV4*${v}$(6) + pres * Normal(${i+2}$)
-      ru${v}$ = mom(${v}$, pres * Normal(${i+2}$), RV4, RV6, &
+      ru${v}$ = mom${S}$(${v}$, pres * Normal(${i+2}$), RV4, RV6, &
                 RV2_RV5, RV3_RV5, RV1_RV2_RV4, RV1_RV3_RV6)
       #:endfor
       #:for i, v in enumerate(VELS)
@@ -160,7 +161,8 @@
              fma( one_60, uu(3)*p(6) + uu(6)*p(3) + uu(2)*p(5) + uu(5)*p(2) &
                  + uu(1)*p(4) + uu(4)*p(1), ene)))
    end block
-  end function KEEP6
+  end function KEEP6${S}$
+#:endfor
 
 
 #:if KEEP_PREC != 'FP64'

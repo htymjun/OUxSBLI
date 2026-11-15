@@ -1,5 +1,8 @@
 ! KEEP_PREC = 'MIXED_CELL' (-DKEEP_CELL): the convective kernels store the cell
 ! difference F(i+1/2) - F(i-1/2) in the right-face slot, so the left face drops out.
+#ifdef PREC_DF
+#define __stcs store
+#endif
 #ifdef KEEP_CELL
 #define LEFT(f) 0.d0
 #else
@@ -10,6 +13,7 @@ module calc_steps
   use mod_globals, only : dt
   use mod_constant, only : one_sixth
   use libm
+  use mod_prec
   implicit none
 contains
   !$dir inline
@@ -21,32 +25,34 @@ contains
     real(8), intent(in), value              :: dtdxdy              !< dt * Sxy
     real(8), intent(in), value              :: dtdydz              !< dt * Syz
     real(8), intent(in), value              :: dtdzdx              !< dt * Szx
-    real(8), intent(in), device, contiguous :: E(nx-1,ny-2,nz-2,5) !< Flux in x direction
-    real(8), intent(in), device, contiguous :: F(nx-2,ny-1,nz-2,5) !< Flux in y direction
-    real(8), intent(in), device, contiguous :: G(nx-2,ny-2,nz-1,5) !< Flux in z direction
-    real(8), intent(out), contiguous        :: R(5)
-    real(8) v0, v1
+    REAL_T, intent(in), device, contiguous :: E(nx-1,ny-2,nz-2,5) !< Flux in x direction
+    REAL_T, intent(in), device, contiguous :: F(nx-2,ny-1,nz-2,5) !< Flux in y direction
+    REAL_T, intent(in), device, contiguous :: G(nx-2,ny-2,nz-1,5) !< Flux in z direction
+    REAL_T, intent(out), contiguous         :: R(5)
+    REAL_T v0, v1, r1, r2, r3, r4, r5  ! the sums live in scalars: nvfortran 26.5 -O2 lost
+                                       ! updates of the fltflt dummy R(:) (PREC = 'DF')
     ! x direction
     !R(1) = dtdydz * (-E(i,j,k,1) + E(i+1,j,k,1))
-    v0 = LEFT(E(i,j,k,1)); v1 = E(i+1,j,k,1); R(1) = dtdydz * (v1 - v0)
-    v0 = LEFT(E(i,j,k,2)); v1 = E(i+1,j,k,2); R(2) = dtdydz * (v1 - v0)
-    v0 = LEFT(E(i,j,k,3)); v1 = E(i+1,j,k,3); R(3) = dtdydz * (v1 - v0)
-    v0 = LEFT(E(i,j,k,4)); v1 = E(i+1,j,k,4); R(4) = dtdydz * (v1 - v0)
-    v0 = LEFT(E(i,j,k,5)); v1 = E(i+1,j,k,5); R(5) = dtdydz * (v1 - v0)
+    v0 = LEFT(E(i,j,k,1)); v1 = E(i+1,j,k,1); r1 = dtdydz * (v1 - v0)
+    v0 = LEFT(E(i,j,k,2)); v1 = E(i+1,j,k,2); r2 = dtdydz * (v1 - v0)
+    v0 = LEFT(E(i,j,k,3)); v1 = E(i+1,j,k,3); r3 = dtdydz * (v1 - v0)
+    v0 = LEFT(E(i,j,k,4)); v1 = E(i+1,j,k,4); r4 = dtdydz * (v1 - v0)
+    v0 = LEFT(E(i,j,k,5)); v1 = E(i+1,j,k,5); r5 = dtdydz * (v1 - v0)
     ! y direction
     !R(1) = R(1) + dtdzdx * (-F(i,j,k,1) + F(i,j+1,k,1))
-    v0 = LEFT(F(i,j,k,1)); v1 = F(i,j+1,k,1); R(1) = fma(dtdzdx, v1 - v0, R(1))
-    v0 = LEFT(F(i,j,k,2)); v1 = F(i,j+1,k,2); R(2) = fma(dtdzdx, v1 - v0, R(2))
-    v0 = LEFT(F(i,j,k,3)); v1 = F(i,j+1,k,3); R(3) = fma(dtdzdx, v1 - v0, R(3))
-    v0 = LEFT(F(i,j,k,4)); v1 = F(i,j+1,k,4); R(4) = fma(dtdzdx, v1 - v0, R(4))
-    v0 = LEFT(F(i,j,k,5)); v1 = F(i,j+1,k,5); R(5) = fma(dtdzdx, v1 - v0, R(5))
+    v0 = LEFT(F(i,j,k,1)); v1 = F(i,j+1,k,1); r1 = fma(dtdzdx, v1 - v0, r1)
+    v0 = LEFT(F(i,j,k,2)); v1 = F(i,j+1,k,2); r2 = fma(dtdzdx, v1 - v0, r2)
+    v0 = LEFT(F(i,j,k,3)); v1 = F(i,j+1,k,3); r3 = fma(dtdzdx, v1 - v0, r3)
+    v0 = LEFT(F(i,j,k,4)); v1 = F(i,j+1,k,4); r4 = fma(dtdzdx, v1 - v0, r4)
+    v0 = LEFT(F(i,j,k,5)); v1 = F(i,j+1,k,5); r5 = fma(dtdzdx, v1 - v0, r5)
     ! z direction
     !R(1) = R(1) + dtdxdy * (-G(i,j,k,1) + G(i,j,k+1,1))
-    v0 = LEFT(G(i,j,k,1)); v1 = G(i,j,k+1,1); R(1) = fma(dtdxdy, v1 - v0, R(1))
-    v0 = LEFT(G(i,j,k,2)); v1 = G(i,j,k+1,2); R(2) = fma(dtdxdy, v1 - v0, R(2))
-    v0 = LEFT(G(i,j,k,3)); v1 = G(i,j,k+1,3); R(3) = fma(dtdxdy, v1 - v0, R(3))
-    v0 = LEFT(G(i,j,k,4)); v1 = G(i,j,k+1,4); R(4) = fma(dtdxdy, v1 - v0, R(4))
-    v0 = LEFT(G(i,j,k,5)); v1 = G(i,j,k+1,5); R(5) = fma(dtdxdy, v1 - v0, R(5))
+    v0 = LEFT(G(i,j,k,1)); v1 = G(i,j,k+1,1); r1 = fma(dtdxdy, v1 - v0, r1)
+    v0 = LEFT(G(i,j,k,2)); v1 = G(i,j,k+1,2); r2 = fma(dtdxdy, v1 - v0, r2)
+    v0 = LEFT(G(i,j,k,3)); v1 = G(i,j,k+1,3); r3 = fma(dtdxdy, v1 - v0, r3)
+    v0 = LEFT(G(i,j,k,4)); v1 = G(i,j,k+1,4); r4 = fma(dtdxdy, v1 - v0, r4)
+    v0 = LEFT(G(i,j,k,5)); v1 = G(i,j,k+1,5); r5 = fma(dtdxdy, v1 - v0, r5)
+    R(1) = r1; R(2) = r2; R(3) = r3; R(4) = r4; R(5) = r5
   end subroutine calc_R
 
 
@@ -60,14 +66,15 @@ contains
     real(8), intent(in), device, contiguous  :: dtdxdy(nx-2,ny-2)   !< dt * Sxy
     real(8), intent(in), device, contiguous  :: dtdydz(ny-2,nz-2)   !< dt * Syz
     real(8), intent(in), device, contiguous  :: dtdzdx(nx-2,nz-2)   !< dt * Szx
-    real(8), intent(in), device, contiguous  :: E(nx-1,ny-2,nz-2,5) !< Flux in x direction
-    real(8), intent(in), device, contiguous  :: F(nx-2,ny-1,nz-2,5) !< Flux in y direction
-    real(8), intent(in), device, contiguous  :: G(nx-2,ny-2,nz-1,5) !< Flux in z direction
-    real(8), intent(in), device, contiguous  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)  !< present Q(rho, rhou, rhov, rhow, E) / Jacobian
-    real(8), intent(in), device, contiguous  :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
-    real(8), intent(out), device, contiguous :: Q2_1(nx,ny,nz), Q2_2(nx,ny,nz), Q2_3(nx,ny,nz) !< next    Q(rho, rhou, rhov, rhow, E) / Jacobian
-    real(8), intent(out), device, contiguous :: Q2_4(nx,ny,nz), Q2_5(nx,ny,nz)
-    real(8) R(5), coef_dtdxdy, coef_dtdydz, coef_dtdzdx
+    REAL_T, intent(in), device, contiguous  :: E(nx-1,ny-2,nz-2,5) !< Flux in x direction
+    REAL_T, intent(in), device, contiguous  :: F(nx-2,ny-1,nz-2,5) !< Flux in y direction
+    REAL_T, intent(in), device, contiguous  :: G(nx-2,ny-2,nz-1,5) !< Flux in z direction
+    REAL_T, intent(in), device, contiguous  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)  !< present Q(rho, rhou, rhov, rhow, E) / Jacobian
+    REAL_T, intent(in), device, contiguous  :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    REAL_T, intent(out), device, contiguous :: Q2_1(nx,ny,nz), Q2_2(nx,ny,nz), Q2_3(nx,ny,nz) !< next    Q(rho, rhou, rhov, rhow, E) / Jacobian
+    REAL_T, intent(out), device, contiguous :: Q2_4(nx,ny,nz), Q2_5(nx,ny,nz)
+    REAL_T R(5)
+    real(8) coef_dtdxdy, coef_dtdydz, coef_dtdzdx
     integer i, j, k
     i = (blockIdx%x-1)*blockDim%x + threadIdx%x
     j = (blockIdx%y-1)*blockDim%y + threadIdx%y
@@ -99,15 +106,16 @@ contains
     real(8), intent(in), device, contiguous    :: dtdxdy(nx-2,ny-2)    !< dt * Sxy
     real(8), intent(in), device, contiguous    :: dtdydz(ny-2,nz-2)    !< dt * Syz
     real(8), intent(in), device, contiguous    :: dtdzdx(nx-2,nz-2)    !< dt * Szx
-    real(8), intent(in), device, contiguous    :: E(nx-1,ny-2,nz-2,5)  !< Flux in x direction
-    real(8), intent(in), device, contiguous    :: F(nx-2,ny-1,nz-2,5)  !< Flux in y direction
-    real(8), intent(in), device, contiguous    :: G(nx-2,ny-2,nz-1,5)  !< Flux in z direction
-    real(8), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)   !< present Q(rho, rhou, rhov, rhow, E) / Jacobian
-    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
-    real(8), intent(out), device, contiguous   :: Q2_1(nx,ny,nz), Q2_2(nx,ny,nz), Q2_3(nx,ny,nz) !< next    Q(rho, rhou, rhov, rhow, E) / Jacobian
-    real(8), intent(out), device, contiguous   :: Q2_4(nx,ny,nz), Q2_5(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: Rs(nx-2,ny-2,nz-2,5) !< accumulation for 4-4 Runge-Kutta
-    real(8) R(5), dtdxdy_tmp, dtdydz_tmp, dtdzdx_tmp
+    REAL_T, intent(in), device, contiguous    :: E(nx-1,ny-2,nz-2,5)  !< Flux in x direction
+    REAL_T, intent(in), device, contiguous    :: F(nx-2,ny-1,nz-2,5)  !< Flux in y direction
+    REAL_T, intent(in), device, contiguous    :: G(nx-2,ny-2,nz-1,5)  !< Flux in z direction
+    REAL_T, intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)   !< present Q(rho, rhou, rhov, rhow, E) / Jacobian
+    REAL_T, intent(in), device, contiguous    :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    REAL_T, intent(out), device, contiguous   :: Q2_1(nx,ny,nz), Q2_2(nx,ny,nz), Q2_3(nx,ny,nz) !< next    Q(rho, rhou, rhov, rhow, E) / Jacobian
+    REAL_T, intent(out), device, contiguous   :: Q2_4(nx,ny,nz), Q2_5(nx,ny,nz)
+    REAL_T, intent(inout), device, contiguous :: Rs(nx-2,ny-2,nz-2,5) !< accumulation for 4-4 Runge-Kutta
+    REAL_T R(5)
+    real(8) dtdxdy_tmp, dtdydz_tmp, dtdzdx_tmp
     integer i, j, k
     i = (blockIdx%x-1)*blockDim%x + threadIdx%x
     j = (blockIdx%y-1)*blockDim%y + threadIdx%y
@@ -148,14 +156,15 @@ contains
     real(8), intent(in), device, contiguous    :: dtdxdy(nx-2,ny-2)   !< dt * Sxy
     real(8), intent(in), device, contiguous    :: dtdydz(ny-2,nz-2)   !< dt * Syz
     real(8), intent(in), device, contiguous    :: dtdzdx(nx-2,nz-2)   !< dt * Szx
-    real(8), intent(in), device, contiguous    :: E(nx-1,ny-2,nz-2,5) !< Flux in x direction
-    real(8), intent(in), device, contiguous    :: F(nx-2,ny-1,nz-2,5) !< Flux in y direction
-    real(8), intent(in), device, contiguous    :: G(nx-2,ny-2,nz-1,5) !< Flux in z direction
-    real(8), intent(in), device, contiguous    :: Qin_1(nx,ny,nz), Qin_2(nx,ny,nz), Qin_3(nx,ny,nz)    !< Q^n (original from previous step)
-    real(8), intent(in), device, contiguous    :: Qin_4(nx,ny,nz), Qin_5(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: Qout_1(nx,ny,nz), Qout_2(nx,ny,nz), Qout_3(nx,ny,nz)  !< Q^(*) on input, Q^(n+1) on output
-    real(8), intent(inout), device, contiguous :: Qout_4(nx,ny,nz), Qout_5(nx,ny,nz)
-    real(8) R(5), coef3_dtdxdy, coef3_dtdydz, coef3_dtdzdx
+    REAL_T, intent(in), device, contiguous    :: E(nx-1,ny-2,nz-2,5) !< Flux in x direction
+    REAL_T, intent(in), device, contiguous    :: F(nx-2,ny-1,nz-2,5) !< Flux in y direction
+    REAL_T, intent(in), device, contiguous    :: G(nx-2,ny-2,nz-1,5) !< Flux in z direction
+    REAL_T, intent(in), device, contiguous    :: Qin_1(nx,ny,nz), Qin_2(nx,ny,nz), Qin_3(nx,ny,nz)    !< Q^n (original from previous step)
+    REAL_T, intent(in), device, contiguous    :: Qin_4(nx,ny,nz), Qin_5(nx,ny,nz)
+    REAL_T, intent(inout), device, contiguous :: Qout_1(nx,ny,nz), Qout_2(nx,ny,nz), Qout_3(nx,ny,nz)  !< Q^(*) on input, Q^(n+1) on output
+    REAL_T, intent(inout), device, contiguous :: Qout_4(nx,ny,nz), Qout_5(nx,ny,nz)
+    REAL_T R(5)
+    real(8) coef3_dtdxdy, coef3_dtdydz, coef3_dtdzdx
     integer i, j, k
     i = (blockIdx%x-1)*blockDim%x + threadIdx%x
     j = (blockIdx%y-1)*blockDim%y + threadIdx%y
@@ -172,7 +181,7 @@ contains
     ! Convex combination: weighted average of Qin and Qout minus scaled residual
     ! Qout is write-once here, not re-read until the next kernel launch: __stcs
     block
-      real(8) qin_val, qout_val, val
+      REAL_T qin_val, qout_val, val
       qin_val  = Qin_1(i+1,j+1,k+1)
       qout_val = Qout_1(i+1,j+1,k+1)
       val      = fma(coef1, qin_val, fma(coef2, qout_val, -R(1))) * coef4_inv
@@ -207,13 +216,14 @@ contains
     real(8), intent(in), device, contiguous    :: dtdxdy(nx-2,ny-2)    !< dt * Sxy
     real(8), intent(in), device, contiguous    :: dtdydz(ny-2,nz-2)    !< dt * Syz
     real(8), intent(in), device, contiguous    :: dtdzdx(nx-2,nz-2)    !< dt * Szx
-    real(8), intent(in), device, contiguous    :: E(nx-1,ny-2,nz-2,5)  !< Flux in x direction
-    real(8), intent(in), device, contiguous    :: F(nx-2,ny-1,nz-2,5)  !< Flux in y direction
-    real(8), intent(in), device, contiguous    :: G(nx-2,ny-2,nz-1,5)  !< Flux in z direction
-    real(8), intent(inout), device, contiguous :: Rs(nx-2,ny-2,nz-2,5) !< accumulated residuals from stages 1-3
-    real(8), intent(inout), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)  !< Q^n on input, Q^n+1 on output
-    real(8), intent(inout), device, contiguous :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
-    real(8) R(5), dtdxdy_tmp, dtdydz_tmp, dtdzdx_tmp
+    REAL_T, intent(in), device, contiguous    :: E(nx-1,ny-2,nz-2,5)  !< Flux in x direction
+    REAL_T, intent(in), device, contiguous    :: F(nx-2,ny-1,nz-2,5)  !< Flux in y direction
+    REAL_T, intent(in), device, contiguous    :: G(nx-2,ny-2,nz-1,5)  !< Flux in z direction
+    REAL_T, intent(inout), device, contiguous :: Rs(nx-2,ny-2,nz-2,5) !< accumulated residuals from stages 1-3
+    REAL_T, intent(inout), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)  !< Q^n on input, Q^n+1 on output
+    REAL_T, intent(inout), device, contiguous :: Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    REAL_T R(5)
+    real(8) dtdxdy_tmp, dtdydz_tmp, dtdzdx_tmp
     integer i, j, k
     i = (blockIdx%x-1)*blockDim%x + threadIdx%x
     j = (blockIdx%y-1)*blockDim%y + threadIdx%y

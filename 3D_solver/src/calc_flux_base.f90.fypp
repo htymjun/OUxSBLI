@@ -1,4 +1,4 @@
-#:include 'config.fypp'
+#:include 'prec.fypp'
 #:if not defined('VISC_ORDER')
   #:set VISC_ORDER = ORDER
 #:endif
@@ -58,6 +58,7 @@ module calc_flux_base
   use calc_les
   #:endif
   use set
+  use mod_prec
   implicit none
   private
   public calc_EFG, init_sensor
@@ -82,11 +83,11 @@ contains
   subroutine calc_conv(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_1, Q_2, Q_3, Q_4, Q_5, T, E, F, G)
     integer, intent(in), value               :: nx, ny, nz
     real(8), intent(in), device, contiguous  :: inv_dx(nx-1), inv_dy(ny-1), inv_dz(nz-1)
-    real(8), intent(in), device, contiguous  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous  :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(out), device, contiguous :: E(nx-1,ny-2,nz-2,5)
-    real(8), intent(out), device, contiguous :: F(nx-2,ny-1,nz-2,5)
-    real(8), intent(out), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    ${RT}$, intent(in), device, contiguous  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous  :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    ${RT}$, intent(out), device, contiguous :: E(nx-1,ny-2,nz-2,5)
+    ${RT}$, intent(out), device, contiguous :: F(nx-2,ny-1,nz-2,5)
+    ${RT}$, intent(out), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     ! shock sensor
     #:if SCHEME in ('SLAU', 'Hybrid')
     call calc_Ducros<<<blocks,threads>>>(nx, ny, nz, inv_dx, inv_dy, inv_dz, Q_2, Q_3, Q_4, sensor)
@@ -156,23 +157,23 @@ contains
     integer, intent(in), value                 :: nx, ny, nz
     real(8), intent(in), device, contiguous    :: inv_dx(nx-1), inv_dy(ny-1), inv_dz(nz-1)
     real(8), intent(in), device, contiguous    :: Jacobian(nx,ny)
-    real(8), intent(in), device, contiguous    :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous    :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous    :: QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    ${RT}$, intent(inout), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz)
+    ${RT}$, intent(inout), device, contiguous :: Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     #:if VISC == 'Euler'
-    real(8), intent(inout), device, contiguous :: mu(1,1,1), mut(1,1,1), qc2(1,1,1)
-    real(8), intent(inout), device, contiguous :: ux(1,1,1), vy(1,1,1), wz(1,1,1)
+    ${RT}$, intent(inout), device, contiguous :: mu(1,1,1), mut(1,1,1), qc2(1,1,1)
+    ${RT}$, intent(inout), device, contiguous :: ux(1,1,1), vy(1,1,1), wz(1,1,1)
     #:elif VISC == 'NS'
-    real(8), intent(inout), device, contiguous :: mu(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: mut(1,1,1), qc2(1,1,1)
-    real(8), intent(inout), device, contiguous :: ux(nx,ny,nz), vy(nx,ny,nz), wz(nx,ny,nz)
+    ${RT}$, intent(inout), device, contiguous :: mu(nx,ny,nz)
+    ${RT}$, intent(inout), device, contiguous :: mut(1,1,1), qc2(1,1,1)
+    ${RT}$, intent(inout), device, contiguous :: ux(nx,ny,nz), vy(nx,ny,nz), wz(nx,ny,nz)
     #:elif VISC == 'LES'
-    real(8), intent(inout), device, contiguous :: mu(nx,ny,nz), mut(nx,ny,nz), qc2(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: ux(nx,ny,nz), vy(nx,ny,nz), wz(nx,ny,nz)
+    ${RT}$, intent(inout), device, contiguous :: mu(nx,ny,nz), mut(nx,ny,nz), qc2(nx,ny,nz)
+    ${RT}$, intent(inout), device, contiguous :: ux(nx,ny,nz), vy(nx,ny,nz), wz(nx,ny,nz)
     #:endif
-    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5), F(nx-2,ny-1,nz-2,5)
-    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    ${RT}$, intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5), F(nx-2,ny-1,nz-2,5)
+    ${RT}$, intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     #:if COMMZ and VISC in ('NS', 'LES')
     integer    :: kv_lo, kv_hi, kg_lo, kg_hi
     type(dim3) :: bEv, bFv, bGv
