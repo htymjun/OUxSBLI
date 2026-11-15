@@ -1,8 +1,8 @@
 module calc_rescale
   use cudafor
   use mpi
-  use mod_globals, only : nre1, nre2, rerank, nt, np, dt, gamma , R, Pr, u0, rho0, p0, M0, blt, start_rescale
-  use mod_constant, only : Cp, gamma_1, over_gamma_1, mu0_T0_S_over_T0_2_3, over_T0, id_gpumpi, id_recal
+  use mod_globals, only : nre1, nre2, rerank, nt, dt, R, u0, blt, start_rescale
+  use mod_constant, only : gamma_1, over_gamma_1, mu0_T0_S_over_T0_2_3, id_gpumpi
   use cpu_gpu_mpi
 contains
   subroutine calc_mean(step, ireq, flag_re, nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Qm_1, Qm_2, Qm_3, Qm_4, Qm_5)
@@ -234,27 +234,6 @@ contains
     write(10) Qm_1, Qm_2, Qm_3, Qm_4, Qm_5
     close(10)
   end subroutine write_Qm_restart
-
-
-  subroutine write_Qm(ny, step, y, Qm_1, Qm_2, Qm_3, Qm_4, Qm_5)
-    integer, intent(in) :: ny, step
-    real(8), intent(in) :: y(ny), Qm_1(ny), Qm_2(ny), Qm_3(ny), Qm_4(ny), Qm_5(ny)
-    character(len=40) filename
-    integer j
-    write(filename, "(a, i5.5, a)") "recal/Qm", int(step), ".d"
-    open(10, file=filename, status="replace", action="write")
-    write(10, "(a)") "y    rho   u     v     w     p"
-    do j = 1, ny
-      write(10, "(6e12.4)") y(j), Qm_1(j), Qm_2(j), Qm_3(j), Qm_4(j), Qm_5(j)
-    enddo
-    close(10)
-    if (step == np) then
-      write(filename, "(a)") "recal/Qm.dat"
-      open(10, file=filename, status="replace", action="write", form="unformatted", access="stream")
-      write(10) Qm_1, Qm_2, Qm_3, Qm_4, Qm_5
-      close(10)
-    endif
-  end subroutine write_Qm
 
 
   subroutine set_rescale(flag_re, step, nx, ny, nz, y, Jacobian, Qm_1, Qm_2, Qm_3, Qm_4, Qm_5, bltre, &
