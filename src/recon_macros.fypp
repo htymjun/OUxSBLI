@@ -1,0 +1,59 @@
+#! Reconstruction dispatch shared by the SLAU-family kernels of 2D_solver and 3D_solver
+#! (#:include'd inside `contains`; needs delta4/delta6 of calc_muscl and, for
+#! interp_routines, wiggle_detector of calc_hybrid in the including module).
+#!
+#! interp_routines(name, vars, orders): left/right face states of the primitives `vars`
+#! from a (2, 4 or 6)-point window, selected by the kind of id_accuracy; fd enters as the
+#! sensor of the reconstruction and returns the pressure-wiggle detector for the flux.
+#! One routine `name<N>` per N in orders, or a single `name` if numbered is False.
+#:def interp_routines(name, vars, orders, numbered=True)
+  #:set L = ', '.join(v + 'l' for v in vars)
+  #:set R = ', '.join(v + 'r' for v in vars)
+  #:for N in orders
+  #:set rname = name + (str(N) if numbered else '')
+
+  !$dir inline
+  attributes(device) subroutine ${rname}$(id_accuracy, ${', '.join(vars)}$, &
+                                          ${L}$, &
+                                          ${R}$, fd)
+    integer(${N if N != 6 else 8}$), intent(in), value :: id_accuracy
+    real(8), intent(in), contiguous :: ${', '.join(v + '(%d)' % N for v in vars)}$
+    real(8), intent(out)            :: ${L}$
+    real(8), intent(out)            :: ${R}$
+    real(sp), intent(inout)         :: fd
+    #:for v in vars
+    #:if N == 2
+    ${v}$l = ${v}$(1); ${v}$r = ${v}$(2)
+    #:else
+    call delta${N}$(fd, ${v}$(:), ${v}$l, ${v}$r)
+    #:endif
+    #:endfor
+    #:if N == 6
+    fd = wiggle_detector(p(2:5))
+    #:elif N == 4
+    fd = wiggle_detector(p(:))
+    #:else
+    fd = 1.0_sp
+    #:endif
+  end subroutine ${rname}$
+  #:endfor
+#:enddef
+#!
+#! delta_r_routines(idname): delta_r2/4/6(id, sensor, a, al, ar), one variable at a time
+#:def delta_r_routines(idname)
+  #:for N in (2, 4, 6)
+
+  !$dir inline
+  attributes(device) subroutine delta_r${N}$(${idname}$, sensor, a, al, ar)
+    integer(${N if N != 6 else 8}$), intent(in), value :: ${idname}$
+    real(sp), intent(in), value   :: sensor
+    real(8), intent(in)           :: a(${N}$)
+    real(8), intent(out)          :: al, ar
+    #:if N == 2
+    al = a(1); ar = a(2)
+    #:else
+    call delta${N}$(sensor, a, al, ar)
+    #:endif
+  end subroutine delta_r${N}$
+  #:endfor
+#:enddef

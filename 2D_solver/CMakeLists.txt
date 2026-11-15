@@ -22,7 +22,7 @@ macro(add_ouxsbli_2d_case)
   else()
     set(_CASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
   endif()
-  set(FYPP_FLAGS "-I${_CASE_DIR}" "-DDIM=2")
+  set(FYPP_FLAGS "-I${_CASE_DIR}" "-I${CMAKE_CURRENT_SOURCE_DIR}/../../src" "-DDIM=2")
 
   # mod_constant/print come from the shared src/ (../../src relative to case dir)
   set(_PARENT_FYPP "mod_constant" "calc_weno" "calc_muscl" "print")

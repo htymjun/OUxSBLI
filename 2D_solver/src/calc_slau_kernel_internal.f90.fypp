@@ -1,4 +1,5 @@
 #:include 'config.fypp'
+#:include 'recon_macros.fypp'
 module calc_slau_kernel_internal
   use mod_globals, only : threadsE, threadsF
   use mod_constant, only : over_gamma_1, id_slau, R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
@@ -28,55 +29,7 @@ module calc_slau_kernel_internal
 contains
   include 'calc_scheme_math.f90'
 
-  !$dir inline
-  attributes(device) subroutine interp6(id_accuracy, rho,  u,  v, p, &
-                                                     rhol, ul, vl, pl, &
-                                                     rhor, ur, vr, pr, fd)
-    integer(8), intent(in), value :: id_accuracy
-    real(8), intent(in), contiguous :: rho(6), u(6), v(6), p(6)
-    real(8), intent(out)            :: rhol, ul, vl, pl
-    real(8), intent(out)            :: rhor, ur, vr, pr
-    real(sp), intent(inout)         :: fd
-    call delta6(fd, rho(:), rhol, rhor)
-    call delta6(fd,   u(:),   ul,   ur)
-    call delta6(fd,   v(:),   vl,   vr)
-    call delta6(fd,   p(:),   pl,   pr)
-    fd = wiggle_detector(p(2:5))
-  end subroutine interp6
-
-
-  !$dir inline
-  attributes(device) subroutine interp4(id_accuracy, rho,  u,  v, p, &
-                                                     rhol, ul, vl, pl, &
-                                                     rhor, ur, vr, pr, fd)
-    integer(4), intent(in), value :: id_accuracy
-    real(8), intent(in), contiguous :: rho(4), u(4), v(4), p(4)
-    real(8), intent(out)            :: rhol, ul, vl, pl
-    real(8), intent(out)            :: rhor, ur, vr, pr
-    real(sp), intent(inout)         :: fd
-    call delta4(fd, rho(:), rhol, rhor)
-    call delta4(fd,   u(:),   ul,   ur)
-    call delta4(fd,   v(:),   vl,   vr)
-    call delta4(fd,   p(:),   pl,   pr)
-    fd = wiggle_detector(p(:))
-  end subroutine interp4
-
-
-  !$dir inline
-  attributes(device) subroutine interp2(id_accuracy, rho,  u,  v,  p, &
-                                                     rhol, ul, vl, pl, &
-                                                     rhor, ur, vr, pr, fd)
-    integer(2), intent(in), value :: id_accuracy
-    real(8), intent(in), contiguous :: rho(2), u(2), v(2), p(2)
-    real(8), intent(out)            :: rhol, ul, vl, pl
-    real(8), intent(out)            :: rhor, ur, vr, pr
-    real(sp), intent(inout)         :: fd
-    rhol = rho(1); rhor = rho(2)
-      ul =   u(1);   ur =   u(2)
-      vl =   v(1);   vr =   v(2)
-      pl =   p(1);   pr =   p(2)
-      fd = 1.0_sp
-  end subroutine interp2
+  $:interp_routines('interp', ['rho', 'u', 'v', 'p'], (6, 4, 2))
 
 
   attributes(global) subroutine calc_slau_x_in(nx, ny, Q_1, Q_2, Q_3, Q_4, sensor, E)

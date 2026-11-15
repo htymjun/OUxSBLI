@@ -1,4 +1,5 @@
 #:include 'config.fypp'
+#:include 'recon_macros.fypp'
 #:if not defined('COMMZ')
   #:set COMMZ = False
 #:endif
@@ -42,32 +43,7 @@ module calc_hybrid_kernel_internal
 contains
   include 'calc_scheme_math.f90'
 
-  !$dir inline
-  attributes(device) subroutine delta_r2(id_acc, sensor, a, al, ar)
-    integer(2), intent(in), value :: id_acc
-    real(sp), intent(in), value   :: sensor
-    real(8), intent(in)           :: a(2)
-    real(8), intent(out)          :: al, ar
-    al = a(1); ar = a(2)
-  end subroutine delta_r2
-
-  !$dir inline
-  attributes(device) subroutine delta_r4(id_acc, sensor, a, al, ar)
-    integer(4), intent(in), value :: id_acc
-    real(sp), intent(in), value   :: sensor
-    real(8), intent(in)           :: a(4)
-    real(8), intent(out)          :: al, ar
-    call delta4(sensor, a, al, ar)
-  end subroutine delta_r4
-
-  !$dir inline
-  attributes(device) subroutine delta_r6(id_acc, sensor, a, al, ar)
-    integer(8), intent(in), value :: id_acc
-    real(sp), intent(in), value   :: sensor
-    real(8), intent(in)           :: a(6)
-    real(8), intent(out)          :: al, ar
-    call delta6(sensor, a, al, ar)
-  end subroutine delta_r6
+  $:delta_r_routines('id_acc')
 
 
 #:for is_koff in KOFF_VARIANTS
