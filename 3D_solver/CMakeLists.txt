@@ -26,9 +26,9 @@ macro(add_ouxsbli_case)
   else()
     set(_CASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
   endif()
-  set(FYPP_FLAGS "-I${_CASE_DIR}" "-I${CMAKE_CURRENT_SOURCE_DIR}/../src" "-DDIM=3")
+  set(FYPP_FLAGS "-I${_CASE_DIR}" "-I${CMAKE_CURRENT_SOURCE_DIR}/../src" "-I${CMAKE_CURRENT_SOURCE_DIR}/../../src" "-DDIM=3")
 
-  set(_PARENT_FYPP "mod_constant" "calc_weno" "calc_muscl" "print")
+  set(_PARENT_FYPP "mod_constant" "mod_prec" "calc_weno" "calc_muscl" "print")
   set(_SHARED_FYPP
       "calc_visc2"
       "calc_visc_high"
@@ -102,6 +102,15 @@ macro(add_ouxsbli_case)
   add_custom_target(${_CASE}_scheme_math DEPENDS ${_SCHEME_MATH_OUT})
   add_executable(${_CASE} ${_BASE} ${CASE_MAIN_SOURCE} ${CASE_EXTRA_SOURCES} ${_GEN})
   add_dependencies(${_CASE} ${_CASE}_scheme_math)
+  # PREC / KEEP_PREC (src/prec.fypp) as cpp macros for the plain .f90 sources
+  file(STRINGS "${_CASE_DIR}/config.fypp" _prec REGEX "^#:set +(KEEP_)?PREC *=")
+  if(_prec MATCHES "KEEP_PREC *= *'MIXED_CELL'")
+    target_compile_definitions(${_CASE} PRIVATE KEEP_CELL)
+  endif()
+  if(_prec MATCHES "set +PREC *= *'DF'")
+    target_sources(${_CASE} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../extern/FmaX/FmaX/fltflt.f90")
+    target_compile_definitions(${_CASE} PRIVATE "REAL_T=type(fltflt)")
+  endif()
   target_link_libraries(${_CASE} PRIVATE MPI::MPI_Fortran)
   # CUDA Lib
   if (DEFINED CASE_LINK_OPTIONS)

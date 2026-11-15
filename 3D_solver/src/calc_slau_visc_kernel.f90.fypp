@@ -39,6 +39,7 @@ module calc_slau_visc_kernel_internal
   use calc_muscl
   use calc_hybrid
   use libm
+  use mod_prec
   implicit none
   private
   public calc_slauv_x_in, calc_slauv_y_in, calc_slauv_z_in

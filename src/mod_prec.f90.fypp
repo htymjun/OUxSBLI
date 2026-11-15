@@ -1,0 +1,69 @@
+#:include 'prec.fypp'
+!> Arithmetic types selected by PREC / KEEP_PREC (see src/prec.fypp).
+!> KEEP_PREC = 'MIXED*': type(dev) = (b, d) carries the FP32 base-stencil value b
+!> and the deviation d from it (an FP64 difference narrowed to FP32). Sums and
+!> products follow the exact identities (B1+D1)(B2+D2) - B1*B2 = B1*D2 + D1*(B2+D2),
+!> so KEEP evaluated on dev returns F(q) - F(base) in FP32 without cancellation.
+module mod_prec
+  implicit none
+#:if KEEP_PREC != 'FP64'
+  type dev
+    real(4) :: b, d
+  end type dev
+  interface operator(+)
+    module procedure add_vv
+  end interface
+  interface operator(-)
+    module procedure sub_vv, neg_v
+  end interface
+  interface operator(*)
+    module procedure mul_vv, mul_rv, mul_vr
+  end interface
+  interface fma
+    module procedure fma_vvv, fma_rvv
+  end interface
+contains
+  pure attributes(device) type(dev) function add_vv(x, y)
+    type(dev), intent(in) :: x, y
+    add_vv = dev(x%b + y%b, x%d + y%d)
+  end function add_vv
+
+  pure attributes(device) type(dev) function sub_vv(x, y)
+    type(dev), intent(in) :: x, y
+    sub_vv = dev(x%b - y%b, x%d - y%d)
+  end function sub_vv
+
+  pure attributes(device) type(dev) function neg_v(x)
+    type(dev), intent(in) :: x
+    neg_v = dev(-x%b, -x%d)
+  end function neg_v
+
+  pure attributes(device) type(dev) function mul_vv(x, y)
+    type(dev), intent(in) :: x, y
+    mul_vv = dev(x%b * y%b, x%b * y%d + x%d * (y%b + y%d))
+  end function mul_vv
+
+  pure attributes(device) type(dev) function mul_rv(c, x)
+    real(8), intent(in)   :: c
+    type(dev), intent(in) :: x
+    mul_rv = dev(real(c, 4) * x%b, real(c, 4) * x%d)
+  end function mul_rv
+
+  pure attributes(device) type(dev) function mul_vr(x, c)
+    type(dev), intent(in) :: x
+    real(8), intent(in)   :: c
+    mul_vr = mul_rv(c, x)
+  end function mul_vr
+
+  pure attributes(device) type(dev) function fma_vvv(x, y, z)
+    type(dev), intent(in) :: x, y, z
+    fma_vvv = mul_vv(x, y) + z
+  end function fma_vvv
+
+  pure attributes(device) type(dev) function fma_rvv(c, y, z)
+    real(8), intent(in)   :: c
+    type(dev), intent(in) :: y, z
+    fma_rvv = mul_rv(c, y) + z
+  end function fma_rvv
+#:endif
+end module mod_prec

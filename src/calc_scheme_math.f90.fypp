@@ -1,3 +1,4 @@
+#:include 'prec.fypp'
 #:if not defined('DIM')
   #:stop 'calc_scheme_math.f90.fypp requires DIM (2 or 3) to be set via fypp -DDIM=2|3'
 #:endif
@@ -6,9 +7,9 @@
 #:set VARG = ', '.join(VELS)
   pure attributes(device) function KEEP2(id_accuracy, rho, ${VARG}$,  uu, p, T, Normal) result(F)
     integer(2), intent(in), value     :: id_accuracy
-    real(8), intent(in), dimension(2) :: rho, ${VARG}$, uu, p, T
+    ${KT}$, intent(in), dimension(2) :: rho, ${VARG}$, uu, p, T
     real(8), intent(in), dimension(5) :: Normal
-    real(8) F(${NEQ}$)
+    ${KT}$ F(${NEQ}$)
     F(1) = 0.25d0 * (rho(1) + rho(2)) * (uu(1) + uu(2))
     #:for i, v in enumerate(VELS)
     F(${i+2}$) = 0.5d0 * (F(1) * (${v}$(1) + ${v}$(2)) + (p(1) + p(2)) * Normal(${i+2}$))
@@ -21,10 +22,10 @@
 
   attributes(device) function KEEP4(id_accuracy, rho, ${VARG}$, uu, p, T, Normal) result(F)
     integer(4), intent(in), value     :: id_accuracy
-    real(8), intent(in), dimension(4) :: rho, ${VARG}$, uu, p, T
+    ${KT}$, intent(in), dimension(4) :: rho, ${VARG}$, uu, p, T
     real(8), intent(in), dimension(5) :: Normal
-    real(8) F(${NEQ}$), RV1, RV2, RV3, RV1_RV2, RV1_RV3
-    real(8) ${', '.join(v + '1, ' + v + '2, ' + v + '3, ' + v + '4' for v in VELS)}$
+    ${KT}$ F(${NEQ}$), RV1, RV2, RV3, RV1_RV2, RV1_RV3
+    ${KT}$ ${', '.join(v + '1, ' + v + '2, ' + v + '3, ' + v + '4' for v in VELS)}$
     RV1 = (rho(2) + rho(3)) * (uu(2) + uu(3))
     RV2 = (rho(2) + rho(4)) * (uu(2) + uu(4))
     RV3 = (rho(1) + rho(3)) * (uu(1) + uu(3))
@@ -40,7 +41,7 @@
     #:endfor
 
     block
-      real(8) pres
+      ${KT}$ pres
       !pres = -one_twelfth * p(1) + seven_twelfth * (p(2) + p(3)) - one_twelfth * p(4)
       pres = fma(seven_twelfth, p(2) + p(3), -one_twelfth * (p(1) + p(4)))
       #:for i, v in enumerate(VELS)
@@ -49,7 +50,7 @@
       #:endfor
     end block
     block
-      real(8) ene
+      ${KT}$ ene
       ! internal energy
       !ene  = (-RV3 * T(1) + RV1_RV2 * T(2) + RV1_RV3 * T(3) - RV2 * T(4)) * R_over_gamma_1
       ene  = fma(-RV3, T(1), fma(RV1_RV2, T(2), fma(RV1_RV3, T(3), -RV2 * T(4)))) * R_over_gamma_1
@@ -74,24 +75,24 @@
   attributes(device) function mom(u, pres, RV4, RV6, &
                                        RV2_RV5, RV3_RV5, &
                                        RV1_RV2_RV4, RV1_RV3_RV6) result(ruu)
-    real(8), intent(in)        :: u(6)
-    real(8), intent(in), value :: pres, RV4, RV6, RV2_RV5, RV3_RV5
-    real(8), intent(in), value :: RV1_RV2_RV4, RV1_RV3_RV6
-    real(8) ruu
-    ruu = fma(RV4, u(6), pres)
-    ruu = fma(RV2_RV5, u(5), ruu)
-    ruu = fma(RV1_RV3_RV6, u(4), ruu)
-    ruu = fma(RV1_RV2_RV4, u(3), ruu)
-    ruu = fma(RV3_RV5, u(2), ruu)
-    ruu = fma(RV6, u(1), ruu)
+    ${KT}$, intent(in)        :: u(6)
+    ${KT}$, intent(in)        :: pres, RV4, RV6, RV2_RV5, RV3_RV5
+    ${KT}$, intent(in)        :: RV1_RV2_RV4, RV1_RV3_RV6
+    ${KT}$ ruu, r
+    r = fma(RV4, u(6), pres)
+    r = fma(RV2_RV5, u(5), r)
+    r = fma(RV1_RV3_RV6, u(4), r)
+    r = fma(RV1_RV2_RV4, u(3), r)
+    r = fma(RV3_RV5, u(2), r)
+    ruu = fma(RV6, u(1), r)  ! accumulate in a local: a derived-type result must not be an argument
   end function mom
 
 
   attributes(device) function KEEP6(id_accuracy, rho, ${VARG}$, uu, p, T, Normal) result(F)
     integer(8), intent(in), value     :: id_accuracy
-    real(8), intent(in), dimension(6) :: rho, ${VARG}$, uu, p, T
+    ${KT}$, intent(in), dimension(6) :: rho, ${VARG}$, uu, p, T
     real(8), intent(in), dimension(5) :: Normal
-    real(8) F(${NEQ}$), RV1, RV2, RV3, RV4, RV5, RV6, RV3_RV5, RV2_RV5, RV1_RV2_RV4, RV1_RV3_RV6
+    ${KT}$ F(${NEQ}$), RV1, RV2, RV3, RV4, RV5, RV6, RV3_RV5, RV2_RV5, RV1_RV2_RV4, RV1_RV3_RV6
     RV1 = (rho(3) + rho(4)) * (uu(3) + uu(4))
     RV2 = (rho(3) + rho(5)) * (uu(3) + uu(5))
     RV3 = (rho(2) + rho(4)) * (uu(2) + uu(4))
@@ -111,9 +112,9 @@
     RV1_RV3_RV6 = RV1 - RV3 + RV6
     RV2_RV5 = -RV2 + RV5
     block
-      real(8) pres, ${', '.join('ru' + v for v in VELS)}$
+      ${KT}$ pres, ${', '.join('ru' + v for v in VELS)}$
       block
-        real(8) ps1, ps2, ps3
+        ${KT}$ ps1, ps2, ps3
         !pres = (p(1) - 8.d0 * p(2) + 37.d0 * (p(3) + p(4)) - 8.d0 * p(5) + p(6)) * one_60
         ps1 = p(1) + p(6)
         ps2 = p(2) + p(5)
@@ -130,7 +131,7 @@
       #:endfor
     end block
     block
-      real(8) ene
+      ${KT}$ ene
       ! internal energy
       !ene = (RV6 * T(1) + RV3_RV5 * T(2) + RV1_RV2_RV4 * T(3) + RV1_RV3_RV6 * T(4) + RV2_RV5 * T(5) + RV4 * T(6)) * R_over_gamma_1
       ene = RV4 * T(6)
@@ -160,6 +161,62 @@
                  + uu(1)*p(4) + uu(4)*p(1), ene)))
    end block
   end function KEEP6
+
+
+#:if KEEP_PREC != 'FP64'
+  !> KEEP_PREC = 'MIXED*': the stencil as deviations from base cell ib, taken in
+  !> FP64 and narrowed to FP32 (type(dev), src/mod_prec.f90.fypp).
+  pure attributes(device) function to_dev(x, ib) result(y)
+    real(8), intent(in) :: x(:)
+    integer, intent(in) :: ib
+    type(dev) y(size(x))
+    integer k
+    do k = 1, size(x)
+      y(k) = dev(real(x(ib), 4), real(x(k) - x(ib), 4))
+    end do
+  end function to_dev
+
+#:for n, kd in [(2, 2), (4, 4), (6, 8)]
+  !> MIXED KEEP${n}$ face flux: point flux F(b) of the left cell b in FP64 plus
+  !> KEEP${n}$ evaluated on the deviations from b (FP32).
+  attributes(device) function KEEPm${n}$(id_accuracy, rho, ${VARG}$, uu, p, T, Normal) result(F)
+    integer(${kd}$), intent(in), value :: id_accuracy
+    real(8), intent(in), dimension(${n}$) :: rho, ${VARG}$, uu, p, T
+    real(8), intent(in), dimension(5) :: Normal
+    real(8) F(${NEQ}$)
+    type(dev) Fd(${NEQ}$)
+    integer, parameter :: b = ${n // 2}$
+    Fd = KEEP${n}$(id_accuracy, to_dev(rho, b), ${', '.join('to_dev(%s, b)' % v for v in VELS)}$, to_dev(uu, b), to_dev(p, b), to_dev(T, b), Normal)
+    F(1) = rho(b) * uu(b)
+    #:for i, v in enumerate(VELS)
+    F(${i+2}$) = F(1) * ${v}$(b) + p(b) * Normal(${i+2}$)
+    #:endfor
+    F(${NEQ}$) = F(1) * (T(b) * R_over_gamma_1 + 0.5d0 * (${' + '.join(v + '(b)**2' for v in VELS)}$)) + uu(b) * p(b)
+    F = F + dble(Fd%d)
+  end function KEEPm${n}$
+
+
+  !> MIXED_CELL KEEP${n}$: F(i+1/2) - F(i-1/2) of the centre cell b = ${n//2+1}$ of an
+  !> ${n+1}$-point stencil, both faces as deviations from b (F(b) cancels), FP32.
+  attributes(device) function KEEPc${n}$(id_accuracy, rho, ${VARG}$, uu, p, T, Normal) result(D)
+    integer(${kd}$), intent(in), value :: id_accuracy
+    real(8), intent(in), dimension(${n+1}$) :: rho, ${VARG}$, uu, p, T
+    real(8), intent(in), dimension(5) :: Normal
+    real(8) D(${NEQ}$)
+    type(dev) Fr(${NEQ}$), Fl(${NEQ}$)
+    type(dev), dimension(${n+1}$) :: drho, ${', '.join('d' + v for v in VELS)}$, duu, dp, dT
+    integer, parameter :: b = ${n // 2 + 1}$
+    drho = to_dev(rho, b); duu = to_dev(uu, b); dp = to_dev(p, b); dT = to_dev(T, b)
+    #:for v in VELS
+    d${v}$ = to_dev(${v}$, b)
+    #:endfor
+    Fr = KEEP${n}$(id_accuracy, drho(2:), ${', '.join('d%s(2:)' % v for v in VELS)}$, duu(2:), dp(2:), dT(2:), Normal)
+    Fl = KEEP${n}$(id_accuracy, drho(:${n}$), ${', '.join('d%s(:%d)' % (v, n) for v in VELS)}$, duu(:${n}$), dp(:${n}$), dT(:${n}$), Normal)
+    D = dble(Fr%d - Fl%d)
+  end function KEEPc${n}$
+
+#:endfor
+#:endif
 
 
   attributes(device) subroutine SLAU_common(rho1, rho2, over_rho1, over_rho2, u1, u2, v1, v2, &

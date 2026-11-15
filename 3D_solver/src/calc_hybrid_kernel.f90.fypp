@@ -1,4 +1,4 @@
-#:include 'config.fypp'
+#:include 'prec.fypp'
 #:if not defined('COMMZ')
   #:set COMMZ = False
 #:endif
@@ -12,6 +12,7 @@ module calc_hybrid_kernel
   use calc_muscl
   use calc_hybrid
   use libm
+  use mod_prec
   implicit none
   private
   public calc_hybrid_x, calc_hybrid_y, calc_hybrid_z
@@ -38,7 +39,7 @@ module calc_hybrid_kernel
   #:endif
 
   interface KEEP
-    module procedure KEEP2, KEEP4, KEEP6
+    module procedure KEEP2, KEEP4, KEEP6${', KEEPm2, KEEPm4, KEEPm6' if KEEP_PREC != 'FP64' else ''}$
   end interface KEEP
 
   interface SLAU

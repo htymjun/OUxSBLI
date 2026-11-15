@@ -1,0 +1,11 @@
+#! Precision selection shared by the templates (validated in mod_constant):
+#!   RT: state/flux type (PREC), KT: KEEP arithmetic type (KEEP_PREC).
+#:include 'config.fypp'
+#:if not defined('PREC')
+  #:set PREC = 'FP64'
+#:endif
+#:if not defined('KEEP_PREC')
+  #:set KEEP_PREC = 'FP64'
+#:endif
+#:set RT = 'type(fltflt)' if PREC == 'DF' else 'real(8)'
+#:set KT = 'type(dev)' if KEEP_PREC != 'FP64' else RT

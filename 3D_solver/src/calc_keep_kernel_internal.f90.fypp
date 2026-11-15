@@ -1,4 +1,4 @@
-#:include 'config.fypp'
+#:include 'prec.fypp'
 #:if not defined('COMMZ')
   #:set COMMZ = False
 #:endif
@@ -10,6 +10,7 @@ module calc_keep_kernel_internal
   use mod_globals, only : gamma, threadsE, threadsF, threadsG
   use mod_constant, only : R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
   use libm
+  use mod_prec
   implicit none
   private
   public calc_keep_x_in, calc_keep_y_in, calc_keep_z_in, calc_keep_z_in_koff
@@ -33,8 +34,20 @@ module calc_keep_kernel_internal
 #:endif
 
   interface KEEP
-    module procedure KEEP2, KEEP4, KEEP6
+    module procedure KEEP2, KEEP4, KEEP6${', KEEPm2, KEEPm4, KEEPm6' if KEEP_PREC != 'FP64' else ''}$
   end interface KEEP
+#! KEEP_PREC = 'MIXED_CELL': one more right halo cell; KEEPC returns the cell
+#! difference F(i+1/2) - F(i-1/2), stored in the flux slot calc_R reads as the
+#! right face of that cell (calc_steps.f90, KEEP_CELL).
+#:set cell = KEEP_PREC == 'MIXED_CELL'
+#:set h = 2 if cell else 1
+#:set c = 'C' if cell else ''
+#:set s = '+1' if cell else ''
+#:if cell
+  interface KEEPC
+    module procedure KEEPc2, KEEPc4, KEEPc6
+  end interface KEEPC
+#:endif
 contains
   include 'calc_scheme_math.f90'
 
@@ -49,7 +62,7 @@ contains
     integer i, j, k, it, jt, kt
     integer :: ii, i_base, idx, offset_yz
     logical :: jk_in_range
-    integer, parameter :: sx = threadsE%x + 2*io + 1
+    integer, parameter :: sx = threadsE%x + 2*io + ${h}$
     integer, parameter :: sy = threadsE%y
     integer, parameter :: sz = threadsE%z
     real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
@@ -61,7 +74,7 @@ contains
     i_base = (blockIdx%x-1)*blockDim%x
     offset_yz = (jt-1) * sx + (kt-1) * sx * sy
     jk_in_range = (j >= 1 .and. j <= ny .and. k >= 1 .and. k <= nz)
-    do ii = it-io, threadsE%x+io+1, blockDim%x
+    do ii = it-io, threadsE%x+io+${h}$, blockDim%x
       i = i_base + ii
       if (i >= 1 .and. i <= nx .and. jk_in_range) then
         idx = ii + offset_yz
@@ -72,14 +85,14 @@ contains
     enddo
     call syncthreads()
     i = (blockIdx%x-1)*blockDim%x + it
-    if (io+1 <= i .and. i <= nx-(io+1) .and. j <= ny-1 .and. k <= ${'k_hi' if is_koff else 'nz-1'}$) then
+    if (io+1 <= i .and. i <= nx-(io+${h}$) .and. j <= ny-1 .and. k <= ${'k_hi' if is_koff else 'nz-1'}$) then
       associate(uu => u)
       idx = it + offset_yz
-      E(i,j-1,k-1,:) = KEEP(id_acc, &
-                            rho(idx-io:idx+io+1), u(idx-io:idx+io+1), &
-                              v(idx-io:idx+io+1), w(idx-io:idx+io+1), &
-                             uu(idx-io:idx+io+1), p(idx-io:idx+io+1), &
-                            tmp(idx-io:idx+io+1), Normal_x)
+      E(i${s}$,j-1,k-1,:) = KEEP${c}$(id_acc, &
+                            rho(idx-io:idx+io+${h}$), u(idx-io:idx+io+${h}$), &
+                              v(idx-io:idx+io+${h}$), w(idx-io:idx+io+${h}$), &
+                             uu(idx-io:idx+io+${h}$), p(idx-io:idx+io+${h}$), &
+                            tmp(idx-io:idx+io+${h}$), Normal_x)
       end associate
     endif
   end subroutine calc_keep_x_in${sfx}$
@@ -98,7 +111,7 @@ contains
     integer :: jj, j_base, idx, offset_xz
     logical :: ik_in_range
     integer, parameter :: sx = threadsF%x
-    integer, parameter :: sy = threadsF%y + 2*io + 1
+    integer, parameter :: sy = threadsF%y + 2*io + ${h}$
     integer, parameter :: sz = threadsF%z
     real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
     it = threadIdx%x
@@ -109,7 +122,7 @@ contains
     j_base = (blockIdx%y-1)*blockDim%y
     offset_xz = (it-1) * sy + (kt-1) * sy * sx
     ik_in_range = (i >= 1 .and. i <= nx .and. k >= 1 .and. k <= nz)
-    do jj = jt-io, threadsF%y+io+1, blockDim%y
+    do jj = jt-io, threadsF%y+io+${h}$, blockDim%y
       j = j_base + jj
       if (ik_in_range .and. j >= 1 .and. j <= ny) then
         idx = jj + offset_xz
@@ -120,14 +133,14 @@ contains
     enddo
     call syncthreads()
     j = (blockIdx%y-1)*blockDim%y + jt
-    if (io+1 <= j .and. j <= ny-(io+1) .and. i <= nx-1 .and. k <= ${'k_hi' if is_koff else 'nz-1'}$) then
+    if (io+1 <= j .and. j <= ny-(io+${h}$) .and. i <= nx-1 .and. k <= ${'k_hi' if is_koff else 'nz-1'}$) then
       associate(vv => v)
       idx = jt + offset_xz
-      F(i-1,j,k-1,:) = KEEP(id_acc, &
-                            rho(idx-io:idx+io+1), u(idx-io:idx+io+1), &
-                              v(idx-io:idx+io+1), w(idx-io:idx+io+1), &
-                             vv(idx-io:idx+io+1), p(idx-io:idx+io+1), &
-                            tmp(idx-io:idx+io+1), Normal_y)
+      F(i-1,j${s}$,k-1,:) = KEEP${c}$(id_acc, &
+                            rho(idx-io:idx+io+${h}$), u(idx-io:idx+io+${h}$), &
+                              v(idx-io:idx+io+${h}$), w(idx-io:idx+io+${h}$), &
+                             vv(idx-io:idx+io+${h}$), p(idx-io:idx+io+${h}$), &
+                            tmp(idx-io:idx+io+${h}$), Normal_y)
       end associate
     endif
   end subroutine calc_keep_y_in${sfx}$
@@ -144,7 +157,7 @@ contains
     logical :: ij_in_range
     integer, parameter :: sx = threadsG%x
     integer, parameter :: sy = threadsG%y
-    integer, parameter :: sz = threadsG%z + 2*io + 1
+    integer, parameter :: sz = threadsG%z + 2*io + ${h}$
     real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
     it = threadIdx%x
     jt = threadIdx%y
@@ -154,7 +167,7 @@ contains
     k_base = (blockIdx%z-1)*blockDim%z
     offset_xy = (jt-1) * sz + (it-1) * sz * sy
     ij_in_range = (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny)
-    do kk = kt-io, threadsG%z+io+1, blockDim%z
+    do kk = kt-io, threadsG%z+io+${h}$, blockDim%z
       k = k_base + kk
       if (ij_in_range .and. k >= 1 .and. k <= nz) then
         idx = kk + offset_xy
@@ -165,14 +178,14 @@ contains
     enddo
     call syncthreads()
     k = (blockIdx%z-1)*blockDim%z + kt
-    if (io+1 <= k .and. k <= nz-(io+1) .and. i <= nx-1 .and. j <= ny-1) then
+    if (io+1 <= k .and. k <= nz-(io+${h}$) .and. i <= nx-1 .and. j <= ny-1) then
       associate(ww => w)
       idx = kt + offset_xy
-      G(i-1,j-1,k,:) = KEEP(id_acc, &
-                            rho(idx-io:idx+io+1), u(idx-io:idx+io+1), &
-                              v(idx-io:idx+io+1), w(idx-io:idx+io+1), &
-                             ww(idx-io:idx+io+1), p(idx-io:idx+io+1), &
-                            tmp(idx-io:idx+io+1), Normal_z)
+      G(i-1,j-1,k${s}$,:) = KEEP${c}$(id_acc, &
+                            rho(idx-io:idx+io+${h}$), u(idx-io:idx+io+${h}$), &
+                              v(idx-io:idx+io+${h}$), w(idx-io:idx+io+${h}$), &
+                             ww(idx-io:idx+io+${h}$), p(idx-io:idx+io+${h}$), &
+                            tmp(idx-io:idx+io+${h}$), Normal_z)
       end associate
     endif
   end subroutine calc_keep_z_in

@@ -23,11 +23,24 @@
 #:if not defined('RIEMANN')
   #:set RIEMANN = 'SLAU'
 #:endif
+#:include 'prec.fypp'
+#:if PREC not in ('FP64', 'DF') or KEEP_PREC not in ('FP64', 'MIXED', 'MIXED_CELL')
+  #:stop "PREC must be 'FP64' or 'DF'; KEEP_PREC 'FP64', 'MIXED' or 'MIXED_CELL'"
+#:endif
+#:if PREC == 'DF' and (BC_X or BC_Y or BC_Z or COMMZ or RESCALE or VISC == 'LES' or SCHEME == 'Hybrid' or WENO_PREC != 'FP64' or KEEP_PREC != 'FP64')
+  #:stop "PREC=DF supports all-periodic Euler/NS KEEP or SLAU only (no COMMZ, RESCALE, LES, Hybrid, mixed WENO/KEEP)"
+#:endif
+#:if KEEP_PREC != 'FP64' and SCHEME != 'KEEP'
+  #:stop 'KEEP_PREC needs SCHEME=KEEP'
+#:endif
+#:if KEEP_PREC == 'MIXED_CELL' and (VISC != 'Euler' or BC_X or BC_Y or BC_Z or COMMZ)
+  #:stop 'KEEP_PREC=MIXED_CELL supports all-periodic Euler without COMMZ only'
+#:endif
 #:if RECON not in ('MUSCL', 'WENO')
   #:stop "RECON must be 'MUSCL' or 'WENO'"
 #:endif
-#:if WENO_PREC not in ('FP64', 'W32P64')
-  #:stop "WENO_PREC must be 'FP64' or 'W32P64'"
+#:if WENO_PREC not in ('FP64', 'W32P64', 'MIXED')
+  #:stop "WENO_PREC must be 'FP64', 'W32P64' or 'MIXED'"
 #:endif
 #:if RIEMANN not in ('SLAU', 'LF')
   #:stop "RIEMANN must be 'SLAU' or 'LF'"

@@ -12,6 +12,7 @@ module calc_slau_kernel
   use calc_muscl
   use calc_hybrid
   use libm
+  use mod_prec
   implicit none
   private
   public calc_slau_x, calc_slau_y, calc_slau_z
