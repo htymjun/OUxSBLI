@@ -11,16 +11,8 @@ module calc_slau_kernel_curv
   interface SLAU
     module procedure SLAU1, HRSLAU2
   end interface SLAU
-  ! KEEP2/4/6 are compiled here too (calc_scheme_math.f90 include below covers
-  ! both schemes) even though this module never calls them -- these constants
-  ! are the ones their bodies reference. gamma/sp (needed by SLAU_common) are
+  ! gamma/sp (needed by SLAU_common in the calc_scheme_math.f90 include below) are
   ! already in scope transitively via `use calc_hybrid` above.
-  real(8), parameter :: one_24        = 1.d0 / 24.d0
-  real(8), parameter :: one_48        = 1.d0 / 48.d0
-  real(8), parameter :: one_60        = 1.d0 / 60.d0
-  real(8), parameter :: one_120       = 1.d0 / 120.d0
-  real(8), parameter :: one_240       = 1.d0 / 240.d0
-  real(8), parameter :: seven_twelfth = 7.d0 / 12.d0
 contains
   include 'calc_scheme_math.f90'
 

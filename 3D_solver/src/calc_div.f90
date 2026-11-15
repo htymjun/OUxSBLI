@@ -1,10 +1,8 @@
 !> Module for div(u) at cell-center
 module calc_div
   use cudafor
-  use mod_constant, only : one_third
+  use mod_constant, only : one_third, one_24, one_120
   implicit none
-  real(8), parameter :: one_24  = 1.d0 / 24.d0
-  real(8), parameter :: one_120 = 1.d0 / 120.d0
 contains
   !> Compute div(u) at cell-center (2nd-order), over the full [1,nx]x[1,ny]x[1,nz]
   !! domain -- matches calc_quantities_T_3D's coverage, since consumers read

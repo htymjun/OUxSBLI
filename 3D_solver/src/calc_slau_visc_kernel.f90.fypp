@@ -35,19 +35,13 @@
 module calc_slau_visc_kernel_internal
   use mod_globals, only : gamma, threadsE, threadsF, threadsG
   use mod_constant, only : id_slau, over_gamma_1, R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third, &
-                            Cp_over_Pr, one_sixty
+                            Cp_over_Pr, one_sixty, one_24
   use calc_muscl
   use calc_hybrid
   use libm
   implicit none
   private
   public calc_slauv_x_in, calc_slauv_y_in, calc_slauv_z_in
-  real(8), parameter :: one_24        = 1.d0 / 24.d0
-  real(8), parameter :: one_48        = 1.d0 / 48.d0
-  real(8), parameter :: one_60        = 1.d0 / 60.d0
-  real(8), parameter :: one_120       = 1.d0 / 120.d0
-  real(8), parameter :: one_240       = 1.d0 / 240.d0
-  real(8), parameter :: seven_twelfth = 7.d0 / 12.d0
   integer, parameter :: io   = ${ORDER_IO}$
   integer, parameter :: io_v = 2
 

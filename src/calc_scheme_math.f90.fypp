@@ -20,6 +20,7 @@
 
 
   attributes(device) function KEEP4(id_accuracy, rho, ${VARG}$, uu, p, T, Normal) result(F)
+    use mod_constant, only : one_24, one_48, seven_twelfth
     integer(4), intent(in), value     :: id_accuracy
     real(8), intent(in), dimension(4) :: rho, ${VARG}$, uu, p, T
     real(8), intent(in), dimension(5) :: Normal
@@ -88,6 +89,7 @@
 
 
   attributes(device) function KEEP6(id_accuracy, rho, ${VARG}$, uu, p, T, Normal) result(F)
+    use mod_constant, only : one_120, one_240, one_sixty
     integer(8), intent(in), value     :: id_accuracy
     real(8), intent(in), dimension(6) :: rho, ${VARG}$, uu, p, T
     real(8), intent(in), dimension(5) :: Normal
@@ -114,11 +116,11 @@
       real(8) pres, ${', '.join('ru' + v for v in VELS)}$
       block
         real(8) ps1, ps2, ps3
-        !pres = (p(1) - 8.d0 * p(2) + 37.d0 * (p(3) + p(4)) - 8.d0 * p(5) + p(6)) * one_60
+        !pres = (p(1) - 8.d0 * p(2) + 37.d0 * (p(3) + p(4)) - 8.d0 * p(5) + p(6)) * one_sixty
         ps1 = p(1) + p(6)
         ps2 = p(2) + p(5)
         ps3 = p(3) + p(4)
-        pres = fma(37.d0, ps3, fma(-8.d0, ps2, ps1)) * one_60
+        pres = fma(37.d0, ps3, fma(-8.d0, ps2, ps1)) * one_sixty
       end block
       #:for i, v in enumerate(VELS)
       !ru${v}$ = RV6*${v}$(1) + RV3_RV5*${v}$(2) + RV1_RV2_RV4*${v}$(3) + RV1_RV3_RV6*${v}$(4) + RV2_RV5*${v}$(5) + RV4*${v}$(6) + pres * Normal(${i+2}$)
@@ -153,10 +155,10 @@
       !                        uu(2)*p(4) + uu(4)*p(2)) + &
       !                       (uu(3)*p(6) + uu(6)*p(3) + &
       !                        uu(2)*p(5) + uu(5)*p(2) + &
-      !                        uu(1)*p(4) + uu(4)*p(1)) * one_60)
+      !                        uu(1)*p(4) + uu(4)*p(1)) * one_sixty)
       F(${NEQ}$) = fma( 0.75d0, uu(3)*p(4) + uu(4)*p(3), &
              fma(-0.15d0, uu(3)*p(5) + uu(5)*p(3) + uu(2)*p(4) + uu(4)*p(2), &
-             fma( one_60, uu(3)*p(6) + uu(6)*p(3) + uu(2)*p(5) + uu(5)*p(2) &
+             fma( one_sixty, uu(3)*p(6) + uu(6)*p(3) + uu(2)*p(5) + uu(5)*p(2) &
                  + uu(1)*p(4) + uu(4)*p(1), ene)))
    end block
   end function KEEP6

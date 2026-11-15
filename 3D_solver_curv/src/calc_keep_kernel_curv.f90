@@ -8,12 +8,6 @@ module calc_keep_kernel_curv
   implicit none
   private
   public calc_keep_xi_curv, calc_keep_eta_curv, calc_keep_z_curv
-  real(8), parameter :: one_24        = 1.d0 / 24.d0
-  real(8), parameter :: one_48        = 1.d0 / 48.d0
-  real(8), parameter :: one_60        = 1.d0 / 60.d0
-  real(8), parameter :: one_120       = 1.d0 / 120.d0
-  real(8), parameter :: one_240       = 1.d0 / 240.d0
-  real(8), parameter :: seven_twelfth = 7.d0 / 12.d0
 contains
   ! KEEP2/4/6 AND SLAU_common/SLAU1/HRSLAU2/phi are compiled here too
   ! (calc_scheme_math.f90 covers both schemes) even though this module only

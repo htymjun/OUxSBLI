@@ -3,9 +3,8 @@
 !> instead of each direction independently recomputing the other's gradient in
 !> shared memory -- mirrors 3D_solver/src/calc_div.f90's ux/vy/wz split.
 module calc_div
-  use mod_constant, only : one_third
+  use mod_constant, only : one_third, one_24
   implicit none
-  real(8), parameter :: one_24 = 1.d0 / 24.d0
 contains
   !> du/dx at cell-center (4th-order, interior stencil)
   subroutine calc_div_ux_4_in(nx, ny, xix, Q_2, ux)

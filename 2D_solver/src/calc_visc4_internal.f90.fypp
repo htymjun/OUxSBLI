@@ -4,13 +4,12 @@
 !> Uses centered difference stencils; assumes all threads execute interior 4th-order path
 module calc_visc4_internal
   use mod_globals, only : gamma, R, Pr, Prt, dt, threadsEv, threadsFv
-  use mod_constant, only : Cp, gamma_1, Cp_over_Pr, one_third, two_third, one_twelfth, id_visc
+  use mod_constant, only : Cp, gamma_1, Cp_over_Pr, one_third, two_third, one_twelfth, id_visc, one_24
   use libm
   use load_smem_visc4
   implicit none
   private
   public calc_Ev4_in, calc_Fv4_in
-  real(8), parameter :: one_24 = 1.d0 / 24.d0 !< coefficient for 4th-order flux (1/24)
 contains
   include 'calc_visc_me4_base.f90'
 
