@@ -27,6 +27,8 @@ DF 6e-15. Default FP64 builds: ETGV output bit-identical to d911d5a.
 
 | KEEP | mode | n=64 | n=128 | n=256 | order | max / FP64 | rule |
 |---|---|---|---|---|---|---|---|
+| 2 | FP64 | 5.078e-07 | 1.056e-07 | 3.191e-08 | 2.00 | 1.00 | |
+| 2 | DF, MIXED, MIXED_CELL | 5.078e-07 | 1.056e-07 | 3.191e-08 | 2.00 | 1.00 | pass |
 | 4 | FP64 | 3.210e-08 | 2.533e-09 | 1.994e-10 | 3.67 | 1.00 | |
 | 4 | DF | 3.210e-08 | 2.533e-09 | 1.993e-10 | 3.67 | 1.00 | pass |
 | 4 | MIXED | 3.210e-08 | 2.543e-09 | 3.086e-10 | 3.35 | 1.55 | fail |
@@ -36,10 +38,21 @@ DF 6e-15. Default FP64 builds: ETGV output bit-identical to d911d5a.
 | 6 | MIXED | 3.774e-09 | 3.406e-10 | 2.601e-10 | 1.93 | 189 | fail |
 | 6 | MIXED_CELL | 3.755e-09 | 2.936e-10 | 3.040e-10 | 1.81 | 221 | fail |
 
-The mixed forms floor at L2(rho) ~ 3e-10 (2.5e-10 relative): FP32 rounding of the deviation
-terms, the same mechanism as diffFP32's WENO/TENO floor. diffFP32's KEEP2 mixed matched FP64,
-most likely because its 2nd-order errors (>= 2e-10 at n = 256) stayed above such a floor;
-KEEP4/6 reach it at n = 128-256. The face form (conservative) and the cell form floor alike.
+Where the mixed floor comes from (EVC KEEP6, n = 256):
+
+* The algebra is exact: `type(dev)` with real(8) components reproduces FP64 (L2 1.3754e-12).
+  The floor is FP32 rounding of the deviation terms.
+* It accumulates over the run: L2(rho_MIXED - rho_FP64) after 1/4, 1/2, 3/4, 1 period is
+  0.86, 1.46, 2.07, 2.54 x 1e-10 (MIXED_CELL 0.96, 1.72, 2.40, 2.97 x 1e-10). Each step adds
+  ~eps32 x |one direction's flux difference|; in this low-Mach vortex the x/y/z flux
+  differences are ~1e-2 relative and nearly cancel (div u ~ 0), so the rounding of each is
+  large against the net change. diffFP32's entropy wave has no such cancellation.
+* So the limit is the error level, not the order: KEEP2 (3e-8 at n = 256) never sees it,
+  KEEP4 reaches it at n = 256, KEEP6 at n = 128.
+* Face vs cell form: same density floor; velocity error after one period 1.1e-7 (MIXED)
+  vs 5.5e-7 (MIXED_CELL). MIXED is conservative and runs in every KEEP kernel (walls, COMMZ,
+  fused NS); MIXED_CELL is Euler/periodic only and 8-13 % cheaper (KEEP6 0.92 vs 1.01 of
+  FP64). Recommendation: keep MIXED (face form).
 
 ETGV 66^3, RK4, dt = 0.01, 20000 steps (t = 200), KEEP2 and KEEP6: no mode leaves
 test_etgv's bounds (ke/ke0 <= 1.01, |entropy| < 3e-3); FP64, DF and the mixed forms are all

@@ -8,7 +8,7 @@ applied to the OUxSBLI precision modes of KEEP (Euler, all-periodic):
   MIXED_CELL  KEEP_PREC='MIXED_CELL' difference-first FP32, cell form (diffFP32)
 
 Rules (a mode keeps FP64 accuracy only if all hold):
-  * convergence (3D EVC, KEEP4/KEEP6, n = 64/128/256): L2(rho) within 1.5x of
+  * convergence (3D EVC, KEEP2/4/6, n = 64/128/256): L2(rho) within 1.5x of
     FP64 at every n and the observed order within 0.1 of FP64's;
     The EVC vortex is already a small-amplitude case for rho (T' / T0 ~ 2e-7),
     the regime of diffFP32's A = 1e-6 entropy wave where value-first FP32
@@ -41,15 +41,16 @@ def _evc_errors(monkeypatch, mode, accuracy, params):
 
 
 _FP64 = {}
-FLOOR = pytest.mark.xfail(strict=False, reason="FP32 floor of the narrowed deviations: "
-                          "L2(rho) ~ 3e-10 at n=256 (docs/precision_modes.md)")
+FLOOR = pytest.mark.xfail(strict=True, reason="FP32 rounding of the deviations accumulates to "
+                          "L2(rho) ~ 3e-10 over a period (docs/precision_modes.md)")
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("mode", ["DF", pytest.param("MIXED", marks=FLOOR),
-                                  pytest.param("MIXED_CELL", marks=FLOOR)])
-@pytest.mark.parametrize("accuracy", [4, 6])
-def test_evc_convergence_vs_fp64(monkeypatch, accuracy, mode):
+@pytest.mark.parametrize("mode", ["DF", "MIXED", "MIXED_CELL"])
+@pytest.mark.parametrize("accuracy", [2, 4, 6])
+def test_evc_convergence_vs_fp64(request, monkeypatch, accuracy, mode):
+    if mode != "DF" and accuracy > 2:
+        request.applymarker(FLOOR)
     if accuracy not in _FP64:
         _FP64[accuracy] = _evc_errors(monkeypatch, "FP64", accuracy, EVC_PARAMS)
     ref, e = _FP64[accuracy], _evc_errors(monkeypatch, mode, accuracy, EVC_PARAMS)
