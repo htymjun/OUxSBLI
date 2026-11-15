@@ -16,7 +16,10 @@ contains
     integer i, k, istat, ierr
     volinv = 1.d0 / dble((nre2 - nre1 + 1) * (nz - 6))
     call MPI_TEST(ireq, arrived, MPI_STATUS_IGNORE, ierr)
-    if (flag_re == 0) then
+    ! step == 1: no history yet, take the instantaneous profile. A restart enters
+    ! with step > 1 (calc_time_dev) and the restored recal/Qm.dat on the device
+    ! (pre_rescale), so the running mean continues instead of being reset.
+    if (flag_re == 0 .and. step == 1) then
       !$cuf kernel do <<<*,*>>>
       do j = 1, ny
         Q1 = 0.d0; Q2 = 0.d0; Q3 = 0.d0; Q4 = 0.d0; Q5 = 0.d0
@@ -102,7 +105,7 @@ contains
       Qre_flat(3*n+1:4*n) = Qre_4
       Qre_flat(4*n+1:5*n) = Qre_5
       call CPUGPU_MPI_SEND(id_gpumpi, Qre_flat, 5*ny*(nz-6), rerank+1, 0, MPI_COMM_WORLD, ireq2(1), ierr)
-      if (num == 1 .and. id_recal == 0) then
+      if (num == 1) then
         call calc_mean(step, flag_req, flag_re, nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Qm_1, Qm_2, Qm_3, Qm_4, Qm_5)
         Qm_flat(1:ny)        = Qm_1
         Qm_flat(ny+1:2*ny)   = Qm_2
@@ -154,7 +157,7 @@ contains
     write(filename, "(a)") "data/rescaling.d"
     n = ny*(nz-6)
 
-    if (num == 1 .and. id_recal == 0) then
+    if (num == 1) then
       call CPUGPU_MPI_RECV(id_gpumpi, Qre, 5*ny*(nz-6), rerank, 0, MPI_COMM_WORLD, ireqs(1), ierr)
       call CPUGPU_MPI_RECV(id_gpumpi, Qm,  5*ny,        rerank, 1, MPI_COMM_WORLD, ireqs(2), ierr)
       call MPI_WAITALL(2, ireqs, istats, ierr)

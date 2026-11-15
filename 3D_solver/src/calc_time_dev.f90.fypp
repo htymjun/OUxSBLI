@@ -172,7 +172,9 @@ contains
     integer i, j, k, l, t1, t2, ierr, nranks, ndevices, stat, ireq, ireq2(2)
     integer istat(MPI_STATUS_SIZE), istat2(MPI_STATUS_SIZE,2)
     ! rescal_cpu!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    integer :: step = 1, flag_re = 0, flag_req
+    ! running-mean counter of the rescaling profile Qm; a restart resumes from
+    ! recal/Qm.dat with the weight of 2000 steps (see calc_mean, pre_rescale)
+    integer :: step = ${'2001' if RESTART else '1'}$, flag_re = 0, flag_req
     real(8), allocatable, device :: Qre_1(:), Qre_2(:), Qre_3(:), Qre_4(:), Qre_5(:)
     real(8), allocatable, device :: Qm_1(:), Qm_2(:), Qm_3(:), Qm_4(:), Qm_5(:)
     real(8), allocatable, pinned :: Qm_cpu_1(:), Qm_cpu_2(:), Qm_cpu_3(:), Qm_cpu_4(:), Qm_cpu_5(:)
@@ -399,7 +401,9 @@ contains
     integer i, j, k, l, t1, t2, ierr, nranks, ndevices, stat, ireq, ireq2(2)
     integer istat(MPI_STATUS_SIZE), istat2(MPI_STATUS_SIZE,2)
     ! rescale !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    integer :: step = 1, flag_re = 0, flag_req
+    ! running-mean counter of the rescaling profile Qm; a restart resumes from
+    ! recal/Qm.dat with the weight of 2000 steps (see calc_mean, pre_rescale)
+    integer :: step = ${'2001' if RESTART else '1'}$, flag_re = 0, flag_req
     real(8), allocatable, device :: Qre_1(:), Qre_2(:), Qre_3(:), Qre_4(:), Qre_5(:)
     real(8), allocatable, device :: Qm_1(:), Qm_2(:), Qm_3(:), Qm_4(:), Qm_5(:)
     real(8), allocatable, pinned :: Qm_cpu_1(:), Qm_cpu_2(:), Qm_cpu_3(:), Qm_cpu_4(:), Qm_cpu_5(:)

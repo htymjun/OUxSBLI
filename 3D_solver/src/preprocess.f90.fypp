@@ -180,6 +180,23 @@ contains
       else
         print *, "myrank is ", myrank, " memory allocation has completed (Qm)"
       endif
+#:if RESTART and RESCALE
+      ! the running mean of the rescaling profile continues from the checkpoint
+      ! (it used to stay frozen at the restored profile for the whole run)
+      if (myrank == rerank) then
+        block
+          real(8) :: q1(ny), q2(ny), q3(ny), q4(ny), q5(ny)
+          open(10, file="recal/Qm.dat", status='old', action='read', form='unformatted', access='stream', iostat=ierr)
+          if (ierr /= 0) then
+            print *, "Qm is required but doesn't exist"
+            call MPI_ABORT(MPI_COMM_WORLD, errorcode, ierr)
+          endif
+          read(10) q1, q2, q3, q4, q5
+          close(10)
+          Qm_1 = q1; Qm_2 = q2; Qm_3 = q3; Qm_4 = q4; Qm_5 = q5
+        end block
+      endif
+#:endif
     elseif (myrank == rerank+1) then
       stat = cudaSetDevice(0)
       stat = cudaGetDeviceProperties(prop, 0)
