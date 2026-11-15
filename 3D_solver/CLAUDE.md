@@ -62,7 +62,7 @@ main.f90
 | SBLI | Shock-boundary layer interaction (RESCALE=True) |
 | STZ  | z-direction halo exchange validation: viscous Sod shock tube along z, same physical state as 2D_solver/ST (NS, KEEP, ORDER=4, COMMZ=True, `MPI='GPU'`, BC_Z=True) |
 | SWLBLI | Oblique-shock / laminar flat-plate boundary-layer interaction, M=2.15, β=32.72°, Xsh=100 mm (NS, SLAU, ORDER=6, BC_X=BC_Y=True, periodic z). Runs with `RESTART=True`: the initial field is the converged 2D solution of `2D_solver/SWLBLI`, extruded in z by that case's `convert_2d_to_3d[_2].f90` (see `2D_solver/CLAUDE.md`), so a fresh clone needs that 2D run first. It is the only NS case that can run with `COMMZ=True` (`MPI='GPU'`) — see the COMMZ section below. `BC_FORCING=True`: its `set_bc` takes `(x, z, phi_l_gpu, phi_m_gpu, t_now)` for a blowing/suction strip (currently commented out inside `set_bc`) |
-| SWTBLI | Oblique-shock / turbulent boundary-layer interaction (rescaling inflow, RESCALE branch of `calc_time_dev`) |
+| SWTBLI | Incident-shock / turbulent boundary-layer interaction with large separation, M=2.28, θ=12° (grid generation 2; generation 1 was IUSTI-like θ=9.5°), Re_θ≈500 (NS, SLAU-family + WENO5-Z `W32P64`, ORDER=6, RESCALE=True). Two coupled domains run by `src/sbli.f90` on 4 ranks: a recycling-rescaling TBL generator (ranks 0/1) feeds an SBLI domain (ranks 2/3). Staged with `stage.sh`/`run_stage.sh`; see the SWTBLI section below |
 | TBL  | Supersonic turbulent boundary layer, M=2.5 adiabatic wall (NS, KEEP, ORDER=6, RESCALE=True); validated against Guarini et al. (2000) — see the TBL notes below |
 
 BL, EVC, and OS are "quasi-2D" ports of their `2D_solver/` namesakes: the same real physics extruded uniformly through a thin, periodic spanwise `z` (`nz=9`, fixed), which exercises 3D-only code paths (G-flux, `calc_div_wz`, 3D grid metrics, the 3D VTK writer) that the 2D solver structurally cannot reach, while still checking against the same closed-form answer (Blasius, Rankine-Hugoniot, grid convergence). Two constraints found by direct testing, both reproduced independent of scheme, viscosity and resolution:
@@ -123,6 +123,116 @@ qsub -v STAGE=A job_miyabi.sh      # or job_tsubame.sh on TSUBAME
 python -m ouxsbli.analysis.tbl_stats accumulate data --out tbl_acc.npz --halves
 python -m ouxsbli.analysis.tbl_stats report tbl_acc.npz
 ```
+
+### SWTBLI: two coupled domains
+
+* **Layout** (`SWTBLI/mod_globals.f90`, lengths in δ = inlet δ99 = `blt` = 1.0724 mm).
+  Grid generation 2 (current; stages G0, C1, C2 N, P N):
+  * TBL generator: 11δ × 4.07δ, dx0 = 0.0403δ (nx1=274, ny1=128), recycling plane
+    `nre2` at 9.95δ, `Qm` averaged over 9.35–9.95δ.
+  * SBLI domain (1397×455×114, 72 M points, 20 GB on the GPU): inlet at the TBL plane
+    `nre2-5` (9.75δ), inviscid impingement `x_imp` 31δ (`ximp_in`) downstream, uniform
+    to `x_imp+xdown` (22δ), then an 80-cell outlet buffer (+3 %/cell); 18.1δ high,
+    uniform dy=dx up to `y_str`=16δ, `gy_top`=+3 %/cell above.
+  * Generation 1 (A1..B0): dx0 = 0.0604δ, 773×218, 12.2δ high, `ximp_in`=25,
+    `xdown`=18, uniform up to 9.5δ and +5 %/cell above. Two problems in its
+    schlieren/p'rms led to generation 2: grid-scale waves trailing the reflected
+    shock (worst where it entered the coarse +5 %/cell layer), and the wave reflected
+    at the top by the reflected shock coming back into the recovering boundary layer
+    (inviscid landing estimate x_imp+28δ, inside the domain). With 18δ and θ=12° the
+    estimate is beyond the outlet (`report` → `top_reflection`). The longer inflow
+    (`ximp_in` 31) keeps the top entry of the incident shock, `x_top` = x_imp − 24.2δ
+    at θ=12°, 6.7δ downstream of the inlet.
+  * dz (4δ/108), `dyw0` and `dt` are the same in both generations: `dt` is set by
+    the acoustic CFL of the first wall cell (x CFL is ~0.2 on the finer grid).
+  * Both share dx, the y-grid function and the span, so the SBLI inlet columns
+    1..3 are the TBL planes `nre2-5..nre2-3` verbatim. Rank 0 sends them through
+    host memory (`set.f90`), not as device pointers.
+* **Incident shock**: enters through the SBLI top at `x_top = x_imp − Ly2/tan β1`.
+  `theta_deg` (0 = no shock) is ramped 4 → 7 → 9.5 over the A2 stages (generation 1)
+  and 9.5 → 11 → 12 over G0/C1/C2 (generation 2). The top
+  boundary, each part found necessary by looking at schlieren GIFs:
+  * Upstream of `x_top` it is a Riemann-invariant condition on the nominal state 1. The
+    outer flow there sits ~2 % above p0 (displacement of the growing layer). Do not
+    rescale state 1 to that level: the measured level then feeds back into itself.
+  * At `x_top` it blends (tanh, ~4 cells) into state 2. States 2/3 are rescaled
+    isentropically by f = running mean of the top pressure upstream of `x_top` / p0
+    (≈1.02). With nominal states the mismatch radiated weak waves behind the incident
+    shock.
+  * From `x_top+3δ`, while the running-mean v there is still below v2/2, it is a
+    Riemann condition on state 2.
+  * Once the reflected/separation shock has crossed the top, the boundary copies row
+    ny−1 at the foot of the right-running characteristic, `x − dy/tan(μ+φ)` from the
+    running-mean local state. Two other conditions were tried and both reflected the
+    exiting shock more strongly (peak dp/dx·δ/p0 at y=9δ: 0.59 and 0.92 against 0.33):
+    the former SWTBLI switch to state 3 decided cell by cell from the local v, and a
+    Riemann condition on the running-mean local state.
+* **SBLI inlet above the TBL domain** (`j ≥ ny1`): a running time mean (τ=10 δ/u0) of
+  the spanwise-mean TBL row `ny1−1`. Copying the instantaneous spanwise mean injected
+  column-uniform density pulses that convected through the domain as vertical fronts.
+* **Scheme**: SLAU (HR-SLAU2) + WENO5-Z `W32P64`. `RIEMANN='LF'` was rejected: its
+  first-order wall face dissipates tangential momentum at ~c·ρu, several times the
+  viscous wall stress, and the wall shear collapsed within ~10 δ/U (TBL and SWTBLI alike).
+* **Stages, generation 2** (`./run_stage.sh STAGE [N]`, or several in a row with
+  `nohup ./chain.sh G0 C1 "C2 1" &`; archived in `runs/<stage>/`):
+  * `regrid.py runs/B0 mod_globals.f90 recal_gen2_init` builds the initial field
+    from the end of B0: linear (x, y) interpolation, x aligned at x_imp; the 6δ
+    longer inflow is a linear stretch of the old one (factor 1.46, continuous, no
+    seam); above the old top the measured three-state inviscid field with straight
+    shocks, blended over 1δ. `Qm.dat` is interpolated in y. It prints Cf/p_w of the
+    source and the result side by side.
+  * T2 (100-step smoke test), G0 (θ=9.5°, 50 δ/U, flushes the interpolation),
+    C1 (θ=11°, 150 δ/U), C2 N (θ=12°, 300 δ/U segments until x_sh and x_0 pass
+    `stationarity`), P N (θ=12°, 75 δ/U statistics segments, VTK every 2.5 δ/U).
+  * Cost on the RTX PRO 6000 pair: 0.48 s/step (SBLI rank is the bottleneck), i.e.
+    3.6 h per 150 δ/U.
+  * `auto_gen2.sh` (start with `CHAIN_PID=<chain.sh pid>` to wait for a running chain)
+    continues C2 N until `track.json` reports both x_sh and x_0 stationary (at most 4),
+    then P 1..4 and `wall report` of the last C2 + P segments against B0 into `runs/final/`.
+  * Raising θ moves `x_top` downstream; for the first ~30 δ/U the upstream top-pressure
+    window still sees the old incident shock, so f starts high (1.089 at C1) and relaxes
+    with τ = 10 δ/U.
+  * `post_stage.sh` (called by `run_stage.sh`) runs turb/track/report/wall/gif,
+    then keeps only the last 3 snapshots in `data/` (an SBLI snapshot is ~1.5 GB) and
+    the `recal/` of the last two generation-2 stages. Stage order: `runs/STAGES_GEN2`.
+    `track --prev` continues the previous stage's `track.npz`, so the stationarity
+    test spans stages whose VTK files are gone; `report`/`track --ref` take the
+    no-shock baseline from `runs/A1b/analysis/ref_rows.npz` (`cache-ref`),
+    interpolated in physical x onto any grid generation.
+* **Stages, generation 1** (parameters in `runs/<stage>/mod_globals.f90`; `stage.sh`
+  refuses them now; their `data/` was deleted after the analysis, `analysis/`,
+  `gif/`, `recal/` remain; B0 keeps its `data/` as the θ=9.5° reference):
+  * A1: 2δ span, no shock, from a composite turbulent profile with
+    streak/vortex/noise perturbations. A1b continues it, with `Qm` re-seeded at the
+    recycling plane, to bring the inlet back to δ99 = blt (Re_θ ≈ 500).
+  * A2a/A2b: θ=4°/7°.
+  * A2c N: θ=9.5°, 300 δ/U segments until the separation shock is
+    statistically stationary.
+  * `convert_2d_to_4d.py`: tiles the 2δ restart into 4δ and adds 1 % noise. The
+    noise is needed because the half-span recycling shift maps a Lz/2-periodic
+    field onto itself.
+  * B0: 4δ, short decorrelation. Its end state is the initial field of the production run.
+* **Analysis**: `python -m ouxsbli.analysis.swtbli_stats {turb|track|report|zcorr|gif|wall|cache-ref} runs/<stage>`.
+  It reads `data/1` (TBL) and `data/3` (SBLI) with `vtr_raw` and covers the turbulence check,
+  shock tracking with the stationarity test, the boundary diagnostics and the GIFs.
+  The grid is rebuilt from `mod_globals.f90` by `make_x`/`make_y` (twins of `set.f90`).
+  * `wall accumulate RUNDIR` → `analysis/wall_acc.npz` (sums of span-mean p_w, p_w²,
+    τ_w and mean fields); `wall report NPZ... [--compare NPZ] [--ref-csv CSV]` merges
+    segments and plots/writes Cf and p_w/p1 against Van Driest II (upstream), the
+    free-interaction theory (F=4.22 separation, 6.0 plateau; Zukoski 1+M/2), the
+    inviscid p3, other runs, and digitised literature data in the IUSTI
+    normalisation x* = (x−x_imp)/L_int, p* = (p_w−p1)/(p3−p1). A plateau is reported
+    only when dp_w/dx has an interior minimum inside the bubble.
+  * `report` → `post_reflected`: grid-scale residual (deviation from a ≥0.3δ running
+    mean, the same physical width on both grids) of mean p and p'rms 0.5–2.5δ behind
+    the reflected shock, over the inviscid jump p3−p2; `top_reflection`: inviscid
+    landing point of the wave reflected at the top. Before the generation-2 change
+    `P["y_str"]` was parsed without the `*blt` factor, so the old
+    `prms_ratio_top_to_9p5delta` (0.94) compared the top row with itself; the
+    corrected `prms_ratio_top_to_ystr` is 0.31 for B0.
+* `src/sbli.f90` (the two-domain main) was brought up to date: it now uses
+  `set_block_3D`/`set_Jacobian_xy3`, node-local GPU selection (TBL pair on GPU0,
+  SBLI pair on GPU1 when two are visible), and requires exactly 4 ranks.
 
 ## Convective Schemes (dispatched from `calc_flux_base.f90.fypp`)
 
@@ -344,9 +454,18 @@ Rules that make this correct, and that any edit must preserve:
   (`preprocess.f90.fypp`) requires `recal/Qm.dat`, but `write_Qm` — the only routine
   that wrote it — was never called from anywhere. `rescale_recv_send` now checkpoints
   the profile through `write_Qm_restart` every 1000 timesteps once rescaling has
-  engaged, which is what makes a staged TBL run resumable. Note the resulting
-  semantics: on restart `id_recal` is true, so `calc_mean` is skipped and `Qm` stays
-  **frozen** at the restored profile for the whole run.
+  engaged, which is what makes a staged TBL run resumable. On restart the running
+  mean now **continues** from the checkpoint: `pre_rescale` loads `recal/Qm.dat` into
+  the compute rank's device `Qm`, `calc_time_dev` starts the counter `step` at 2001 (the
+  restored profile weighs 2000 steps), and `calc_mean`/`rescale_recv_send` no longer
+  skip on `id_recal`. It used to stay frozen at the restored profile, which makes the
+  inlet δ drift exponentially over a long multi-segment run: the outer scaling maps
+  the recycled plane with the frozen δ99 of `Qm`, so every recycling pass multiplies
+  the inlet δ by (growth from inlet to recycling plane) × (target δ / frozen δ).
+  Related: `Qm` should be averaged at the recycling plane (`nre1` close to `nre2`), not
+  over a wide window upstream of it, or the same ratio exceeds 1 and the inlet δ grows
+  a few per cent per pass even without restarts (seen in SWTBLI; TBL still uses
+  0.5–0.9 nx and has not been re-checked).
 * Two known quirks in `calc_rescale.f90`, both benign, both left alone: the `jup` loop
   that sets `u99` has no `exit`, so `u99` is effectively `0.99*Um(ny)` (the freestream
   value you want anyway); and the `step` index passed from `calc_time_dev.f90.fypp` is

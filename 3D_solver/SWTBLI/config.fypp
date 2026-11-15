@@ -1,4 +1,6 @@
-
+#! SWTBLI: incident-shock / turbulent boundary-layer interaction, IUSTI-like
+#! conditions (M=2.28, theta=9.5 deg), two domains: a recycling-rescaling TBL
+#! generator (ranks 0/1) feeding an SBLI domain (ranks 2/3). See set.f90.
 #:set VISC = 'NS'
 #:set SCHEME = 'SLAU'
 #:set ORDER = 6
@@ -8,8 +10,15 @@
 #:set RESCALE = True
 #:set RK = 3
 #:set COMMZ = False
-#:set RESTART = False
-#:set TVD = 'hybrid'
+#:set RESTART = True
+#:set TVD = 'none'
 #:set SLAU_VARIANT = 'HRSLAU2'
 #:set ORDER_IO = ORDER // 2 - 1
 #:set OUTPUT_PRECISION = 4
+#! WENO5-Z with FP32 smoothness indicators/weights (mixed precision under study)
+#:set RECON = 'WENO'
+#:set WENO_PREC = 'W32P64'
+#! face flux: SLAU (HR-SLAU2). LF failed the TBL accuracy gate: its first-order wall face
+#! dissipates tangential momentum at a rate ~ c*rho*u (about 4x the viscous wall
+#! stress here), so the wall shear collapsed within ~10 delta/U.
+#:set RIEMANN = 'SLAU'

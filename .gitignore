@@ -43,3 +43,5 @@ nohup.out
 # test_tbl.py reads its committed moment file from here
 !ouxsbli/tests/data/
 !ouxsbli/tests/data/*.npz
+3D_solver/SWTBLI/runs/
+3D_solver/SWTBLI/recal_gen2_init/

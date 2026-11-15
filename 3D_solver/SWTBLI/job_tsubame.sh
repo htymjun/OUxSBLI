@@ -6,5 +6,5 @@
 
 module load nvhpc/25.1_cuda12.6 openmpi/5.0.7-nvhpc
 
-mpiexec -npernode 4 -n 4 -x LD_LIBRARY_PATH ./a.out
+mpiexec -npernode 4 -n 4 -x LD_LIBRARY_PATH ./build/a.out
 
