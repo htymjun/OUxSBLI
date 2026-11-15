@@ -110,6 +110,9 @@ macro(add_ouxsbli_case)
   if(_prec MATCHES "set +PREC *= *'DF'")
     target_sources(${_CASE} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../extern/FmaX/FmaX/fltflt.f90")
     target_compile_definitions(${_CASE} PRIVATE PREC_DF "REAL_T=type(fltflt)")
+    # -O1 instead of -fast (= -O2 ... -Mflushz): nvfortran 26.5 at -O2 drops updates
+    # of fltflt array elements (x(l) = f(.., x(l))); -fast -O1 still runs -O2
+    string(REPLACE "-fast" "-O1 -Mflushz" CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS}")
   else()
     target_compile_definitions(${_CASE} PRIVATE "REAL_T=real(8)")
   endif()

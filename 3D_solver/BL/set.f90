@@ -74,7 +74,7 @@ contains
   subroutine set_bc(myrank, nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     integer, intent(in), value     :: myrank, nx, ny, nz
     real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    REAL_T, intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     integer i, j, k
     real(8) :: p_wall
     ! top far field: interior (j = ny-1) state and boundary state
@@ -118,7 +118,7 @@ contains
         QJ_3(nx,j,k) = QJ_3(nx-1,j,k)
         QJ_4(nx,j,k) = QJ_4(nx-1,j,k)
         QJ_5(nx,j,k) = p0 * over_gamma_1 / Jacobian(nx,j) &
-                     + 0.5d0 * (QJ_2(nx,j,k)**2 + QJ_3(nx,j,k)**2 + QJ_4(nx,j,k)**2) / QJ_1(nx,j,k)
+                     + 0.5d0 * (dble(QJ_2(nx,j,k))**2 + dble(QJ_3(nx,j,k))**2 + dble(QJ_4(nx,j,k))**2) / dble(QJ_1(nx,j,k))
     enddo;enddo
 
     !$cuf kernel do(2)<<<*,*>>>
@@ -127,11 +127,11 @@ contains
         ! top: constant-pressure far field (see 2D_solver/BL/set.f90). v is
         ! always extrapolated (wall-normal, zero-shear far field); entropy and
         ! tangential momentum (u, and here also w) are upwinded on sign(v).
-        rhoin = QJ_1(i,ny-1,k) * Jacobian(i,ny-1)
-        uin   = QJ_2(i,ny-1,k) / QJ_1(i,ny-1,k)
-        vin   = QJ_3(i,ny-1,k) / QJ_1(i,ny-1,k)
-        win   = QJ_4(i,ny-1,k) / QJ_1(i,ny-1,k)
-        pin   = gamma_1 * (QJ_5(i,ny-1,k) * Jacobian(i,ny-1) &
+        rhoin = dble(QJ_1(i,ny-1,k)) * Jacobian(i,ny-1)
+        uin   = dble(QJ_2(i,ny-1,k)) / dble(QJ_1(i,ny-1,k))
+        vin   = dble(QJ_3(i,ny-1,k)) / dble(QJ_1(i,ny-1,k))
+        win   = dble(QJ_4(i,ny-1,k)) / dble(QJ_1(i,ny-1,k))
+        pin   = gamma_1 * (dble(QJ_5(i,ny-1,k)) * Jacobian(i,ny-1) &
                 - 0.5d0 * rhoin * (uin**2 + vin**2 + win**2))
 
         pb = p0
@@ -168,7 +168,7 @@ contains
           QJ_2(i,1,k) = QJ_2(i,2,k)
           QJ_3(i,1,k) = 0.d0
           QJ_4(i,1,k) = QJ_4(i,2,k)
-          QJ_5(i,1,k) = QJ_5(i,2,k) - 0.5d0 * QJ_3(i,2,k)**2 / QJ_1(i,2,k)
+          QJ_5(i,1,k) = dble(QJ_5(i,2,k)) - 0.5d0 * dble(QJ_3(i,2,k))**2 / dble(QJ_1(i,2,k))
         else
           ! no-slip wall: all three velocity components vanish; wall pressure
           ! is recovered by removing the full (u,v,w) kinetic energy from the
@@ -177,7 +177,7 @@ contains
           QJ_2(i,1,k) = 0.d0
           QJ_3(i,1,k) = 0.d0
           QJ_4(i,1,k) = 0.d0
-          p_wall = gamma_1 * (QJ_5(i,2,k) - 0.5d0 * (QJ_2(i,2,k)**2 + QJ_3(i,2,k)**2 + QJ_4(i,2,k)**2) / QJ_1(i,2,k))
+          p_wall = gamma_1 * (dble(QJ_5(i,2,k)) - 0.5d0 * (dble(QJ_2(i,2,k))**2 + dble(QJ_3(i,2,k))**2 + dble(QJ_4(i,2,k))**2) / dble(QJ_1(i,2,k)))
           QJ_5(i,1,k) = p_wall * over_gamma_1
         endif
     enddo;enddo
@@ -188,7 +188,7 @@ contains
 
   subroutine set_bc_mut(nx,ny,nz,mut,qc2)
     integer, intent(in), value     :: nx, ny, nz
-    real(8), intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
+    REAL_T, intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
     call set_bc_mut_common(nx, ny, nz, mut, qc2)
   end subroutine set_bc_mut
 end module set

@@ -1,3 +1,4 @@
+#:include 'prec.fypp'
 !> WENO5-Z (Borges et al. 2008) face-state reconstruction, FP64 and W32P64.
 !>
 !> Ported from WENO_ILP's single WENO implementation,
@@ -68,6 +69,9 @@
 !>    not found in llgetsym". The routines are inlined either way.
 module calc_weno
   use cudadevice
+  #:if PREC == 'DF'
+  use mod_prec
+  #:endif
   implicit none
   private
   public weno5z_fp64, weno5z_w32p64, weno5z_mixed
@@ -85,9 +89,10 @@ contains
   ! d0..d2 are the linear weights of the bias (mirrored left/right).
   ! ------------------------------------------------------------------
   attributes(device) subroutine weights5_64(v1, v2, v3, v4, v5, d0, d1, d2, w0, w1, w2)
-    real(8), intent(in)  :: v1, v2, v3, v4, v5, d0, d1, d2
-    real(8), intent(out) :: w0, w1, w2
-    real(8) e0, f0, e1, f1, e2, f2, b0, b1, b2, tau, r0, r1, r2, a0, a1, a2, invs
+    ${RT}$, intent(in)  :: v1, v2, v3, v4, v5
+    real(8), intent(in)  :: d0, d1, d2
+    ${RT}$, intent(out) :: w0, w1, w2
+    ${RT}$ e0, f0, e1, f1, e2, f2, b0, b1, b2, tau, r0, r1, r2, a0, a1, a2, invs
     e0 = v1 - 2.d0 * v2 + v3
     f0 = v1 - 4.d0 * v2 + 3.d0 * v3
     e1 = v2 - 2.d0 * v3 + v4
@@ -161,9 +166,9 @@ contains
   ! FP64 WENO5-Z
   ! ------------------------------------------------------------------
   attributes(device) subroutine weno5z_fp64(a, al, ar)
-    real(8), intent(in), contiguous :: a(6)
-    real(8), intent(out)            :: al, ar
-    real(8) w0, w1, w2, p0, p1, p2
+    ${RT}$, intent(in), contiguous :: a(6)
+    ${RT}$, intent(out)            :: al, ar
+    ${RT}$ w0, w1, w2, p0, p1, p2
     ! v^- from a(1..5), linear weights (1, 6, 3)/10
     call weights5_64(a(1), a(2), a(3), a(4), a(5), 0.1d0, 0.6d0, 0.3d0, w0, w1, w2)
     p0 =  c2 * a(1) - c7 * a(2) + c11 * a(3)

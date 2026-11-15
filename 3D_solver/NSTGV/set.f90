@@ -51,7 +51,7 @@ contains
     use mod_constant, only : id_accuracy
     integer, intent(in), value     :: myrank, nx, ny, nz
     real(8), intent(in), device    :: Jacobian(nx,ny,nz)
-    real(8), intent(inout), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    REAL_T, intent(inout), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     real(8), intent(in), device, optional :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
     call set_bc_cyclic(id_accuracy, nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5)
   end subroutine set_bc
@@ -59,7 +59,7 @@ contains
 
   subroutine set_bc_mut(nx,ny,nz,mut,qc2)
     integer, intent(in), value     :: nx, ny, nz
-    real(8), intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
+    REAL_T, intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
     call set_bc_mut_common(nx,ny,nz,mut,qc2)
   end subroutine set_bc_mut
 end module set

@@ -1,4 +1,4 @@
-#:include 'config.fypp'
+#:include 'prec.fypp'
 #:if not defined('COMMZ')
   #:set COMMZ = False
 #:endif
@@ -43,9 +43,9 @@ contains
   attributes(global) subroutine calc_slau_x${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, sensor, E${karg}$)
     use mod_constant, only : Normal_x
     integer, intent(in), value                :: nx, ny, nz${karg}$
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
+    ${RT}$, intent(${'inout' if is_koff else 'out'}$), device, contiguous :: E(nx-1,ny-2,nz-2,5)
     integer i, j, k, it, jt, kt
     integer ii, i_base, idx, offset_yz
     logical :: jk_in_range
@@ -55,11 +55,11 @@ contains
     #:if ORDER >= 4
     integer idx_r, offset_yzr
     integer, parameter :: sxr = threadsE%x
-    real(8), dimension(sxr*sy*sz), shared :: rhor, ur, vr, wr, pr
-    real(8) rhol, ul, vl, wl, pl
+    ${RT}$, dimension(sxr*sy*sz), shared :: rhor, ur, vr, wr, pr
+    ${RT}$ rhol, ul, vl, wl, pl
     real(sp) fdx  ! sp intentional: sensor interpolation does not need double precision
     #:endif
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p
+    ${RT}$, dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -145,21 +145,21 @@ contains
   attributes(global) subroutine calc_slau_y${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, sensor, F${karg}$)
     use mod_constant, only : Normal_y
     integer, intent(in), value                :: nx, ny, nz${karg}$
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
+    ${RT}$, intent(${'inout' if is_koff else 'out'}$), device, contiguous :: F(nx-2,ny-1,nz-2,5)
     integer i, j, k, it, jt, kt
     integer jj, j_base, idx, offset_xz
     logical :: ik_in_range
     integer, parameter :: sx = threadsF%x
     integer, parameter :: sy = threadsF%y + 2*io + 1
     integer, parameter :: sz = threadsF%z
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p
+    ${RT}$, dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p
     #:if ORDER >= 4
     integer idx_r, offset_xzr
     integer, parameter :: syr = threadsF%y
-    real(8), dimension(sx*syr*sz), shared :: rhor, ur, vr, wr, pr
-    real(8) rhol, ul, vl, wl, pl
+    ${RT}$, dimension(sx*syr*sz), shared :: rhor, ur, vr, wr, pr
+    ${RT}$ rhol, ul, vl, wl, pl
     real(sp) fdy  ! sp intentional: sensor interpolation does not need double precision
     #:endif
     it = threadIdx%x
@@ -244,21 +244,21 @@ contains
   attributes(global) subroutine calc_slau_z(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, sensor, G)
     use mod_constant, only : Normal_z
     integer, intent(in), value                :: nx, ny, nz
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: G(nx-2,ny-2,nz-1,5)
+    ${RT}$, intent(out), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     integer i, j, k, it, jt, kt
     integer kk, k_base, idx, offset_xy
     logical :: ij_in_range
     integer, parameter :: sx = threadsG%x
     integer, parameter :: sy = threadsG%y
     integer, parameter :: sz = threadsG%z + 2*io + 1
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p
+    ${RT}$, dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p
     #:if ORDER >= 4
     integer idx_r, offset_xyr
     integer, parameter :: szr = threadsG%z
-    real(8), dimension(sx*sy*szr), shared :: rhor, ur, vr, wr, pr
-    real(8) rhol, ul, vl, wl, pl
+    ${RT}$, dimension(sx*sy*szr), shared :: rhor, ur, vr, wr, pr
+    ${RT}$ rhol, ul, vl, wl, pl
     real(sp) fdz  ! sp intentional: sensor interpolation does not need double precision
     #:endif
     it = threadIdx%x

@@ -1,25 +1,26 @@
 module set_bc_tbl_sbli
   use mod_globals, only : R, gamma
   use mod_constant, only : gamma_1, over_gamma, over_gamma_1, Cp
+  use mod_prec
   implicit none
 contains
   subroutine set_bc_Neumann_tbl_top_down(nx, ny, nz, offset, istart, iend, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     use mod_globals, only : Taw, rf, u0, p0
     integer, intent(in), value     :: nx, ny, nz, offset, istart, iend
     real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    REAL_T, intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8) :: Jacobian_tmp, over_QJ1, p_wall, rhob, ub, vb, wb, pb
     integer i, k
     !$cuf kernel do(2)<<<*,*>>>
     do k = 1+offset, nz-offset
       do i = istart, iend
         Jacobian_tmp = 1.d0 / Jacobian(i,ny)
-        over_QJ1 = 1.d0 / QJ_1(i,ny-1,k)
-        rhob = QJ_1(i,ny-1,k) * Jacobian(i,ny-1)
-        ub   = QJ_2(i,ny-1,k) * over_QJ1
-        vb   = QJ_3(i,ny-1,k) * over_QJ1
-        wb   = QJ_4(i,ny-1,k) * over_QJ1
-        pb   = gamma_1 * (QJ_5(i,ny-1,k) * Jacobian(i,ny-1) - 0.5d0 * rhob * (ub**2 + vb**2 + wb**2))
+        over_QJ1 = 1.d0 / dble(QJ_1(i,ny-1,k))
+        rhob = dble(QJ_1(i,ny-1,k)) * Jacobian(i,ny-1)
+        ub   = dble(QJ_2(i,ny-1,k)) * over_QJ1
+        vb   = dble(QJ_3(i,ny-1,k)) * over_QJ1
+        wb   = dble(QJ_4(i,ny-1,k)) * over_QJ1
+        pb   = gamma_1 * (dble(QJ_5(i,ny-1,k)) * Jacobian(i,ny-1) - 0.5d0 * rhob * (ub**2 + vb**2 + wb**2))
         QJ_1(i,ny,k) = rhob * Jacobian_tmp
         QJ_2(i,ny,k) = rhob * ub * Jacobian_tmp
         QJ_3(i,ny,k) = rhob * vb * Jacobian_tmp
@@ -30,7 +31,7 @@ contains
         QJ_2(i,1,k) = 0.d0
         QJ_3(i,1,k) = 0.d0
         QJ_4(i,1,k) = 0.d0
-        p_wall = gamma_1 * (QJ_5(i,2,k) - 0.5d0 * (QJ_2(i,2,k)**2 + QJ_3(i,2,k)**2 + QJ_4(i,2,k)**2) / QJ_1(i,2,k))
+        p_wall = gamma_1 * (dble(QJ_5(i,2,k)) - 0.5d0 * (dble(QJ_2(i,2,k))**2 + dble(QJ_3(i,2,k))**2 + dble(QJ_4(i,2,k))**2) / dble(QJ_1(i,2,k)))
         QJ_5(i,1,k) = p_wall * over_gamma_1
     enddo;enddo
   end subroutine set_bc_Neumann_tbl_top_down
@@ -40,7 +41,7 @@ contains
     use mod_globals, only : Taw, rf, u0, p0
     integer, intent(in), value     :: nx, ny, nz, offset, istart, iend
     real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    REAL_T, intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8), parameter :: T       = Taw - rf * u0**2 / (2.d0 * Cp)
     real(8), parameter :: rho0    = p0 / (R * T)
     real(8), parameter :: c0      = sqrt(gamma * p0 / rho0)
@@ -51,11 +52,11 @@ contains
     do k = 1+offset, nz-offset
       do i = istart, iend
         Jacobian_tmp = 1.d0 / Jacobian(i,ny)
-        pin   = gamma_1 * (QJ_5(i,ny-1,k) - 0.5d0 * (QJ_2(i,ny-1,k)**2 + QJ_3(i,ny-1,k)**2 + QJ_4(i,ny-1,k)**2) &
-                / QJ_1(i,ny-1,k)) * Jacobian(i,ny-1)
-        rhoin = QJ_1(i,ny-1,k) * Jacobian(i,ny-1)
+        pin   = gamma_1 * (dble(QJ_5(i,ny-1,k)) - 0.5d0 * (dble(QJ_2(i,ny-1,k))**2 + dble(QJ_3(i,ny-1,k))**2 + dble(QJ_4(i,ny-1,k))**2) &
+                / dble(QJ_1(i,ny-1,k))) * Jacobian(i,ny-1)
+        rhoin = dble(QJ_1(i,ny-1,k)) * Jacobian(i,ny-1)
         cin   = sqrt(gamma * pin / rhoin)
-        vin   = QJ_3(i,ny-1,k) / QJ_1(i,ny-1,k)
+        vin   = dble(QJ_3(i,ny-1,k)) / dble(QJ_1(i,ny-1,k))
         Rp   = vin + 2.d0 * cin * over_gamma_1
         Rm   = v0  - 2.d0 * c0  * over_gamma_1
         vb   = 0.5d0 * (Rp + Rm)
@@ -72,7 +73,7 @@ contains
         QJ_2(i,1,k) = 0.d0
         QJ_3(i,1,k) = 0.d0
         QJ_4(i,1,k) = 0.d0
-        p_wall = gamma_1 * (QJ_5(i,2,k) - 0.5d0 * (QJ_2(i,2,k)**2 + QJ_3(i,2,k)**2 + QJ_4(i,2,k)**2) / QJ_1(i,2,k))
+        p_wall = gamma_1 * (dble(QJ_5(i,2,k)) - 0.5d0 * (dble(QJ_2(i,2,k))**2 + dble(QJ_3(i,2,k))**2 + dble(QJ_4(i,2,k))**2) / dble(QJ_1(i,2,k)))
         QJ_5(i,1,k) = p_wall * over_gamma_1
     enddo;enddo
   end subroutine set_bc_Riemann_tbl_top_down

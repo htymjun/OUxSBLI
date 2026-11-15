@@ -65,7 +65,7 @@ contains
   subroutine set_bc(myrank, nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     integer, intent(in), value     :: myrank, nx, ny, nz
     real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    REAL_T, intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8) Jacobian_tmp
     integer :: i, j, k
 
@@ -89,7 +89,7 @@ contains
         ! Slip (reflecting) wall at the bottom
         QJ_1(i,1,k) =  QJ_1(i,2,k)
         QJ_2(i,1,k) =  QJ_2(i,2,k)
-        QJ_3(i,1,k) = -QJ_3(i,2,k)
+        QJ_3(i,1,k) = -dble(QJ_3(i,2,k))
         QJ_4(i,1,k) =  QJ_4(i,2,k)
         QJ_5(i,1,k) =  QJ_5(i,2,k)
     enddo;enddo
@@ -120,7 +120,7 @@ contains
 
   subroutine set_bc_mut(nx,ny,nz,mut,qc2)
     integer, intent(in), value     :: nx, ny, nz
-    real(8), intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
+    REAL_T, intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
     call set_bc_mut_common(nx, ny, nz, mut, qc2)
   end subroutine set_bc_mut
 end module set

@@ -24,7 +24,7 @@ macro(add_ouxsbli_curv_case)
   endif()
   set(FYPP_FLAGS "-I${_CASE_DIR}" "-DDIM=3")
 
-  set(_PARENT_FYPP "mod_constant" "calc_muscl" "print")
+  set(_PARENT_FYPP "mod_constant" "mod_prec" "calc_muscl" "print")
   set(_SHARED_FYPP
       "calc_flux_base_curv"
       "preprocess_curv"

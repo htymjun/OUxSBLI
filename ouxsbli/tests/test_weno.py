@@ -67,7 +67,7 @@ def test_weno5z_reconstruction_order(tmp_path):
     drv = REPO_ROOT / "ouxsbli" / "tests" / "utils" / "fortran" / "weno_order.cuf"
     gen = tmp_path / "calc_weno.f90"
     exe = tmp_path / "weno_order"
-    subprocess.run(["fypp", str(src), str(gen)], check=True)
+    subprocess.run(["fypp", "-I", str(REPO_ROOT / "3D_solver" / "EVC"), str(src), str(gen)], check=True)
     # same -cuda -fast as the solver build (-fast is what makes the FP32 path FTZ)
     subprocess.run([_nvfortran(), "-cuda", "-fast", str(gen), str(drv), "-o", str(exe)],
                    check=True, cwd=tmp_path)

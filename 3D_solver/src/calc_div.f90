@@ -1,11 +1,36 @@
 !> Module for div(u) at cell-center
 module calc_div
+  use mod_prec
   use cudafor
   use mod_constant, only : one_third
   implicit none
   real(8), parameter :: one_24  = 1.d0 / 24.d0
   real(8), parameter :: one_120 = 1.d0 / 120.d0
 contains
+  ! Cell-centre central differences m* (left) / p* (right) times the summed inverse
+  ! spacings s. Called from the CUF loops below: a CUF loop cannot evaluate fltflt
+  ! expressions itself (PREC = 'DF'), a device subroutine can.
+  attributes(device) subroutine div2(m1, p1, s, r)
+    REAL_T, intent(in)  :: m1, p1
+    real(8), intent(in), value :: s
+    REAL_T, intent(out) :: r
+    r = 0.25d0 * (-m1 + p1) * s
+  end subroutine div2
+
+  attributes(device) subroutine div4(m2, m1, p1, p2, s, r)
+    REAL_T, intent(in)  :: m2, m1, p1, p2
+    real(8), intent(in), value :: s
+    REAL_T, intent(out) :: r
+    r = (one_third * (-m1 + p1) - one_24 * (-m2 + p2)) * s
+  end subroutine div4
+
+  attributes(device) subroutine div6(m3, m2, m1, p1, p2, p3, s, r)
+    REAL_T, intent(in)  :: m3, m2, m1, p1, p2, p3
+    real(8), intent(in), value :: s
+    REAL_T, intent(out) :: r
+    r = (one_120 * (-m3 + p3) + 0.075d0 * (m2 - p2) + 0.375d0 * (-m1 + p1)) * s
+  end subroutine div6
+
   !> Compute div(u) at cell-center (2nd-order), over the full [1,nx]x[1,ny]x[1,nz]
   !! domain -- matches calc_quantities_T_3D's coverage, since consumers read
   !! ux/vy/wz near the array edges (e.g. Ev's interior branch reads vy at
@@ -15,21 +40,21 @@ contains
     real(8), intent(in), dimension(nx-1), device      :: xix   ! 1 / dx
     real(8), intent(in), dimension(ny-1), device      :: etay  ! 1 / dy
     real(8), intent(in), dimension(nz-1), device      :: zetaz ! 1 / dz
-    real(8), intent(in), dimension(nx,ny,nz), device  :: Q_2, Q_3, Q_4
-    real(8), intent(out), dimension(nx,ny,nz), device :: ux, vy, wz
+    REAL_T, intent(in), dimension(nx,ny,nz), device :: Q_2, Q_3, Q_4
+    REAL_T, intent(out), dimension(nx,ny,nz), device :: ux, vy, wz
     integer i, j, k
     !$cuf kernel do(3) <<<*,(32,4,2)>>>
     do k = 1, nz
       do j = 1, ny
         do i = 1, nx
           if (2 <= i .and. i <= nx-1) then
-            ux(i,j,k) = 0.25d0 * (-Q_2(i-1,j,k) + Q_2(i+1,j,k)) * (xix(i-1) + xix(i))
+            call div2(Q_2(i-1,j,k), Q_2(i+1,j,k), xix(i-1) + xix(i), ux(i,j,k))
           endif
           if (2 <= j .and. j <= ny-1) then
-            vy(i,j,k) = 0.25d0 * (-Q_3(i,j-1,k) + Q_3(i,j+1,k)) * (etay(j-1) + etay(j))
+            call div2(Q_3(i,j-1,k), Q_3(i,j+1,k), etay(j-1) + etay(j), vy(i,j,k))
           endif
           if (2 <= k .and. k <= nz-1) then
-            wz(i,j,k) = 0.25d0 * (-Q_4(i,j,k-1) + Q_4(i,j,k+1)) * (zetaz(k-1) + zetaz(k))
+            call div2(Q_4(i,j,k-1), Q_4(i,j,k+1), zetaz(k-1) + zetaz(k), wz(i,j,k))
           endif
         enddo
       enddo
@@ -58,8 +83,8 @@ contains
   subroutine calc_div_ux_4_in(nx, ny, nz, xix, Q_2, ux, k_lo, k_hi)
     integer, intent(in), value                        :: nx, ny, nz, k_lo, k_hi
     real(8), intent(in), dimension(nx-1), device      :: xix   ! 1 / dx
-    real(8), intent(in), dimension(nx,ny,nz), device  :: Q_2
-    real(8), intent(out), dimension(nx,ny,nz), device :: ux
+    REAL_T, intent(in), dimension(nx,ny,nz), device :: Q_2
+    REAL_T, intent(out), dimension(nx,ny,nz), device :: ux
     integer, parameter :: io_v = 1
     integer i, j, k
     if (k_hi < k_lo) return
@@ -67,8 +92,8 @@ contains
     do k = k_lo, k_hi
       do j = 1, ny
         do i = io_v+2, nx-io_v-1
-          ux(i,j,k) = (one_third * (-Q_2(i-1,j,k) + Q_2(i+1,j,k)) &
-                        - one_24 * (-Q_2(i-2,j,k) + Q_2(i+2,j,k))) * (xix(i-1) + xix(i))
+          call div4(Q_2(i-2,j,k), Q_2(i-1,j,k), Q_2(i+1,j,k), Q_2(i+2,j,k), &
+                    xix(i-1) + xix(i), ux(i,j,k))
         enddo
       enddo
     enddo
@@ -78,8 +103,8 @@ contains
   subroutine calc_div_vy_4_in(nx, ny, nz, etay, Q_3, vy, k_lo, k_hi)
     integer, intent(in), value                        :: nx, ny, nz, k_lo, k_hi
     real(8), intent(in), dimension(ny-1), device      :: etay  ! 1 / dy
-    real(8), intent(in), dimension(nx,ny,nz), device  :: Q_3
-    real(8), intent(out), dimension(nx,ny,nz), device :: vy
+    REAL_T, intent(in), dimension(nx,ny,nz), device :: Q_3
+    REAL_T, intent(out), dimension(nx,ny,nz), device :: vy
     integer, parameter :: io_v = 1
     integer i, j, k
     if (k_hi < k_lo) return
@@ -87,8 +112,8 @@ contains
     do k = k_lo, k_hi
       do j = io_v+2, ny-io_v-1
         do i = 1, nx
-          vy(i,j,k) = (one_third * (-Q_3(i,j-1,k) + Q_3(i,j+1,k)) &
-                        - one_24 * (-Q_3(i,j-2,k) + Q_3(i,j+2,k))) * (etay(j-1) + etay(j))
+          call div4(Q_3(i,j-2,k), Q_3(i,j-1,k), Q_3(i,j+1,k), Q_3(i,j+2,k), &
+                    etay(j-1) + etay(j), vy(i,j,k))
         enddo
       enddo
     enddo
@@ -99,16 +124,16 @@ contains
   subroutine calc_div_wz_4_in(nx, ny, nz, zetaz, Q_4, wz, k_lo, k_hi)
     integer, intent(in), value                        :: nx, ny, nz, k_lo, k_hi
     real(8), intent(in), dimension(nz-1), device      :: zetaz ! 1 / dz
-    real(8), intent(in), dimension(nx,ny,nz), device  :: Q_4
-    real(8), intent(out), dimension(nx,ny,nz), device :: wz
+    REAL_T, intent(in), dimension(nx,ny,nz), device :: Q_4
+    REAL_T, intent(out), dimension(nx,ny,nz), device :: wz
     integer i, j, k
     if (k_hi < k_lo) return
     !$cuf kernel do(3) <<<*,(32,4,2)>>>
     do k = k_lo, k_hi
       do j = 1, ny
         do i = 1, nx
-          wz(i,j,k) = (one_third * (-Q_4(i,j,k-1) + Q_4(i,j,k+1)) &
-                        - one_24 * (-Q_4(i,j,k-2) + Q_4(i,j,k+2))) * (zetaz(k-1) + zetaz(k))
+          call div4(Q_4(i,j,k-2), Q_4(i,j,k-1), Q_4(i,j,k+1), Q_4(i,j,k+2), &
+                    zetaz(k-1) + zetaz(k), wz(i,j,k))
         enddo
       enddo
     enddo
@@ -118,8 +143,8 @@ contains
   subroutine calc_div_ux_6_in(nx, ny, nz, xix, Q_2, ux, k_lo, k_hi)
     integer, intent(in), value                        :: nx, ny, nz, k_lo, k_hi
     real(8), intent(in), dimension(nx-1), device      :: xix   ! 1 / dx
-    real(8), intent(in), dimension(nx,ny,nz), device  :: Q_2
-    real(8), intent(out), dimension(nx,ny,nz), device :: ux
+    REAL_T, intent(in), dimension(nx,ny,nz), device :: Q_2
+    REAL_T, intent(out), dimension(nx,ny,nz), device :: ux
     integer, parameter :: io_v = 2
     integer i, j, k
     if (k_hi < k_lo) return
@@ -127,9 +152,8 @@ contains
     do k = k_lo, k_hi
       do j = 1, ny
         do i = io_v+2, nx-io_v-1
-          ux(i,j,k) = (one_120 * (-Q_2(i-3,j,k) + Q_2(i+3,j,k)) &
-                      + 0.075d0 * (Q_2(i-2,j,k) - Q_2(i+2,j,k)) &
-                     + 0.375d0 * (-Q_2(i-1,j,k) + Q_2(i+1,j,k))) * (xix(i-1) + xix(i))
+          call div6(Q_2(i-3,j,k), Q_2(i-2,j,k), Q_2(i-1,j,k), Q_2(i+1,j,k), &
+                    Q_2(i+2,j,k), Q_2(i+3,j,k), xix(i-1) + xix(i), ux(i,j,k))
         enddo
       enddo
     enddo
@@ -139,8 +163,8 @@ contains
   subroutine calc_div_vy_6_in(nx, ny, nz, etay, Q_3, vy, k_lo, k_hi)
     integer, intent(in), value                        :: nx, ny, nz, k_lo, k_hi
     real(8), intent(in), dimension(ny-1), device      :: etay  ! 1 / dy
-    real(8), intent(in), dimension(nx,ny,nz), device  :: Q_3
-    real(8), intent(out), dimension(nx,ny,nz), device :: vy
+    REAL_T, intent(in), dimension(nx,ny,nz), device :: Q_3
+    REAL_T, intent(out), dimension(nx,ny,nz), device :: vy
     integer, parameter :: io_v = 2
     integer i, j, k
     if (k_hi < k_lo) return
@@ -148,9 +172,8 @@ contains
     do k = k_lo, k_hi
       do j = io_v+2, ny-io_v-1
         do i = 1, nx
-          vy(i,j,k) = (one_120 * (-Q_3(i,j-3,k) + Q_3(i,j+3,k)) &
-                      + 0.075d0 * (Q_3(i,j-2,k) - Q_3(i,j+2,k)) &
-                     + 0.375d0 * (-Q_3(i,j-1,k) + Q_3(i,j+1,k))) * (etay(j-1) + etay(j))
+          call div6(Q_3(i,j-3,k), Q_3(i,j-2,k), Q_3(i,j-1,k), Q_3(i,j+1,k), &
+                    Q_3(i,j+2,k), Q_3(i,j+3,k), etay(j-1) + etay(j), vy(i,j,k))
         enddo
       enddo
     enddo
@@ -161,17 +184,16 @@ contains
   subroutine calc_div_wz_6_in(nx, ny, nz, zetaz, Q_4, wz, k_lo, k_hi)
     integer, intent(in), value                        :: nx, ny, nz, k_lo, k_hi
     real(8), intent(in), dimension(nz-1), device      :: zetaz ! 1 / dz
-    real(8), intent(in), dimension(nx,ny,nz), device  :: Q_4
-    real(8), intent(out), dimension(nx,ny,nz), device :: wz
+    REAL_T, intent(in), dimension(nx,ny,nz), device :: Q_4
+    REAL_T, intent(out), dimension(nx,ny,nz), device :: wz
     integer i, j, k
     if (k_hi < k_lo) return
     !$cuf kernel do(3) <<<*,(32,4,2)>>>
     do k = k_lo, k_hi
       do j = 1, ny
         do i = 1, nx
-          wz(i,j,k) = (one_120 * (-Q_4(i,j,k-3) + Q_4(i,j,k+3)) &
-                      + 0.075d0 * (Q_4(i,j,k-2) - Q_4(i,j,k+2)) &
-                     + 0.375d0 * (-Q_4(i,j,k-1) + Q_4(i,j,k+1))) * (zetaz(k-1) + zetaz(k))
+          call div6(Q_4(i,j,k-3), Q_4(i,j,k-2), Q_4(i,j,k-1), Q_4(i,j,k+1), &
+                    Q_4(i,j,k+2), Q_4(i,j,k+3), zetaz(k-1) + zetaz(k), wz(i,j,k))
         enddo
       enddo
     enddo

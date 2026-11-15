@@ -52,7 +52,7 @@ contains
   subroutine set_bc(myrank, nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Qre_1, Qre_2, Qre_3, Qre_4, Qre_5)
     integer, intent(in), value     :: myrank, nx, ny, nz
     real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz) ! Q / Jacobian
+    REAL_T, intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)  ! Q / Jacobian
     real(8), intent(in), device, optional :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
     integer i, j, k, offset 
     real(8) p_wall, Jacobian_tmp
@@ -122,11 +122,11 @@ contains
       do i = 1, nx
         ! top
         ! Riemann invariants
-        rhoin = QJ_1(i,ny-1,k) * Jacobian(i,ny-1)
-        uin   = QJ_2(i,ny-1,k) / QJ_1(i,ny-1,k)
-        vin   = QJ_3(i,ny-1,k) / QJ_1(i,ny-1,k)
-        win   = QJ_4(i,ny-1,k) / QJ_1(i,ny-1,k)
-        pin   = gamma_1 * (QJ_5(i,ny-1,k) * Jacobian(i,ny-1) &
+        rhoin = dble(QJ_1(i,ny-1,k)) * Jacobian(i,ny-1)
+        uin   = dble(QJ_2(i,ny-1,k)) / dble(QJ_1(i,ny-1,k))
+        vin   = dble(QJ_3(i,ny-1,k)) / dble(QJ_1(i,ny-1,k))
+        win   = dble(QJ_4(i,ny-1,k)) / dble(QJ_1(i,ny-1,k))
+        pin   = gamma_1 * (dble(QJ_5(i,ny-1,k)) * Jacobian(i,ny-1) &
                 - 0.5d0 * rhoin * (uin**2 + vin**2 + win**2))
         pb = p0
         vb = vin
@@ -151,7 +151,7 @@ contains
         QJ_2(i,1,k) = 0.d0
         QJ_3(i,1,k) = 0.d0
         QJ_4(i,1,k) = 0.d0
-        p_wall = gamma_1 * (QJ_5(i,2,k) - 0.5d0 * (QJ_2(i,2,k)**2 + QJ_3(i,2,k)**2 + QJ_4(i,2,k)**2) / QJ_1(i,2,k))
+        p_wall = gamma_1 * (dble(QJ_5(i,2,k)) - 0.5d0 * (dble(QJ_2(i,2,k))**2 + dble(QJ_3(i,2,k))**2 + dble(QJ_4(i,2,k))**2) / dble(QJ_1(i,2,k)))
         QJ_5(i,1,k) = p_wall * over_gamma_1
     enddo;enddo
 
@@ -161,7 +161,7 @@ contains
 
   subroutine set_bc_mut(nx,ny,nz,mut,qc2)
     integer, intent(in), value      :: nx, ny, nz
-    real(8), intent(inout), device  :: mut(nx,ny,nz), qc2(nx,ny,nz)
+    REAL_T, intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
     integer i, j, k
     !$cuf kernel do(2) <<<*,*>>>
     do k = 4, nz-3

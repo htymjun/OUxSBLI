@@ -54,17 +54,17 @@ contains
   attributes(global) subroutine calc_hybrid_x${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, E${karg}$)
     use mod_constant, only : Normal_x
     integer, intent(in), value                :: nx, ny, nz${karg}$
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
+    ${RT}$, intent(${'inout' if is_koff else 'out'}$), device, contiguous :: E(nx-1,ny-2,nz-2,5)
     integer i, j, k, it, jt, kt, ii, i_base
     integer :: idx, offset_yz
     integer, parameter :: sx = threadsE%x + 2*io + 1
     integer, parameter :: sy = threadsE%y
     integer, parameter :: sz = threadsE%z
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p
-    real(8)  :: rhol, ul, vl, wl, pl
-    real(8)  :: rho_r, u_r, v_r, w_r, p_r
+    ${RT}$, dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p
+    ${RT}$  :: rhol, ul, vl, wl, pl
+    ${RT}$  :: rho_r, u_r, v_r, w_r, p_r
     real(sp) :: fdx
     logical  :: compute_slau
     logical  :: jk_in_range
@@ -97,12 +97,10 @@ contains
     if (3 <= i .and. i <= nx-3) then
       if (fdx <= threshold) then
         block
-          real(8) :: tmp(6)
+          ${RT}$ :: tmp(6)
           tmp = T(i-2:i+3,j,k)
-          associate(uu => u)
             E(i,j-1,k-1,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3), v(idx-2:idx+3), &
-                                  w(idx-2:idx+3), uu(idx-2:idx+3), p(idx-2:idx+3), tmp, Normal_x)
-          end associate
+                                  w(idx-2:idx+3), u(idx-2:idx+3), p(idx-2:idx+3), tmp, Normal_x)
         end block
       else
         call delta6(fdx, rho(idx-2:idx+3), rhol, rho_r)
@@ -115,12 +113,10 @@ contains
     elseif (2 <= i .and. i <= nx-2) then
       if (fdx <= threshold) then
         block
-          real(8) :: tmp(4)
+          ${RT}$ :: tmp(4)
           tmp = T(i-1:i+2,j,k)
-          associate(uu => u)
             E(i,j-1,k-1,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
-                                  w(idx-1:idx+2), uu(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_x)
-          end associate
+                                  w(idx-1:idx+2), u(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_x)
         end block
       else
         call delta4(fdx, rho(idx-1:idx+2), rhol, rho_r)
@@ -133,12 +129,10 @@ contains
     else
       if (fdx <= threshold) then
         block
-          real(8) :: tmp(2)
+          ${RT}$ :: tmp(2)
           tmp = T(i:i+1,j,k)
-          associate(uu => u)
             E(i,j-1,k-1,:) = KEEP(id_acc2,     rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
-                                  w(idx:idx+1), uu(idx:idx+1), p(idx:idx+1), tmp, Normal_x)
-          end associate
+                                  w(idx:idx+1), u(idx:idx+1), p(idx:idx+1), tmp, Normal_x)
         end block
       else
         rhol = rho(idx); rho_r = rho(idx+1)
@@ -153,12 +147,10 @@ contains
     if (2 <= i .and. i <= nx-2) then
       if (fdx <= threshold) then
         block
-          real(8) :: tmp(4)
+          ${RT}$ :: tmp(4)
           tmp = T(i-1:i+2,j,k)
-          associate(uu => u)
             E(i,j-1,k-1,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
-                                  w(idx-1:idx+2), uu(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_x)
-          end associate
+                                  w(idx-1:idx+2), u(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_x)
         end block
       else
         call delta4(fdx, rho(idx-1:idx+2), rhol, rho_r)
@@ -171,12 +163,10 @@ contains
     else
       if (fdx <= threshold) then
         block
-          real(8) :: tmp(2)
+          ${RT}$ :: tmp(2)
           tmp = T(i:i+1,j,k)
-          associate(uu => u)
             E(i,j-1,k-1,:) = KEEP(id_acc2,     rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
-                                  w(idx:idx+1), uu(idx:idx+1), p(idx:idx+1), tmp, Normal_x)
-          end associate
+                                  w(idx:idx+1), u(idx:idx+1), p(idx:idx+1), tmp, Normal_x)
         end block
       else
         rhol = rho(idx); rho_r = rho(idx+1)
@@ -190,12 +180,10 @@ contains
     #:else
     if (fdx <= threshold) then
       block
-        real(8) :: tmp(2)
+        ${RT}$ :: tmp(2)
         tmp = T(i:i+1,j,k)
-        associate(uu => u)
           E(i,j-1,k-1,:) = KEEP(id_acc,      rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
-                                w(idx:idx+1), uu(idx:idx+1), p(idx:idx+1), tmp, Normal_x)
-        end associate
+                                w(idx:idx+1), u(idx:idx+1), p(idx:idx+1), tmp, Normal_x)
       end block
     else
       rhol = rho(idx); rho_r = rho(idx+1)
@@ -223,17 +211,17 @@ contains
   attributes(global) subroutine calc_hybrid_y${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, F${karg}$)
     use mod_constant, only : Normal_y
     integer, intent(in), value                :: nx, ny, nz${karg}$
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
+    ${RT}$, intent(${'inout' if is_koff else 'out'}$), device, contiguous :: F(nx-2,ny-1,nz-2,5)
     integer i, j, k, it, jt, kt, jj, j_base
     integer :: idx, offset_xz
     integer, parameter :: sx = threadsF%x
     integer, parameter :: sy = threadsF%y + 2*io + 1
     integer, parameter :: sz = threadsF%z
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p
-    real(8)  :: rhol, ul, vl, wl, pl
-    real(8)  :: rho_r, u_r, v_r, w_r, p_r
+    ${RT}$, dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p
+    ${RT}$  :: rhol, ul, vl, wl, pl
+    ${RT}$  :: rho_r, u_r, v_r, w_r, p_r
     real(sp) :: fdy
     logical  :: compute_slau
     logical  :: ik_in_range
@@ -266,12 +254,10 @@ contains
     if (3 <= j .and. j <= ny-3) then
       if (fdy <= threshold) then
         block
-          real(8) :: tmp(6)
+          ${RT}$ :: tmp(6)
           tmp = T(i,j-2:j+3,k)
-          associate(vv => v)
             F(i-1,j,k-1,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3), v(idx-2:idx+3), &
-                                  w(idx-2:idx+3), vv(idx-2:idx+3), p(idx-2:idx+3), tmp, Normal_y)
-          end associate
+                                  w(idx-2:idx+3), v(idx-2:idx+3), p(idx-2:idx+3), tmp, Normal_y)
         end block
       else
         call delta6(fdy, rho(idx-2:idx+3), rhol, rho_r)
@@ -284,12 +270,10 @@ contains
     elseif (2 <= j .and. j <= ny-2) then
       if (fdy <= threshold) then
         block
-          real(8) :: tmp(4)
+          ${RT}$ :: tmp(4)
           tmp = T(i,j-1:j+2,k)
-          associate(vv => v)
             F(i-1,j,k-1,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
-                                  w(idx-1:idx+2), vv(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_y)
-          end associate
+                                  w(idx-1:idx+2), v(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_y)
         end block
       else
         call delta4(fdy, rho(idx-1:idx+2), rhol, rho_r)
@@ -302,12 +286,10 @@ contains
     else
       if (fdy <= threshold) then
         block
-          real(8) :: tmp(2)
+          ${RT}$ :: tmp(2)
           tmp = T(i,j:j+1,k)
-          associate(vv => v)
             F(i-1,j,k-1,:) = KEEP(id_acc2,     rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
-                                  w(idx:idx+1), vv(idx:idx+1), p(idx:idx+1), tmp, Normal_y)
-          end associate
+                                  w(idx:idx+1), v(idx:idx+1), p(idx:idx+1), tmp, Normal_y)
         end block
       else
         rhol = rho(idx); rho_r = rho(idx+1)
@@ -322,12 +304,10 @@ contains
     if (2 <= j .and. j <= ny-2) then
       if (fdy <= threshold) then
         block
-          real(8) :: tmp(4)
+          ${RT}$ :: tmp(4)
           tmp = T(i,j-1:j+2,k)
-          associate(vv => v)
             F(i-1,j,k-1,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
-                                  w(idx-1:idx+2), vv(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_y)
-          end associate
+                                  w(idx-1:idx+2), v(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_y)
         end block
       else
         call delta4(fdy, rho(idx-1:idx+2), rhol, rho_r)
@@ -340,12 +320,10 @@ contains
     else
       if (fdy <= threshold) then
         block
-          real(8) :: tmp(2)
+          ${RT}$ :: tmp(2)
           tmp = T(i,j:j+1,k)
-          associate(vv => v)
             F(i-1,j,k-1,:) = KEEP(id_acc2,     rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
-                                  w(idx:idx+1), vv(idx:idx+1), p(idx:idx+1), tmp, Normal_y)
-          end associate
+                                  w(idx:idx+1), v(idx:idx+1), p(idx:idx+1), tmp, Normal_y)
         end block
       else
         rhol = rho(idx); rho_r = rho(idx+1)
@@ -359,12 +337,10 @@ contains
     #:else
     if (fdy <= threshold) then
       block
-        real(8) :: tmp(2)
+        ${RT}$ :: tmp(2)
         tmp = T(i,j:j+1,k)
-        associate(vv => v)
           F(i-1,j,k-1,:) = KEEP(id_acc,      rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
-                                w(idx:idx+1), vv(idx:idx+1), p(idx:idx+1), tmp, Normal_y)
-        end associate
+                                w(idx:idx+1), v(idx:idx+1), p(idx:idx+1), tmp, Normal_y)
       end block
     else
       rhol = rho(idx); rho_r = rho(idx+1)
@@ -389,17 +365,17 @@ contains
   attributes(global) subroutine calc_hybrid_z(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, sensor, G)
     use mod_constant, only : Normal_z
     integer, intent(in), value                :: nx, ny, nz
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
     real(sp), intent(in), device, contiguous  :: sensor(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: G(nx-2,ny-2,nz-1,5)
+    ${RT}$, intent(out), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     integer i, j, k, it, jt, kt, kk, k_base
     integer :: idx, offset_xy
     integer, parameter :: sx = threadsG%x
     integer, parameter :: sy = threadsG%y
     integer, parameter :: sz = threadsG%z + 2*io + 1
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p
-    real(8)  :: rhol, ul, vl, wl, pl
-    real(8)  :: rho_r, u_r, v_r, w_r, p_r
+    ${RT}$, dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p
+    ${RT}$  :: rhol, ul, vl, wl, pl
+    ${RT}$  :: rho_r, u_r, v_r, w_r, p_r
     real(sp) :: fdz
     logical  :: compute_slau
     logical  :: ij_in_range
@@ -432,12 +408,10 @@ contains
     if (3 <= k .and. k <= nz-3) then
       if (fdz <= threshold) then
         block
-          real(8) :: tmp(6)
+          ${RT}$ :: tmp(6)
           tmp = T(i,j,k-2:k+3)
-          associate(ww => w)
             G(i-1,j-1,k,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3), v(idx-2:idx+3), &
-                                  w(idx-2:idx+3), ww(idx-2:idx+3), p(idx-2:idx+3), tmp, Normal_z)
-          end associate
+                                  w(idx-2:idx+3), w(idx-2:idx+3), p(idx-2:idx+3), tmp, Normal_z)
         end block
       else
         call delta6(fdz, rho(idx-2:idx+3), rhol, rho_r)
@@ -450,12 +424,10 @@ contains
     elseif (2 <= k .and. k <= nz-2) then
       if (fdz <= threshold) then
         block
-          real(8) :: tmp(4)
+          ${RT}$ :: tmp(4)
           tmp = T(i,j,k-1:k+2)
-          associate(ww => w)
             G(i-1,j-1,k,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
-                                  w(idx-1:idx+2), ww(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_z)
-          end associate
+                                  w(idx-1:idx+2), w(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_z)
         end block
       else
         call delta4(fdz, rho(idx-1:idx+2), rhol, rho_r)
@@ -468,12 +440,10 @@ contains
     else
       if (fdz <= threshold) then
         block
-          real(8) :: tmp(2)
+          ${RT}$ :: tmp(2)
           tmp = T(i,j,k:k+1)
-          associate(ww => w)
             G(i-1,j-1,k,:) = KEEP(id_acc2,     rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
-                                  w(idx:idx+1), ww(idx:idx+1), p(idx:idx+1), tmp, Normal_z)
-          end associate
+                                  w(idx:idx+1), w(idx:idx+1), p(idx:idx+1), tmp, Normal_z)
         end block
       else
         rhol = rho(idx); rho_r = rho(idx+1)
@@ -488,12 +458,10 @@ contains
     if (2 <= k .and. k <= nz-2) then
       if (fdz <= threshold) then
         block
-          real(8) :: tmp(4)
+          ${RT}$ :: tmp(4)
           tmp = T(i,j,k-1:k+2)
-          associate(ww => w)
             G(i-1,j-1,k,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
-                                  w(idx-1:idx+2), ww(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_z)
-          end associate
+                                  w(idx-1:idx+2), w(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_z)
         end block
       else
         call delta4(fdz, rho(idx-1:idx+2), rhol, rho_r)
@@ -506,12 +474,10 @@ contains
     else
       if (fdz <= threshold) then
         block
-          real(8) :: tmp(2)
+          ${RT}$ :: tmp(2)
           tmp = T(i,j,k:k+1)
-          associate(ww => w)
             G(i-1,j-1,k,:) = KEEP(id_acc2,     rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
-                                  w(idx:idx+1), ww(idx:idx+1), p(idx:idx+1), tmp, Normal_z)
-          end associate
+                                  w(idx:idx+1), w(idx:idx+1), p(idx:idx+1), tmp, Normal_z)
         end block
       else
         rhol = rho(idx); rho_r = rho(idx+1)
@@ -525,12 +491,10 @@ contains
     #:else
     if (fdz <= threshold) then
       block
-        real(8) :: tmp(2)
+        ${RT}$ :: tmp(2)
         tmp = T(i,j,k:k+1)
-        associate(ww => w)
           G(i-1,j-1,k,:) = KEEP(id_acc,      rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
-                                w(idx:idx+1), ww(idx:idx+1), p(idx:idx+1), tmp, Normal_z)
-        end associate
+                                w(idx:idx+1), w(idx:idx+1), p(idx:idx+1), tmp, Normal_z)
       end block
     else
       rhol = rho(idx); rho_r = rho(idx+1)

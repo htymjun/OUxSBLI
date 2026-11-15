@@ -4,12 +4,13 @@ module calc_rescale
   use mod_globals, only : nre1, nre2, rerank, nt, np, dt, gamma , R, Pr, u0, rho0, p0, M0, blt, start_rescale
   use mod_constant, only : Cp, gamma_1, over_gamma_1, mu0_T0_S_over_T0_2_3, over_T0, id_gpumpi, id_recal
   use cpu_gpu_mpi
+  use mod_prec
 contains
   subroutine calc_mean(step, ireq, flag_re, nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Qm_1, Qm_2, Qm_3, Qm_4, Qm_5)
     integer, intent(inout)         :: step, ireq
     integer, intent(in)            :: flag_re, nx, ny, nz
     real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(in), device    :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    REAL_T, intent(in), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8), intent(inout), device :: Qm_1(ny), Qm_2(ny), Qm_3(ny), Qm_4(ny), Qm_5(ny)
     real(8) Q1, Q2, Q3, Q4, Q5, rhoinv, Jacobian_tmp, volinv, step1, step2
     logical arrived
@@ -23,13 +24,13 @@ contains
         do k = 4, nz-3
           do i = nre1, nre2
             Jacobian_tmp = Jacobian(i,j)
-            rhoinv = 1.d0 / QJ_1(i,j,k)
-            Q1 = Q1 + QJ_1(i,j,k) * Jacobian_tmp
-            Q2 = Q2 + QJ_2(i,j,k) * rhoinv
-            Q3 = Q3 + QJ_3(i,j,k) * rhoinv
-            Q4 = Q4 + QJ_4(i,j,k) * rhoinv
-            Q5 = Q5 + gamma_1 * Jacobian_tmp * (QJ_5(i,j,k) &
-                    - 0.5d0 * (QJ_2(i,j,k)**2 + QJ_3(i,j,k)**2 + QJ_4(i,j,k)**2) * rhoinv)
+            rhoinv = 1.d0 / dble(QJ_1(i,j,k))
+            Q1 = Q1 + dble(QJ_1(i,j,k)) * Jacobian_tmp
+            Q2 = Q2 + dble(QJ_2(i,j,k)) * rhoinv
+            Q3 = Q3 + dble(QJ_3(i,j,k)) * rhoinv
+            Q4 = Q4 + dble(QJ_4(i,j,k)) * rhoinv
+            Q5 = Q5 + gamma_1 * Jacobian_tmp * (dble(QJ_5(i,j,k)) &
+                    - 0.5d0 * (dble(QJ_2(i,j,k))**2 + dble(QJ_3(i,j,k))**2 + dble(QJ_4(i,j,k))**2) * rhoinv)
         enddo;enddo
         Qm_1(j) = Q1 * volinv
         Qm_2(j) = Q2 * volinv
@@ -45,13 +46,13 @@ contains
         do k = 4, nz-3
           do i = nre1, nre2
             Jacobian_tmp = Jacobian(i,j)
-            rhoinv = 1.d0 / QJ_1(i,j,k)
-            Q1 = Q1 + QJ_1(i,j,k) * Jacobian_tmp
-            Q2 = Q2 + QJ_2(i,j,k) * rhoinv
-            Q3 = Q3 + QJ_3(i,j,k) * rhoinv
-            Q4 = Q4 + QJ_4(i,j,k) * rhoinv
-            Q5 = Q5 + gamma_1 * Jacobian_tmp * (QJ_5(i,j,k) &
-                    - 0.5d0 * (QJ_2(i,j,k)**2 + QJ_3(i,j,k)**2 + QJ_4(i,j,k)**2) * rhoinv)
+            rhoinv = 1.d0 / dble(QJ_1(i,j,k))
+            Q1 = Q1 + dble(QJ_1(i,j,k)) * Jacobian_tmp
+            Q2 = Q2 + dble(QJ_2(i,j,k)) * rhoinv
+            Q3 = Q3 + dble(QJ_3(i,j,k)) * rhoinv
+            Q4 = Q4 + dble(QJ_4(i,j,k)) * rhoinv
+            Q5 = Q5 + gamma_1 * Jacobian_tmp * (dble(QJ_5(i,j,k)) &
+                    - 0.5d0 * (dble(QJ_2(i,j,k))**2 + dble(QJ_3(i,j,k))**2 + dble(QJ_4(i,j,k))**2) * rhoinv)
         enddo;enddo
         Qm_1(j) = (step1 * Qm_1(j) + Q1 * volinv) * step2
         Qm_2(j) = (step1 * Qm_2(j) + Q2 * volinv) * step2
@@ -67,7 +68,7 @@ contains
 
   subroutine copy(nx, ny, nz, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Qre_1, Qre_2, Qre_3, Qre_4, Qre_5)
     integer, intent(in)          :: nx, ny, nz
-    real(8), intent(in), device  :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    REAL_T, intent(in), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8), intent(out), device :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
     integer j, k, offset
     !$cuf kernel do <<<*,*>>>
@@ -88,7 +89,7 @@ contains
     integer, intent(in)            :: num, myrank, nx, ny, nz
     integer, intent(inout)         :: step, flag_re, flag_req, ireq, ireq2(2)
     real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(in), device    :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    REAL_T, intent(in), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8), intent(inout), device :: Qm_1(ny), Qm_2(ny), Qm_3(ny), Qm_4(ny), Qm_5(ny)
     real(8), intent(inout), device :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
     real(8), device :: Qre_flat(ny*(nz-6)*5), Qm_flat(ny*5)

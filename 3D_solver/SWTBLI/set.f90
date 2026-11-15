@@ -85,37 +85,37 @@ contains
   subroutine set_bc_Gaussian(nx, ny, nz, nxg, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     integer, intent(in), value     :: nx, ny, nz, nxg
     real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    REAL_T, intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8), device :: tmp(4)
     integer i, k
     ! y direction one-sided
     !$cuf kernel do(1)<<<*,*>>>
     do k = 1, nz
       do i = nxg, nx
-        tmp(:) = QJ_1(i,ny-3:ny,k) * Jacobian(i,ny-3:ny)
+        tmp(:) = dble(QJ_1(i,ny-3:ny,k)) * Jacobian(i,ny-3:ny)
         QJ_1(i,ny,k) = (0.05d0 * tmp(1) + 0.15d0 * tmp(2) + 0.3d0 * tmp(3) + 0.5d0 * tmp(4)) / Jacobian(i,ny)
-        tmp(:) = QJ_2(i,ny-3:ny,k) * Jacobian(i,ny-3:ny)
+        tmp(:) = dble(QJ_2(i,ny-3:ny,k)) * Jacobian(i,ny-3:ny)
         QJ_2(i,ny,k) = (0.05d0 * tmp(1) + 0.15d0 * tmp(2) + 0.3d0 * tmp(3) + 0.5d0 * tmp(4)) / Jacobian(i,ny)
-        tmp(:) = QJ_3(i,ny-3:ny,k) * Jacobian(i,ny-3:ny)
+        tmp(:) = dble(QJ_3(i,ny-3:ny,k)) * Jacobian(i,ny-3:ny)
         QJ_3(i,ny,k) = (0.05d0 * tmp(1) + 0.15d0 * tmp(2) + 0.3d0 * tmp(3) + 0.5d0 * tmp(4)) / Jacobian(i,ny)
-        tmp(:) = QJ_4(i,ny-3:ny,k) * Jacobian(i,ny-3:ny)
+        tmp(:) = dble(QJ_4(i,ny-3:ny,k)) * Jacobian(i,ny-3:ny)
         QJ_4(i,ny,k) = (0.05d0 * tmp(1) + 0.15d0 * tmp(2) + 0.3d0 * tmp(3) + 0.5d0 * tmp(4)) / Jacobian(i,ny)
-        tmp(:) = QJ_5(i,ny-3:ny,k) * Jacobian(i,ny-3:ny)
+        tmp(:) = dble(QJ_5(i,ny-3:ny,k)) * Jacobian(i,ny-3:ny)
         QJ_5(i,ny,k) = (0.05d0 * tmp(1) + 0.15d0 * tmp(2) + 0.3d0 * tmp(3) + 0.5d0 * tmp(4)) / Jacobian(i,ny)
     enddo;enddo
     ! x direction one-sided
     !$cuf kernel do(1)<<<*,*>>>
     do k = 1, nz
       do i = nxg, nx
-        tmp(:) = QJ_1(i-3:i,ny,k) * Jacobian(i-3:i,ny)
+        tmp(:) = dble(QJ_1(i-3:i,ny,k)) * Jacobian(i-3:i,ny)
         QJ_1(i,ny,k) = (0.05d0 * tmp(1) + 0.15d0 * tmp(2) + 0.3d0 * tmp(3) + 0.5d0 * tmp(4)) / Jacobian(i,ny)
-        tmp(:) = QJ_2(i-3:i,ny,k) * Jacobian(i-3:i,ny)
+        tmp(:) = dble(QJ_2(i-3:i,ny,k)) * Jacobian(i-3:i,ny)
         QJ_2(i,ny,k) = (0.05d0 * tmp(1) + 0.15d0 * tmp(2) + 0.3d0 * tmp(3) + 0.5d0 * tmp(4)) / Jacobian(i,ny)
-        tmp(:) = QJ_3(i-3:i,ny,k) * Jacobian(i-3:i,ny)
+        tmp(:) = dble(QJ_3(i-3:i,ny,k)) * Jacobian(i-3:i,ny)
         QJ_3(i,ny,k) = (0.05d0 * tmp(1) + 0.15d0 * tmp(2) + 0.3d0 * tmp(3) + 0.5d0 * tmp(4)) / Jacobian(i,ny)
-        tmp(:) = QJ_4(i-3:i,ny,k) * Jacobian(i-3:i,ny)
+        tmp(:) = dble(QJ_4(i-3:i,ny,k)) * Jacobian(i-3:i,ny)
         QJ_4(i,ny,k) = (0.05d0 * tmp(1) + 0.15d0 * tmp(2) + 0.3d0 * tmp(3) + 0.5d0 * tmp(4)) / Jacobian(i,ny)
-        tmp(:) = QJ_5(i-3:i,ny,k) * Jacobian(i-3:i,ny)
+        tmp(:) = dble(QJ_5(i-3:i,ny,k)) * Jacobian(i-3:i,ny)
         QJ_5(i,ny,k) = (0.05d0 * tmp(1) + 0.15d0 * tmp(2) + 0.3d0 * tmp(3) + 0.5d0 * tmp(4)) / Jacobian(i,ny)
     enddo;enddo
   end subroutine set_bc_Gaussian
@@ -124,7 +124,7 @@ contains
   subroutine set_bc(myrank, nx, ny, nz, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, Qre_1, Qre_2, Qre_3, Qre_4, Qre_5)
     integer, intent(in), value     :: myrank, nx, ny, nz
     real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz) ! Q / Jacobian
+    REAL_T, intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)  ! Q / Jacobian
     real(8), intent(in), device, optional :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
     integer i, j, k, offset, ireq, ierr, istat(MPI_STATUS_SIZE)
     real(8) :: p_wall, pre, rho, rhou, rhov, rhow, p, e
@@ -232,11 +232,11 @@ contains
         ! top
         ! Riemann invariants
         Jacobian_tmp = 1.d0 / Jacobian(i,ny)
-        pin   = gamma_1 * (QJ_5(i,ny-1,k) - 0.5d0 * (QJ_2(i,ny-1,k)**2 + QJ_3(i,ny-1,k)**2 + QJ_4(i,ny-1,k)**2) &
-                / QJ_1(i,ny-1,k)) * Jacobian(i,ny-1)
-        rhoin = QJ_1(i,ny-1,k) * Jacobian(i,ny-1)
+        pin   = gamma_1 * (dble(QJ_5(i,ny-1,k)) - 0.5d0 * (dble(QJ_2(i,ny-1,k))**2 + dble(QJ_3(i,ny-1,k))**2 + dble(QJ_4(i,ny-1,k))**2) &
+                / dble(QJ_1(i,ny-1,k))) * Jacobian(i,ny-1)
+        rhoin = dble(QJ_1(i,ny-1,k)) * Jacobian(i,ny-1)
         cin   = sqrt(gamma * pin / rhoin)
-        vin   = QJ_3(i,ny-1,k) / QJ_1(i,ny-1,k)
+        vin   = dble(QJ_3(i,ny-1,k)) / dble(QJ_1(i,ny-1,k))
         Rp    = vin + 2.d0 * cin * over_gamma_1
         Rm    = v0  - 2.d0 * c0  * over_gamma_1
         vb    = 0.5d0 * (Rp + Rm)
@@ -253,7 +253,7 @@ contains
         QJ_2(i,1,k) = 0.d0
         QJ_3(i,1,k) = 0.d0
         QJ_4(i,1,k) = 0.d0
-        p_wall = gamma_1 * (QJ_5(i,2,k) - 0.5d0 * (QJ_2(i,2,k)**2 + QJ_3(i,2,k)**2 + QJ_4(i,2,k)**2) / QJ_1(i,2,k))
+        p_wall = gamma_1 * (dble(QJ_5(i,2,k)) - 0.5d0 * (dble(QJ_2(i,2,k))**2 + dble(QJ_3(i,2,k))**2 + dble(QJ_4(i,2,k))**2) / dble(QJ_1(i,2,k)))
         QJ_5(i,1,k) = p_wall * over_gamma_1
     enddo;enddo
     !call set_bc_Riemann_tbl_top_down(nx, ny, nz, 3, 1, nx, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
@@ -264,7 +264,7 @@ contains
       do k = 1, nz
         do i = No, nx
           Jacobian_tmp = 1.d0 / Jacobian(i,ny)
-          vin   = QJ_3(i,ny-1,k) / QJ_1(i,ny-1,k)
+          vin   = dble(QJ_3(i,ny-1,k)) / dble(QJ_1(i,ny-1,k))
           if (0.5d0 * uy > vin) then
             QJ_1(i,ny,k) = rho2 * Jacobian_tmp
             QJ_2(i,ny,k) = rho2 * ux * Jacobian_tmp
@@ -272,9 +272,9 @@ contains
             QJ_4(i,ny,k) = 0.d0
             QJ_5(i,ny,k) = (p2 * over_gamma_1 + 0.5d0 * rho2 * (ux**2 + uy**2)) * Jacobian_tmp
           else
-            pin   = gamma_1 * (QJ_5(i,ny-1,k) - 0.5d0 * (QJ_2(i,ny-1,k)**2 + QJ_3(i,ny-1,k)**2 + QJ_4(i,ny-1,k)**2) &
-                    / QJ_1(i,ny-1,k)) * Jacobian(i,ny-1)
-            rhoin = QJ_1(i,ny-1,k) * Jacobian(i,ny-1)
+            pin   = gamma_1 * (dble(QJ_5(i,ny-1,k)) - 0.5d0 * (dble(QJ_2(i,ny-1,k))**2 + dble(QJ_3(i,ny-1,k))**2 + dble(QJ_4(i,ny-1,k))**2) &
+                    / dble(QJ_1(i,ny-1,k))) * Jacobian(i,ny-1)
+            rhoin = dble(QJ_1(i,ny-1,k)) * Jacobian(i,ny-1)
             cin   = sqrt(gamma * pin / rhoin)
             Rp    = vin + 2.d0 * cin * over_gamma_1
             Rm    = uy3 - 2.d0 * c3  * over_gamma_1
@@ -303,7 +303,7 @@ contains
 
   subroutine set_bc_mut(nx,ny,nz,mut,qc2)
     integer, intent(in), value      :: nx, ny, nz
-    real(8), intent(inout), device  :: mut(nx,ny,nz), qc2(nx,ny,nz)
+    REAL_T, intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
     integer i, j, k
     !$cuf kernel do(2) <<<*,*>>>
     do k = 4, nz-3

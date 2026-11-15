@@ -1,7 +1,6 @@
 #! Precision selection shared by the templates (validated in mod_constant):
 #!   RT: state/flux type (PREC), KT: KEEP arithmetic type (KEEP_PREC),
-#!   KEEP_INST: the (type, suffix) instances of KEEP2/4/6 (DF adds the _ff set
-#!   for the kernels that run on DF state; the others keep the real(8) one).
+#!   VAL: ', value' for dummies of type RT (nvfortran cannot pass fltflt by value).
 #:include 'config.fypp'
 #:if not defined('PREC')
   #:set PREC = 'FP64'
@@ -10,6 +9,10 @@
   #:set KEEP_PREC = 'FP64'
 #:endif
 #:set RT = 'type(fltflt)' if PREC == 'DF' else 'real(8)'
-#:set KT = 'type(dev)' if KEEP_PREC != 'FP64' else 'real(8)'
-#:set KEEP_INST = [(KT, '')] + ([('type(fltflt)', '_ff')] if PREC == 'DF' else [])
-#:set KEEP_PROCS = ', '.join('KEEP%d%s' % (n, S) for _, S in KEEP_INST for n in (2, 4, 6)) + (', KEEPm2, KEEPm4, KEEPm6' if KEEP_PREC != 'FP64' else '')
+#:set KT = 'type(dev)' if KEEP_PREC != 'FP64' else RT
+#:set VAL = '' if PREC == 'DF' else ', value'
+#:set KEEP_PROCS = 'KEEP2, KEEP4, KEEP6' + (', KEEPm2, KEEPm4, KEEPm6' if KEEP_PREC != 'FP64' else '')
+#! cache-hint loads/stores take intrinsic types only: plain ones for DF (mod_prec ld/store)
+#:set STCG = 'store' if PREC == 'DF' else '__stcg'
+#:set LDCS = 'ld' if PREC == 'DF' else '__ldcs'
+#:set LDLU = 'ld' if PREC == 'DF' else '__ldlu'

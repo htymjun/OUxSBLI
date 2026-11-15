@@ -47,15 +47,15 @@ contains
   attributes(global) subroutine calc_keep_x${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, E${karg}$)
     use mod_constant, only : Normal_x
     integer, intent(in), value                :: nx, ny, nz${karg}$
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
+    ${RT}$, intent(in), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    ${RT}$, intent(${'inout' if is_koff else 'out'}$), device, contiguous :: E(nx-1,ny-2,nz-2,5)
     integer i, j, k, it, jt, kt
     integer :: ii, i_base, idx, offset_yz
     logical :: jk_in_range
     integer, parameter :: sx = threadsE%x + 2*io + 1
     integer, parameter :: sy = threadsE%y
     integer, parameter :: sz = threadsE%z
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
+    ${RT}$, dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -77,31 +77,29 @@ contains
     i = (blockIdx%x-1)*blockDim%x + it
     if (nx-1 < i .or. ny-1 < j .or. ${'k_hi' if is_koff else 'nz-1'}$ < k) return
     idx = it + offset_yz
-    associate(uu => u)
     #:if ORDER == 6
     if (3 <= i .and. i <= nx-3) then
       E(i,j-1,k-1,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3),   v(idx-2:idx+3), &
-                            w(idx-2:idx+3), uu(idx-2:idx+3), p(idx-2:idx+3), tmp(idx-2:idx+3), Normal_x)
+                            w(idx-2:idx+3), u(idx-2:idx+3), p(idx-2:idx+3), tmp(idx-2:idx+3), Normal_x)
     elseif (2 <= i .and. i <= nx-2) then
       E(i,j-1,k-1,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
-                            w(idx-1:idx+2), uu(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_x)
+                            w(idx-1:idx+2), u(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_x)
     else
       E(i,j-1,k-1,:) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1), &
-                            w(idx:idx+1),   uu(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_x)
+                            w(idx:idx+1),   u(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_x)
     endif
     #:elif ORDER == 4
     if (2 <= i .and. i <= nx-2) then
       E(i,j-1,k-1,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
-                            w(idx-1:idx+2), uu(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_x)
+                            w(idx-1:idx+2), u(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_x)
     else
       E(i,j-1,k-1,:) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1), &
-                            w(idx:idx+1),   uu(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_x)
+                            w(idx:idx+1),   u(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_x)
     endif
     #:else
       E(i,j-1,k-1,:) = KEEP(id_acc,        rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1), &
-                            w(idx:idx+1),   uu(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_x)
+                            w(idx:idx+1),   u(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_x)
     #:endif
-    end associate
   end subroutine calc_keep_x${sfx}$
 #:endfor
 
@@ -112,8 +110,8 @@ contains
   attributes(global) subroutine calc_keep_y${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, F${karg}$)
     use mod_constant, only : Normal_y
     integer, intent(in), value                :: nx, ny, nz${karg}$
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
+    ${RT}$, intent(in), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    ${RT}$, intent(${'inout' if is_koff else 'out'}$), device, contiguous :: F(nx-2,ny-1,nz-2,5)
     integer i, j, k, it, jt, kt
     integer :: jj, j_base, idx, offset_xz
     logical :: ik_in_range
@@ -121,7 +119,7 @@ contains
     integer, parameter :: sx = threadsF%x
     integer, parameter :: sy = threadsF%y + 2*io + 1
     integer, parameter :: sz = threadsF%z
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
+    ${RT}$, dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
 
     it = threadIdx%x
     jt = threadIdx%y
@@ -147,32 +145,30 @@ contains
     if (nx-1 < i .or. ny-1 < j .or. ${'k_hi' if is_koff else 'nz-1'}$ < k) return
     
     idx = jt + offset_xz
-    associate(vv => v)
     
     #:if ORDER == 6
     if (3 <= j .and. j <= ny-3) then
       F(i-1,j,k-1,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3),   v(idx-2:idx+3), &
-                            w(idx-2:idx+3), vv(idx-2:idx+3), p(idx-2:idx+3), tmp(idx-2:idx+3), Normal_y)
+                            w(idx-2:idx+3), v(idx-2:idx+3), p(idx-2:idx+3), tmp(idx-2:idx+3), Normal_y)
     elseif (2 <= j .and. j <= ny-2) then
       F(i-1,j,k-1,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
-                            w(idx-1:idx+2), vv(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_y)
+                            w(idx-1:idx+2), v(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_y)
     else
       F(i-1,j,k-1,:) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1),   &
-                            w(idx:idx+1),   vv(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_y)
+                            w(idx:idx+1),   v(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_y)
     endif
     #:elif ORDER == 4
     if (2 <= j .and. j <= ny-2) then
       F(i-1,j,k-1,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
-                            w(idx-1:idx+2), vv(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_y)
+                            w(idx-1:idx+2), v(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_y)
     else
       F(i-1,j,k-1,:) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1),   &
-                            w(idx:idx+1),   vv(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_y)
+                            w(idx:idx+1),   v(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_y)
     endif
     #:else
       F(i-1,j,k-1,:) = KEEP(id_acc,        rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1),   &
-                            w(idx:idx+1),   vv(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_y)
+                            w(idx:idx+1),   v(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_y)
     #:endif
-    end associate
   end subroutine calc_keep_y${sfx}$
 #:endfor
 
@@ -180,8 +176,8 @@ contains
   attributes(global) subroutine calc_keep_z(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, G)
     use mod_constant, only : Normal_z
     integer, intent(in), value                :: nx, ny, nz
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: G(nx-2,ny-2,nz-1,5)
+    ${RT}$, intent(in), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    ${RT}$, intent(out), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     integer i, j, k, it, jt, kt
     integer :: kk, k_base, idx, offset_xy
     logical :: ij_in_range
@@ -189,7 +185,7 @@ contains
     integer, parameter :: sx = threadsG%x
     integer, parameter :: sy = threadsG%y
     integer, parameter :: sz = threadsG%z + 2*io + 1
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
+    ${RT}$, dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
 
     it = threadIdx%x
     jt = threadIdx%y
@@ -215,31 +211,29 @@ contains
     if (nx-1 < i .or. ny-1 < j .or. nz-1 < k) return
     
     idx = kt + offset_xy
-    associate(ww => w)
     
     #:if ORDER == 6
     if (3 <= k .and. k <= nz-3) then
       G(i-1,j-1,k,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3),   v(idx-2:idx+3), &
-                            w(idx-2:idx+3), ww(idx-2:idx+3), p(idx-2:idx+3), tmp(idx-2:idx+3), Normal_z)
+                            w(idx-2:idx+3), w(idx-2:idx+3), p(idx-2:idx+3), tmp(idx-2:idx+3), Normal_z)
     elseif (2 <= k .and. k <= nz-2) then
       G(i-1,j-1,k,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
-                            w(idx-1:idx+2), ww(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_z)
+                            w(idx-1:idx+2), w(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_z)
     else
       G(i-1,j-1,k,:) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1),   &
-                            w(idx:idx+1),   ww(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_z)
+                            w(idx:idx+1),   w(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_z)
     endif
     #:elif ORDER == 4
     if (2 <= k .and. k <= nz-2) then
       G(i-1,j-1,k,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2),   v(idx-1:idx+2), &
-                            w(idx-1:idx+2), ww(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_z)
+                            w(idx-1:idx+2), w(idx-1:idx+2), p(idx-1:idx+2), tmp(idx-1:idx+2), Normal_z)
     else
       G(i-1,j-1,k,:) = KEEP(id_acc2,       rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1),   &
-                            w(idx:idx+1),   ww(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_z)
+                            w(idx:idx+1),   w(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_z)
     endif
     #:else
       G(i-1,j-1,k,:) = KEEP(id_acc,        rho(idx:idx+1),   u(idx:idx+1),     v(idx:idx+1),   &
-                            w(idx:idx+1),   ww(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_z)
+                            w(idx:idx+1),   w(idx:idx+1),   p(idx:idx+1),   tmp(idx:idx+1),   Normal_z)
     #:endif
-    end associate
   end subroutine calc_keep_z
 end module calc_keep_kernel

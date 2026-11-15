@@ -29,30 +29,28 @@ contains
     REAL_T, intent(in), device, contiguous :: F(nx-2,ny-1,nz-2,5) !< Flux in y direction
     REAL_T, intent(in), device, contiguous :: G(nx-2,ny-2,nz-1,5) !< Flux in z direction
     REAL_T, intent(out), contiguous         :: R(5)
-    REAL_T v0, v1, r1, r2, r3, r4, r5  ! the sums live in scalars: nvfortran 26.5 -O2 lost
-                                       ! updates of the fltflt dummy R(:) (PREC = 'DF')
+    REAL_T v0, v1
     ! x direction
     !R(1) = dtdydz * (-E(i,j,k,1) + E(i+1,j,k,1))
-    v0 = LEFT(E(i,j,k,1)); v1 = E(i+1,j,k,1); r1 = dtdydz * (v1 - v0)
-    v0 = LEFT(E(i,j,k,2)); v1 = E(i+1,j,k,2); r2 = dtdydz * (v1 - v0)
-    v0 = LEFT(E(i,j,k,3)); v1 = E(i+1,j,k,3); r3 = dtdydz * (v1 - v0)
-    v0 = LEFT(E(i,j,k,4)); v1 = E(i+1,j,k,4); r4 = dtdydz * (v1 - v0)
-    v0 = LEFT(E(i,j,k,5)); v1 = E(i+1,j,k,5); r5 = dtdydz * (v1 - v0)
+    v0 = LEFT(E(i,j,k,1)); v1 = E(i+1,j,k,1); R(1) = dtdydz * (v1 - v0)
+    v0 = LEFT(E(i,j,k,2)); v1 = E(i+1,j,k,2); R(2) = dtdydz * (v1 - v0)
+    v0 = LEFT(E(i,j,k,3)); v1 = E(i+1,j,k,3); R(3) = dtdydz * (v1 - v0)
+    v0 = LEFT(E(i,j,k,4)); v1 = E(i+1,j,k,4); R(4) = dtdydz * (v1 - v0)
+    v0 = LEFT(E(i,j,k,5)); v1 = E(i+1,j,k,5); R(5) = dtdydz * (v1 - v0)
     ! y direction
     !R(1) = R(1) + dtdzdx * (-F(i,j,k,1) + F(i,j+1,k,1))
-    v0 = LEFT(F(i,j,k,1)); v1 = F(i,j+1,k,1); r1 = fma(dtdzdx, v1 - v0, r1)
-    v0 = LEFT(F(i,j,k,2)); v1 = F(i,j+1,k,2); r2 = fma(dtdzdx, v1 - v0, r2)
-    v0 = LEFT(F(i,j,k,3)); v1 = F(i,j+1,k,3); r3 = fma(dtdzdx, v1 - v0, r3)
-    v0 = LEFT(F(i,j,k,4)); v1 = F(i,j+1,k,4); r4 = fma(dtdzdx, v1 - v0, r4)
-    v0 = LEFT(F(i,j,k,5)); v1 = F(i,j+1,k,5); r5 = fma(dtdzdx, v1 - v0, r5)
+    v0 = LEFT(F(i,j,k,1)); v1 = F(i,j+1,k,1); R(1) = fma(dtdzdx, v1 - v0, R(1))
+    v0 = LEFT(F(i,j,k,2)); v1 = F(i,j+1,k,2); R(2) = fma(dtdzdx, v1 - v0, R(2))
+    v0 = LEFT(F(i,j,k,3)); v1 = F(i,j+1,k,3); R(3) = fma(dtdzdx, v1 - v0, R(3))
+    v0 = LEFT(F(i,j,k,4)); v1 = F(i,j+1,k,4); R(4) = fma(dtdzdx, v1 - v0, R(4))
+    v0 = LEFT(F(i,j,k,5)); v1 = F(i,j+1,k,5); R(5) = fma(dtdzdx, v1 - v0, R(5))
     ! z direction
     !R(1) = R(1) + dtdxdy * (-G(i,j,k,1) + G(i,j,k+1,1))
-    v0 = LEFT(G(i,j,k,1)); v1 = G(i,j,k+1,1); r1 = fma(dtdxdy, v1 - v0, r1)
-    v0 = LEFT(G(i,j,k,2)); v1 = G(i,j,k+1,2); r2 = fma(dtdxdy, v1 - v0, r2)
-    v0 = LEFT(G(i,j,k,3)); v1 = G(i,j,k+1,3); r3 = fma(dtdxdy, v1 - v0, r3)
-    v0 = LEFT(G(i,j,k,4)); v1 = G(i,j,k+1,4); r4 = fma(dtdxdy, v1 - v0, r4)
-    v0 = LEFT(G(i,j,k,5)); v1 = G(i,j,k+1,5); r5 = fma(dtdxdy, v1 - v0, r5)
-    R(1) = r1; R(2) = r2; R(3) = r3; R(4) = r4; R(5) = r5
+    v0 = LEFT(G(i,j,k,1)); v1 = G(i,j,k+1,1); R(1) = fma(dtdxdy, v1 - v0, R(1))
+    v0 = LEFT(G(i,j,k,2)); v1 = G(i,j,k+1,2); R(2) = fma(dtdxdy, v1 - v0, R(2))
+    v0 = LEFT(G(i,j,k,3)); v1 = G(i,j,k+1,3); R(3) = fma(dtdxdy, v1 - v0, R(3))
+    v0 = LEFT(G(i,j,k,4)); v1 = G(i,j,k+1,4); R(4) = fma(dtdxdy, v1 - v0, R(4))
+    v0 = LEFT(G(i,j,k,5)); v1 = G(i,j,k+1,5); R(5) = fma(dtdxdy, v1 - v0, R(5))
   end subroutine calc_R
 
 

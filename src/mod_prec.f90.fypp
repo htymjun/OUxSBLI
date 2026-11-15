@@ -20,23 +20,48 @@ module mod_prec
   interface abs
     procedure fltflt_abs
   end interface
-  interface max
-    module procedure max_ff
+  #! fltflt (f) / real(8) (r) argument patterns the solver uses
+  #:set MM = [('ff', 'type(fltflt)', 'type(fltflt)'), ('fr', 'type(fltflt)', 'real(8)'), ('rf', 'real(8)', 'type(fltflt)')]
+  #:set CMP = [('lt', '<'), ('gt', '>'), ('le', '<='), ('ge', '>=')]
+  #:for f in ('max', 'min')
+  interface ${f}$
+    module procedure ${', '.join(f + '_' + t for t, _, _ in MM)}$${', ' + f + '_fff' if f != 'fmin' else ''}$
   end interface
-  interface min
-    module procedure min_ff
+  #:endfor
+  #:for c, op in CMP
+  interface operator(${op}$)
+    module procedure ${c}$_fr, ${c}$_rf
+  end interface
+  #:endfor
+  interface operator(**)
+    module procedure pow_fi, pow_fr
+  end interface
+  interface merge
+    module procedure ${', '.join('merge_' + t for t, _, _ in MM)}$
+  end interface
+  interface sign
+    module procedure sign_rf
+  end interface
+  interface copysign
+    module procedure sign_rf
+  end interface
+  interface real
+    module procedure real_f
   end interface
   interface fma
-    module procedure fma_fff, fma_rff
+    module procedure fma_fff, fma_rff, fma_ffr
   end interface
   interface dble
     module procedure dble_ff
   end interface
   interface store
-    module procedure store_ff
+    module procedure store_ff, store_r8
+  end interface
+  interface ld
+    module procedure ld_ff, ld_r8
   end interface
   interface assignment(=)
-    module procedure set_ff_r8, set_r8_ff, upload3, download3, copy3, fill4
+    module procedure set_ff_r8, set_r8_ff, upload3, download3, copy3, fill3, fill4
   end interface
 #:endif
 #:if KEEP_PREC != 'FP64'
@@ -60,15 +85,78 @@ module mod_prec
 contains
 #:endif
 #:if PREC == 'DF'
-  attributes(device) type(fltflt) function max_ff(a, b)
-    type(fltflt), intent(in) :: a, b
-    max_ff = fltflt_max(a, b)
-  end function max_ff
+  #:for f, g in (('max', 'fltflt_max'), ('min', 'fltflt_min'))
+  #:for t, ta, tb in MM
+  attributes(device) type(fltflt) function ${f}$_${t}$(a, b)
+    ${ta}$, intent(in) :: a
+    ${tb}$, intent(in) :: b
+    ${f}$_${t}$ = ${g}$(${'a' if t[0] == 'f' else 'fltflt_init(a)'}$, ${'b' if t[1] == 'f' else 'fltflt_init(b)'}$)
+  end function ${f}$_${t}$
 
-  attributes(device) type(fltflt) function min_ff(a, b)
-    type(fltflt), intent(in) :: a, b
-    min_ff = fltflt_min(a, b)
-  end function min_ff
+  #:endfor
+  #:endfor
+  #:for f in ('max', 'min')
+  attributes(device) type(fltflt) function ${f}$_fff(a, b, c)
+    type(fltflt), intent(in) :: a, b, c
+    ${f}$_fff = fltflt_${f}$(fltflt_${f}$(a, b), c)
+  end function ${f}$_fff
+
+  #:endfor
+  #:for c, op in CMP
+  attributes(device) logical function ${c}$_fr(a, b)
+    type(fltflt), intent(in) :: a
+    real(8), intent(in)      :: b
+    ${c}$_fr = a ${op}$ fltflt_init(b)
+  end function ${c}$_fr
+
+  attributes(device) logical function ${c}$_rf(a, b)
+    real(8), intent(in)      :: a
+    type(fltflt), intent(in) :: b
+    ${c}$_rf = fltflt_init(a) ${op}$ b
+  end function ${c}$_rf
+
+  #:endfor
+  attributes(device) type(fltflt) function pow_fi(a, n)
+    type(fltflt), intent(in) :: a
+    integer, intent(in)      :: n
+    integer i
+    pow_fi = fltflt_init(1.0_4)
+    do i = 1, n
+      pow_fi = pow_fi * a
+    end do
+  end function pow_fi
+
+  !> real exponent (LES model coefficients only): evaluated in FP64
+  attributes(device) type(fltflt) function pow_fr(a, b)
+    type(fltflt), intent(in) :: a
+    real(8), intent(in)      :: b
+    pow_fr = fltflt_init((dble(a%hi) + dble(a%lo)) ** b)
+  end function pow_fr
+
+  #:for t, ta, tb in MM
+  attributes(device) type(fltflt) function merge_${t}$(a, b, mask)
+    ${ta}$, intent(in) :: a
+    ${tb}$, intent(in) :: b
+    logical, intent(in) :: mask
+    if (mask) then
+      merge_${t}$ = a
+    else
+      merge_${t}$ = b
+    end if
+  end function merge_${t}$
+
+  #:endfor
+  attributes(device) real(8) function sign_rf(a, b)
+    real(8), intent(in)      :: a
+    type(fltflt), intent(in) :: b
+    sign_rf = sign(a, dble(b%hi))
+  end function sign_rf
+
+  attributes(host, device) real(8) function real_f(a, kind)
+    type(fltflt), intent(in) :: a
+    integer, intent(in)      :: kind
+    real_f = dble(a%hi) + dble(a%lo)
+  end function real_f
 
   attributes(device) type(fltflt) function fma_fff(a, b, c)
     type(fltflt), intent(in) :: a, b, c
@@ -81,7 +169,13 @@ contains
     fma_rff = a * b + c
   end function fma_rff
 
-  attributes(host, device) real(8) function dble_ff(a)
+  attributes(device) type(fltflt) function fma_ffr(a, b, c)
+    type(fltflt), intent(in) :: a, b
+    real(8), intent(in)      :: c
+    fma_ffr = a * b + c
+  end function fma_ffr
+
+  elemental attributes(host, device) real(8) function dble_ff(a)
     type(fltflt), intent(in) :: a
     dble_ff = dble(a%hi) + dble(a%lo)
   end function dble_ff
@@ -92,13 +186,29 @@ contains
     a = b
   end subroutine store_ff
 
-  attributes(host, device) subroutine set_ff_r8(a, b)
+  attributes(device) subroutine store_r8(a, b)
+    real(8), intent(out) :: a
+    real(8), intent(in)  :: b
+    a = b
+  end subroutine store_r8
+
+  attributes(device) type(fltflt) function ld_ff(a)
+    type(fltflt), intent(in) :: a
+    ld_ff = a
+  end function ld_ff
+
+  attributes(device) real(8) function ld_r8(a)
+    real(8), intent(in) :: a
+    ld_r8 = a
+  end function ld_r8
+
+  elemental attributes(host, device) subroutine set_ff_r8(a, b)
     type(fltflt), intent(out) :: a
     real(8), intent(in)       :: b
     a = fltflt_init(b)
   end subroutine set_ff_r8
 
-  attributes(host, device) subroutine set_r8_ff(a, b)
+  elemental attributes(host, device) subroutine set_r8_ff(a, b)
     real(8), intent(out)     :: a
     type(fltflt), intent(in) :: b
     a = dble(b%hi) + dble(b%lo)
@@ -140,6 +250,12 @@ contains
     !DIR$ IGNORE_TKR (tkr) a, b
     a = b
   end subroutine copy8
+
+  subroutine fill3(a, b)
+    type(fltflt), device, intent(out) :: a(:,:,:)
+    real(8), intent(in)               :: b
+    a = fltflt_init(b)
+  end subroutine fill3
 
   subroutine fill4(a, b)
     type(fltflt), device, intent(out) :: a(:,:,:,:)

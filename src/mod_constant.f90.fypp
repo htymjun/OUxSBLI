@@ -27,8 +27,8 @@
 #:if PREC not in ('FP64', 'DF') or KEEP_PREC not in ('FP64', 'MIXED', 'MIXED_CELL')
   #:stop "PREC must be 'FP64' or 'DF'; KEEP_PREC 'FP64', 'MIXED' or 'MIXED_CELL'"
 #:endif
-#:if PREC == 'DF' and (BC_X or BC_Y or BC_Z or COMMZ or RESCALE or VISC != 'Euler' or SCHEME != 'KEEP' or KEEP_PREC != 'FP64')
-  #:stop "PREC=DF is implemented for all-periodic Euler KEEP (no COMMZ, RESCALE, KEEP_PREC)"
+#:if PREC == 'DF' and (KEEP_PREC != 'FP64' or WENO_PREC != 'FP64')
+  #:stop "PREC=DF replaces the mixed modes: KEEP_PREC and WENO_PREC must be 'FP64'"
 #:endif
 #:if (PREC != 'FP64' or KEEP_PREC != 'FP64') and getvar('DIM', 3) != 3
   #:stop 'PREC and KEEP_PREC are implemented in 3D_solver only'

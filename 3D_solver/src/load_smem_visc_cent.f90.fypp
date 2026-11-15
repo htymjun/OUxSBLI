@@ -1,4 +1,4 @@
-#:include 'config.fypp'
+#:include 'prec.fypp'
 #:if not defined('VISC_ORDER')
   #:set VISC_ORDER = ORDER
 #:endif
@@ -7,6 +7,7 @@
 #:set D_SFX = 2 if VISC_ORDER == 4 else 3
 
 module load_smem_visc_cent${VISC_ORDER}$
+  use mod_prec
   use mod_globals, only : threadsEv, threadsFv, threadsGv
   #:if VISC_ORDER == 4
   use mod_constant, only : two_third, one_twelfth
@@ -33,18 +34,18 @@ contains
     integer, intent(in), value              :: nz
     real(8), intent(in), value              :: inv_dy_j
     real(8), intent(in), value              :: inv_dz_k
-    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz)
-    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_4(nx,ny,nz)
     integer, parameter :: io_v = ${io_v_val}$
     integer, parameter :: sx = threadsEv%x + 2*io_v + 1
     integer, parameter :: sy = threadsEv%y
     integer, parameter :: sz = threadsEv%z
-    real(8), intent(inout) ::  u(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) ::  v(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) ::  w(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) :: uy(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) :: uz(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: u(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: v(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: w(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: uy(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: uz(-(io_v-1):sx*sy*sz-io_v)
     integer i_base, ii, i, idx, offset_yz
     logical :: jk_in_range, jk_in_range_grad_y, jk_in_range_grad_z
     i_base = (blockIdx%x-1)*blockDim%x
@@ -93,18 +94,18 @@ contains
     integer, intent(in), value              :: nz
     real(8), intent(in), value              :: inv_dx_i
     real(8), intent(in), value              :: inv_dz_k
-    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz)
-    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_4(nx,ny,nz)
     integer, parameter :: io_v = ${io_v_val}$
     integer, parameter :: sx = threadsFv%x
     integer, parameter :: sy = threadsFv%y + 2*io_v + 1
     integer, parameter :: sz = threadsFv%z
-    real(8), intent(inout) ::  u(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) ::  v(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) ::  w(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) :: vx(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) :: vz(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: u(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: v(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: w(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: vx(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: vz(-(io_v-1):sx*sy*sz-io_v)
     integer j_base, jj, j, idx, offset_xz
     logical :: ik_in_range, ik_in_range_grad_x, ik_in_range_grad_z
     j_base = (blockIdx%y-1)*blockDim%y
@@ -153,18 +154,18 @@ contains
     integer, intent(in), value              :: nz
     real(8), intent(in), value              :: inv_dx_i
     real(8), intent(in), value              :: inv_dy_j
-    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz)
-    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_4(nx,ny,nz)
     integer, parameter :: io_v = ${io_v_val}$
     integer, parameter :: sx = threadsGv%x
     integer, parameter :: sy = threadsGv%y
     integer, parameter :: sz = threadsGv%z + 2*io_v + 1
-    real(8), intent(inout) ::  u(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) ::  v(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) ::  w(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) :: wx(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) :: wy(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: u(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: v(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: w(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: wx(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: wy(-(io_v-1):sx*sy*sz-io_v)
     integer k_base, kk, k, idx, offset_xy
     logical :: ij_in_range, ij_in_range_grad_x, ij_in_range_grad_y
     k_base = (blockIdx%z-1)*blockDim%z
@@ -213,19 +214,19 @@ contains
     integer, intent(in), value              :: nz
     real(8), intent(in), value              :: inv_dx_i
     real(8), intent(in), value              :: inv_dy_j
-    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz)
-    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_4(nx,ny,nz)
     integer, intent(in), value              :: k_lo
     integer, parameter :: io_v = ${io_v_val}$
     integer, parameter :: sx = threadsGv%x
     integer, parameter :: sy = threadsGv%y
     integer, parameter :: sz = threadsGv%z + 2*io_v + 1
-    real(8), intent(inout) ::  u(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) ::  v(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) ::  w(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) :: wx(-(io_v-1):sx*sy*sz-io_v)
-    real(8), intent(inout) :: wy(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: u(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: v(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: w(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: wx(-(io_v-1):sx*sy*sz-io_v)
+    ${RT}$, intent(inout) :: wy(-(io_v-1):sx*sy*sz-io_v)
     integer k_base, kk, k, idx, offset_xy
     logical :: ij_in_range, ij_in_range_grad_x, ij_in_range_grad_y
     k_base = (blockIdx%z-1)*blockDim%z + k_lo - 1
