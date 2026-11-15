@@ -69,6 +69,7 @@ module set
   real(8), save :: f_top = 1.d0
   logical, save :: ftop_init = .false.
   integer, save :: i_up0 = 0, i_up1 = 0, ncall_top = 0
+  real(8), allocatable, save :: ptop_h(:)   ! host copy of the top pressure of those columns
   ! time constant of the running means (inlet rows above the TBL domain, top boundary)
   real(8), parameter :: tau_mavg = 10.d0   ! [blt/u0]
   ! their relaxation factor per set_bc call: set_bc runs once per RK stage, 3 times per dt
@@ -425,6 +426,7 @@ contains
         if (x_host(i) <= x_top - blt) i_up1 = i
       enddo
       if (i_up1 < i_up0 + 5) i_up1 = i_up0 + 5
+      allocate(ptop_h(i_up1 - i_up0 + 1))
     endif
     dev_ready = .true.
   end subroutine setup_device
@@ -510,14 +512,13 @@ contains
     ! measured level back into itself (f drifted upward in the first A2c attempt).
     fp = 1.d0; fr = 1.d0
     if (myrank >= 2) then
-      psum = 0.d0
-      !$cuf kernel do(2)<<<*,*>>>
-      do k = 4, nz-3
-        do i = i_up0, i_up1
-          psum = psum + gamma_1 * (QJ_5(i,ny-1,k) - 0.5d0 * (QJ_2(i,ny-1,k)**2 + QJ_3(i,ny-1,k)**2 &
-                 + QJ_4(i,ny-1,k)**2) / QJ_1(i,ny-1,k)) * Jacobian(i,ny-1)
-      enddo;enddo
-      psum = psum / dble((nz-6) * (i_up1 - i_up0 + 1)) / p0
+      ! spanwise-mean state next to the top, per column (rho, u, v, p)
+      call span_mean_row(nx, ny, nz, nx, ny-1, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, itop_d)
+      ! Mean pressure of the upstream columns, summed on the host in a fixed order: a
+      ! `cuf kernel` sum reduction over (i, k) returned run-to-run different last bits,
+      ! which made the whole SBLI domain irreproducible from the first step.
+      ptop_h = itop_d(i_up0:i_up1,4)
+      psum = sum(ptop_h) / dble(i_up1 - i_up0 + 1) / p0
       if (.not. ftop_init) then
         f_top = psum
         ftop_init = .true.
@@ -538,7 +539,6 @@ contains
       ! running mean of the local state now makes that decision per column (and gives
       ! the characteristic direction), see the top-boundary kernel below; imposing
       ! that mean itself through the Riemann condition was tried and rejected.
-      call span_mean_row(nx, ny, nz, nx, ny-1, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5, itop_d)
       call running_mean(nx, itop_d, etop_d, etop_init)
     endif
 
