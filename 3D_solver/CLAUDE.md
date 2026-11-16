@@ -10,7 +10,7 @@ This file documents the 3D Cartesian solver. See the repository root `CLAUDE.md`
 | `src/recon_macros.fypp` | fypp macros `#:include`d by the SLAU-family kernels of 2D and 3D: `interp_routines`/`delta_r_routines` (order dispatch of the face reconstruction) and `delta_calls`/`copy_lr` (the per-primitive `delta4`/`delta6` calls). Not compiled on its own; CMake passes `-I src` to fypp |
 | `src/calc_weno.f90.fypp` | WENO5-Z face reconstruction (FP64, W32P64), called by `calc_muscl`'s `delta6` when `RECON='WENO'` |
 | `3D_solver/src/calc_flux_base.f90.fypp` | Top-level flux dispatcher (convective + viscous) |
-| `3D_solver/src/calc_time_dev.f90.fypp` | RK time-stepping orchestration |
+| `3D_solver/src/calc_time_dev.f90.fypp` | RK time-stepping orchestration: one `RungeKutta` for `RK` 3/4 with or without `RESCALE`/`COMMZ`. The `STAGES` list holds, per stage, the input state, the update-kernel call and the output state; the `stage` macro wraps it with the rescaling exchange or the z-halo exchange |
 | `3D_solver/src/calc_para.f90.fypp` | MPI halo exchange: x-direction pack/unpack and the COMMZ z-halo `start_exchange_z`/`finish_exchange_z` (`MPI='CPU'` host staging or `MPI='GPU'` CUDA-aware) |
 | `3D_solver/src/calc_keep_kernel.f90.fypp` | KEEP convective kernel |
 | `3D_solver/src/calc_slau_kernel.f90.fypp` | SLAU convective kernel |
@@ -446,7 +446,7 @@ Rules that make this correct, and that any edit must preserve:
 * `calc_flux_base.f90` and `calc_steps.f90` are the main bottleneck. You should optimize them. `calc_flux_base.f90` calls `calc_*_kernel.f90`, `calc_*_kernel_internal.f90`, `calc_visc*.f90`, and `calc_div.f90` (runs once per RK stage, right after `calc_quantities_T_3D`, for `VISC_ORDER>2`).
 * KEEP, SLAU, Hybrid schemes should be optimized (the unused Roe kernels were removed).
 * STZ case exists specifically to validate the z-direction halo exchange (COMMZ=True, BC_Z=True; currently NS, KEEP, 4th order, `MPI='GPU'`). The 6th-order NS path is exercised by SWLBLI with `COMMZ=True`; see the COMMZ section above.
-* `calc_time_dev.f90.fypp`'s RK3 and RK4 loops (with and without COMMZ) call `set_bc` with the extra `(x, z, phi_l_gpu, phi_m_gpu, t_now)` arguments only when the case's `config.fypp` sets `BC_FORCING = True` (SWLBLI); every other case keeps the plain signature. Adding a case-specific argument to `set_bc` again must go through such a flag, or every other 3D case stops compiling.
+* `calc_time_dev.f90.fypp`'s `stage` macro (every RK/COMMZ variant) calls `set_bc` with the extra `(x, z, phi_l_gpu, phi_m_gpu, t_now)` arguments only when the case's `config.fypp` sets `BC_FORCING = True` (SWLBLI); every other case keeps the plain signature. Adding a case-specific argument to `set_bc` again must go through such a flag, or every other 3D case stops compiling.
 * `RESTART=True` + `RESCALE=True` used to abort on startup: `pre_rescale`
   (`preprocess.f90.fypp`) requires `recal/Qm.dat`, but `write_Qm` — the only routine
   that wrote it — was never called from anywhere (it has since been removed). `rescale_recv_send` now checkpoints
