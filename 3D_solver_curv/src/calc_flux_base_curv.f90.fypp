@@ -64,12 +64,20 @@ contains
     ! shock sensor
     #:if SCHEME in ('SLAU', 'Hybrid')
     call calc_Ducros_curv<<<blocks,threads>>>(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, Q_2, Q_3, Q_4, sensor)
-    ! xi is periodic on the O-grid: the ghost columns wrap to the opposite interior columns
+    ! xi ghost columns of the sensor, filled after the kernel (they are not copies of a
+    ! thread's own cell in the periodic case, see calc_Ducros_curv)
     !$cuf kernel do(2) <<<*,*>>>
     do k = 1, nz
       do j = 1, ny
+        #:if BC_X
+        ! inflow/outflow or wall in xi: zero gradient
+        sensor(1,j,k)  = sensor(2,j,k)
+        sensor(nx,j,k) = sensor(nx-1,j,k)
+        #:else
+        ! xi is periodic (O-grid): wrap to the opposite interior columns
         sensor(1,j,k)  = sensor(nx-1,j,k)
         sensor(nx,j,k) = sensor(2,j,k)
+        #:endif
     enddo;enddo
     #:endif
     ! flux

@@ -60,11 +60,13 @@ of the three old outcomes.
 Rule: a kernel must not read an output cell that a different thread of the same launch
 writes. Ghost fills that are not copies of the thread's own cell go in a separate pass.
 
-### Open: the sensor's xi ghost wraps periodically even when `BC_X = True`
+### The sensor's xi ghost with `BC_X = True` (fixed 2026-11-16)
 
-The wrap above is right for the O-grid (NACA, `BC_X = False`). CORN has `BC_X = True`
-(inflow/outflow), yet its sensor ghost at the inlet still takes the value of the outlet
-column and vice versa, so the faces i = 1 and i = nx-1 choose KEEP/SLAU from the mean of an
-inlet and an outlet sensor value. Zero-gradient ghosts (`sensor(1) = sensor(2)`,
-`sensor(nx) = sensor(nx-1)`) under `#:if BC_X` would be the consistent choice, but it changes
-CORN's results, so it has not been changed.
+The periodic wrap is right for the O-grid (NACA, `BC_X = False`). CORN has `BC_X = True`
+(inflow/outflow) but its sensor ghost at the inlet used to take the value of the outlet
+column and vice versa, so the faces i = 1 and i = nx-1 chose KEEP/SLAU from the mean of an
+inlet and an outlet sensor value. `calc_conv_curv` now uses zero-gradient ghosts under
+`#:if BC_X` (`sensor(1) = sensor(2)`, `sensor(nx) = sensor(nx-1)`), like the Cartesian
+`calc_Ducros`. NACA is bit-identical to before. CORN changes: after 40 steps 172 points in
+the first ten columns of the lowest seven rows differ (up to 9 % relative); `test_corn`
+(post-shock state against the oblique-shock solution) passes as before.
