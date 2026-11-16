@@ -53,9 +53,9 @@ contains
     ! Sensor: f_d = (∇·u)² / [(∇·u)² + (∇×u)²]
     ! Returns ~1 in shocks (high compression), ~0 in smooth vortical flows
     fd(i,j,k) = min(1.0_sp, (div**2) / (div**2 + rot(1)**2 + rot(2)**2 + rot(3)**2 + eps))
-    ! xi is periodic on the O-grid: ghost cells wrap to opposite interior cells
-    if (i == 2)    fd(1,j,k)  = fd(nx-1,j,k)
-    if (i == nx-1) fd(nx,j,k) = fd(2,j,k)
+    ! eta and z ghost cells copy this thread's own value. The xi ghost cells wrap to the
+    ! opposite side, i.e. to a cell another thread writes, so they are filled after the
+    ! kernel has finished (calc_conv_curv); doing it here read stale or unset values.
     if (j == 2)    fd(i,1,k)  = fd(i,2,k)
     if (j == ny-1) fd(i,ny,k) = fd(i,ny-1,k)
     if (k == 2)    fd(i,j,1)  = fd(i,j,2)

@@ -60,9 +60,17 @@ contains
     real(8), intent(out), device, contiguous :: E(nx-1,ny-2,nz-2,5)
     real(8), intent(out), device, contiguous :: F(nx-2,ny-1,nz-2,5)
     real(8), intent(out), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    integer j, k
     ! shock sensor
     #:if SCHEME in ('SLAU', 'Hybrid')
     call calc_Ducros_curv<<<blocks,threads>>>(nx, ny, nz, dz, xi_x, xi_y, eta_x, eta_y, Q_2, Q_3, Q_4, sensor)
+    ! xi is periodic on the O-grid: the ghost columns wrap to the opposite interior columns
+    !$cuf kernel do(2) <<<*,*>>>
+    do k = 1, nz
+      do j = 1, ny
+        sensor(1,j,k)  = sensor(nx-1,j,k)
+        sensor(nx,j,k) = sensor(2,j,k)
+    enddo;enddo
     #:endif
     ! flux
     call calc_${scheme_name}$_xi_curv<<<blocksE,threadsE>>>(id_accuracy, nx, ny, nz, n_xi_x, n_xi_y, Q_1, Q_2, Q_3, Q_4, Q_5${args_t}$${args_sensor}$, E)

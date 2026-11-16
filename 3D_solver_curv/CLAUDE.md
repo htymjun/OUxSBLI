@@ -33,34 +33,38 @@ main_curv.f90
 
 ## Known issues
 
-### Results are not reproducible from run to run (open, cause not investigated)
+### Run-to-run irreproducibility of the Hybrid/SLAU sensor (fixed 2026-11-16)
 
-Found on 2026-11-15 while checking refactors bit for bit. Running the **same binary**
-(built from `a7e56b0`, before any cleanup) twice from the same initial condition gives
-different VTK files and a different `recal/Q00001.dat`. The Cartesian solvers do not show
-this: 26 configurations of `3D_solver`/`2D_solver` are bit-identical between runs.
+Until `10219a9` the same binary gave different VTK and restart files on repeated runs:
 
-Measured with 40 time steps (`nt=20`, `np=2`, 2 MPI ranks, RTX PRO 6000, HPC SDK 26.5),
-comparing `recal/Q00001.dat` of different runs:
-
-| case | runs | distinct results | where they differ | size |
+| case | runs | distinct results | where they differed | size |
 |---|---|---|---|---|
-| CORN (Euler, Hybrid, ORDER=2, 192x80x4) | 6 | 3 | 18 points per pair of outcomes: i = 2..10 on one row, j = 6 or j = 7, planes k = 1 and 3 only | up to 4e-4 relative |
-| NACA (NS, Hybrid, ORDER=2, 513x161x17) | 4 | 4 | 13,891 of 1.4 M points: i = 1..5 and 509..513 (both sides of the O-grid cut) plus a few other columns, j = 1..35, every k | up to O(1) and larger on near-zero quantities |
+| CORN (Euler, Hybrid, ORDER=2, 192x80x4) | 6 | 3 | i = 2..10 on one row (j = 6 or 7), one of the two interior z planes | up to 4e-4 relative |
+| NACA (NS, Hybrid, ORDER=2, 513x161x17) | 4 | 4 | both sides of the O-grid cut (i = 1..5, 509..513), j = 1..35, every k | up to O(1) |
 
-What this does and does not say:
+Cause: `calc_Ducros_curv` filled the xi ghost columns of the sensor inside the kernel,
+`fd(1,j,k) = fd(nx-1,j,k)` and `fd(nx,j,k) = fd(2,j,k)`. The right-hand sides are cells that
+*other* threads of the same launch write, so the copy picked up either the new value or the
+one left from the previous RK stage (unset memory on the first call), depending on thread
+timing. The xi-face fluxes at i = 1 and i = nx-1 compare that sensor with `threshold` to
+choose KEEP or SLAU, so a different ghost value switches the scheme on those faces: a
+discrete, far-above-round-off difference that starts at the cut (NACA) or at the inlet/outlet
+columns (CORN).
 
-* The differences are far above round-off and, in CORN, stay in the same few cells after 40
-  steps instead of spreading with the stencil. That points to cells that are written
-  inconsistently (a race between kernels or thread blocks, or a read of memory nobody
-  initialised) rather than to a non-deterministic sum.
-* CORN is Euler, so the viscous loaders (`load_smem_visc2_curv.f90`,
-  `pipelineMemcpyAsync`) cannot be the only cause.
-* NACA differs around the periodic cut of the O-grid (`BC_X=False`), CORN next to the inlet
-  (`BC_X=True`); whether the two share a cause is unknown.
-* Nothing here has been fixed or narrowed down further.
+Fix: the kernel only fills the eta and z ghosts (copies of the thread's own value, as in the
+Cartesian `calc_Ducros`); `calc_conv_curv` fills the xi ghost columns with a
+`!$cuf kernel do` loop after the kernel has finished. CORN (9 runs) and NACA (7 runs) are
+now bit-identical from run to run, and `test_corn` passes. The fixed CORN result equals one
+of the three old outcomes.
 
-Consequence: a change to `3D_solver_curv` cannot be validated by comparing run outputs bit
-for bit. Compare the fypp-expanded sources instead, and treat small differences in CORN/NACA
-results with suspicion until this is understood. To reproduce: build a case, run it twice
-with a short `nt`/`np`, and `cmp` the two `recal/Q00001.dat`.
+Rule: a kernel must not read an output cell that a different thread of the same launch
+writes. Ghost fills that are not copies of the thread's own cell go in a separate pass.
+
+### Open: the sensor's xi ghost wraps periodically even when `BC_X = True`
+
+The wrap above is right for the O-grid (NACA, `BC_X = False`). CORN has `BC_X = True`
+(inflow/outflow), yet its sensor ghost at the inlet still takes the value of the outlet
+column and vice versa, so the faces i = 1 and i = nx-1 choose KEEP/SLAU from the mean of an
+inlet and an outlet sensor value. Zero-gradient ghosts (`sensor(1) = sensor(2)`,
+`sensor(nx) = sensor(nx-1)`) under `#:if BC_X` would be the consistent choice, but it changes
+CORN's results, so it has not been changed.
