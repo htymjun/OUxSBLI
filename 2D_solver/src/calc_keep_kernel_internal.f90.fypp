@@ -1,4 +1,5 @@
-#:include 'config.fypp'
+#:include 'prec.fypp'
+#:block fp
 module calc_keep_kernel_internal
   use mod_globals, only : gamma, threadsE, threadsF
   use mod_constant, only : R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
@@ -6,12 +7,12 @@ module calc_keep_kernel_internal
   implicit none
   private
   public calc_keep_x_in, calc_keep_y_in
-  real(8), parameter :: one_24        = 1.d0 / 24.d0
-  real(8), parameter :: one_48        = 1.d0 / 48.d0
-  real(8), parameter :: one_60        = 1.d0 / 60.d0
-  real(8), parameter :: one_120       = 1.d0 / 120.d0
-  real(8), parameter :: one_240       = 1.d0 / 240.d0
-  real(8), parameter :: seven_twelfth = 7.d0 / 12.d0
+  ${WT}$, parameter :: one_24        = 1.d0 / 24.d0
+  ${WT}$, parameter :: one_48        = 1.d0 / 48.d0
+  ${WT}$, parameter :: one_60        = 1.d0 / 60.d0
+  ${WT}$, parameter :: one_120       = 1.d0 / 120.d0
+  ${WT}$, parameter :: one_240       = 1.d0 / 240.d0
+  ${WT}$, parameter :: seven_twelfth = 7.d0 / 12.d0
   integer, parameter :: io = ${ORDER_IO}$
 
 #:if ORDER == 6
@@ -31,13 +32,13 @@ contains
   attributes(global) subroutine calc_keep_x_in(nx, ny, Q_1, Q_2, Q_3, Q_4, T, E)
     use mod_constant, only : Normal_x
     integer, intent(in), value                :: nx, ny
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny), T(nx,ny)
-    real(8), intent(out), device, contiguous  :: E(nx-1,ny-2,4)
+    ${RT}$, intent(in), device, contiguous   :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny), T(nx,ny)
+    ${RT}$, intent(out), device, contiguous  :: E(nx-1,ny-2,4)
     integer i, j, it, jt
     integer :: ii, i_base, idx, offset_y
     integer, parameter :: sx = threadsE%x + 2*io + 1
     integer, parameter :: sy = threadsE%y
-    real(8), dimension(-(io-1):sx*sy-io), shared :: rho, u, v, p, tmp
+    ${RT}$, dimension(-(io-1):sx*sy-io), shared :: rho, u, v, p, tmp
     it = threadIdx%x
     jt = threadIdx%y
     j  = (blockIdx%y-1)*blockDim%y + jt + 1
@@ -67,13 +68,13 @@ contains
   attributes(global) subroutine calc_keep_y_in(nx, ny, Q_1, Q_2, Q_3, Q_4, T, F)
     use mod_constant, only : Normal_y
     integer, intent(in), value                :: nx, ny
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny), T(nx,ny)
-    real(8), intent(out), device, contiguous  :: F(nx-2,ny-1,4)
+    ${RT}$, intent(in), device, contiguous   :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny), T(nx,ny)
+    ${RT}$, intent(out), device, contiguous  :: F(nx-2,ny-1,4)
     integer i, j, it, jt
     integer :: jj, j_base, idx, offset_x
     integer, parameter :: sx = threadsF%x
     integer, parameter :: sy = threadsF%y + 2*io + 1
-    real(8), dimension(-(io-1):sx*sy-io), shared :: rho, u, v, p, tmp
+    ${RT}$, dimension(-(io-1):sx*sy-io), shared :: rho, u, v, p, tmp
     it = threadIdx%x
     jt = threadIdx%y
     i  = (blockIdx%x-1)*blockDim%x + it + 1
@@ -99,3 +100,4 @@ contains
     endif
   end subroutine calc_keep_y_in
 end module calc_keep_kernel_internal
+#:endblock fp

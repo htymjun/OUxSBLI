@@ -5,10 +5,11 @@
 #:set VELS = ['u', 'v', 'w'] if DIM == 3 else ['u', 'v']
 #:set NEQ  = DIM + 2
 #:set VARG = ', '.join(VELS)
+#:block fp
   ${'pure ' if PREC != 'DF' else ''}$attributes(device) function KEEP2(id_accuracy, rho, ${VARG}$,  uu, p, T, Normal) result(F)
     integer(2), intent(in), value     :: id_accuracy
     ${KT}$, intent(in), dimension(2) :: rho, ${VARG}$, uu, p, T
-    real(8), intent(in), dimension(5) :: Normal
+    ${WT}$, intent(in), dimension(5) :: Normal
     ${KT}$ F(${NEQ}$)
     F(1) = 0.25d0 * (rho(1) + rho(2)) * (uu(1) + uu(2))
     #:for i, v in enumerate(VELS)
@@ -23,7 +24,7 @@
   attributes(device) function KEEP4(id_accuracy, rho, ${VARG}$, uu, p, T, Normal) result(F)
     integer(4), intent(in), value     :: id_accuracy
     ${KT}$, intent(in), dimension(4) :: rho, ${VARG}$, uu, p, T
-    real(8), intent(in), dimension(5) :: Normal
+    ${WT}$, intent(in), dimension(5) :: Normal
     ${KT}$ F(${NEQ}$), RV1, RV2, RV3, RV1_RV2, RV1_RV3
     ${KT}$ ${', '.join(v + '1, ' + v + '2, ' + v + '3, ' + v + '4' for v in VELS)}$
     RV1 = (rho(2) + rho(3)) * (uu(2) + uu(3))
@@ -91,7 +92,7 @@
   attributes(device) function KEEP6(id_accuracy, rho, ${VARG}$, uu, p, T, Normal) result(F)
     integer(8), intent(in), value     :: id_accuracy
     ${KT}$, intent(in), dimension(6) :: rho, ${VARG}$, uu, p, T
-    real(8), intent(in), dimension(5) :: Normal
+    ${WT}$, intent(in), dimension(5) :: Normal
     ${KT}$ F(${NEQ}$), RV1, RV2, RV3, RV4, RV5, RV6, RV3_RV5, RV2_RV5, RV1_RV2_RV4, RV1_RV3_RV6
     RV1 = (rho(3) + rho(4)) * (uu(3) + uu(4))
     RV2 = (rho(3) + rho(5)) * (uu(3) + uu(5))
@@ -214,8 +215,8 @@
     ${RT}$, intent(out) :: c, over_c, Mp, Mm, bp, bm, dp, Vtp, Vtm
     block
       ${RT}$ cl, cr
-      cl = sqrt(gamma * p1 * over_rho1)
-      cr = sqrt(gamma * p2 * over_rho2)
+      cl = sqrt(${W('gamma')}$ * p1 * over_rho1)
+      cr = sqrt(${W('gamma')}$ * p2 * over_rho2)
       c  = 0.5d0 * (cl + cr)
     end block
     over_c = 1.d0 / c
@@ -242,7 +243,7 @@
     use mod_globals, only : gamma
     use mod_constant, only : over_gamma_1
     ${RT}$, intent(in) :: rho, k, p, over_rho
-    real(8) :: gamma_over_gamma_1 = gamma * over_gamma_1
+    ${WT}$ :: gamma_over_gamma_1 = gamma * over_gamma_1
     ${RT}$ ans
     ans = (p * gamma_over_gamma_1 + rho * k) * over_rho
   end function phi
@@ -260,7 +261,7 @@
                                       w1, w2, &
   #:endif
                                       un1, un2, p1, p2
-    real(8), intent(in)           :: Norm(5)
+    ${WT}$, intent(in)           :: Norm(5)
     real(sp), intent(in), value   :: HR
     ${RT}$, intent(out)          :: F1, F2, F3, F4${', F5' if DIM == 3 else ''}$
     ${RT}$ c, over_c, Mp, Mm, M, x
@@ -324,7 +325,7 @@
                                       w1, w2, &
   #:endif
                                       un1, un2, p1, p2
-    real(8), intent(in)           :: Norm(5)
+    ${WT}$, intent(in)           :: Norm(5)
     real(sp), intent(in), value   :: HR
     ${RT}$, intent(out)          :: F1, F2, F3, F4${', F5' if DIM == 3 else ''}$
     ${RT}$ c, over_c, Mp, Mm
@@ -400,7 +401,7 @@
                                       w1, w2, &
   #:endif
                                       un1, un2, p1, p2
-    real(8), intent(in)           :: Norm(5)
+    ${WT}$, intent(in)           :: Norm(5)
     real(sp), intent(in), value   :: HR
     ${RT}$, intent(out)          :: F1, F2, F3, F4${', F5' if DIM == 3 else ''}$
     ${RT}$ over_rho1, over_rho2, k1, k2, a, m1, m2, ps
@@ -408,8 +409,8 @@
     over_rho2 = 1.d0 / rho2
     k1 = 0.5d0 * (u1*u1 + v1*v1${' + w1*w1' if DIM == 3 else ''}$)
     k2 = 0.5d0 * (u2*u2 + v2*v2${' + w2*w2' if DIM == 3 else ''}$)
-    a  = max(abs(un1) + sqrt(gamma * p1 * over_rho1), &
-             abs(un2) + sqrt(gamma * p2 * over_rho2))
+    a  = max(abs(un1) + sqrt(${W('gamma')}$ * p1 * over_rho1), &
+             abs(un2) + sqrt(${W('gamma')}$ * p2 * over_rho2))
     m1 = rho1 * un1
     m2 = rho2 * un2
     ps = p1 + p2
@@ -425,3 +426,4 @@
                   - a * ((p2 - p1) * over_gamma_1 + rho2 * k2 - rho1 * k1))
   #:endif
   end subroutine LFflux
+#:endblock fp

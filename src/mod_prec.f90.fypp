@@ -61,7 +61,7 @@ module mod_prec
     module procedure ld_ff, ld_r8
   end interface
   interface assignment(=)
-    module procedure set_ff_r8, set_r8_ff, upload3, download3, copy3, fill3, fill4
+    module procedure set_ff_r8, set_r8_ff, upload3, download3, copy3, fill3, fill4${', upload2, download2, copy2' if getvar('DIM', 3) == 2 else ''}$
   end interface
 #:endif
 #:if KEEP_PREC != 'FP64'
@@ -262,6 +262,36 @@ contains
     real(8), intent(in)               :: b
     a = fltflt_init(b)
   end subroutine fill4
+  #:if getvar('DIM', 3) == 2
+
+  !> rank-2 state arrays of 2D_solver
+  subroutine upload2(a, b)
+    type(fltflt), device, intent(out) :: a(:,:)
+    real(8), intent(in)               :: b(:,:)
+    type(fltflt), allocatable :: t(:,:)
+    integer i, j
+    allocate(t(size(b,1), size(b,2)))
+    do j = 1, size(b,2); do i = 1, size(b,1)
+      t(i,j) = fltflt_init(b(i,j))
+    enddo; enddo
+    a = t
+  end subroutine upload2
+
+  subroutine download2(b, a)
+    real(8), intent(out)             :: b(:,:)
+    type(fltflt), device, intent(in) :: a(:,:)
+    type(fltflt), allocatable :: t(:,:)
+    allocate(t(size(a,1), size(a,2)))
+    t = a
+    b = dble(t%hi) + dble(t%lo)
+  end subroutine download2
+
+  subroutine copy2(a, b)
+    type(fltflt), device, intent(out) :: a(:,:)
+    type(fltflt), device, intent(in)  :: b(:,:)
+    call copy8(size(a), a, b)
+  end subroutine copy2
+  #:endif
 #:endif
 #:if KEEP_PREC != 'FP64'
   pure attributes(device) type(dev) function add_vv(x, y)

@@ -256,7 +256,7 @@ contains
                                        QJ_1, QJ_2, QJ_3, QJ_4, Q, ke0, entropy0)
     integer, intent(in)         :: myrank, nranks, step, nx, ny
     real(8), intent(in)         :: x(nx), y(ny), Jacobian_cpu(nx,ny)
-    real(8), intent(in), device :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
+    ${RT if getvar('DIM', 3) == 2 else 'real(8)'}$, intent(in), device :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
     real(8), intent(inout)      :: Q(nx,ny,4)
     real(4), intent(inout)      :: ke0, entropy0
     integer ireq3(3), istat3(MPI_STATUS_SIZE,3), ierr

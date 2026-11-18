@@ -1,6 +1,6 @@
 !> Module for preprocessing and GPU memory management
 !> Handles device setup, memory allocation, and initial data transfers
-#:include 'config.fypp'
+#:include 'prec.fypp'
 #:if not defined('VISC_ORDER')
   #:set VISC_ORDER = 4 if ORDER >= 4 else 2
 #:endif
@@ -31,18 +31,18 @@ contains
     integer, intent(in)                       :: myrank        !< MPI rank
     integer, intent(in)                       :: nx            !< x grid dimension
     integer, intent(in)                       :: ny            !< y grid dimension
-    real(8), intent(out), allocatable, device :: dtdx(:)       !< dt * Sxy
-    real(8), intent(out), allocatable, device :: dtdy(:)       !< dt * Syz
-    real(8), intent(out), allocatable, device :: xix(:)        !< coordinate transform metric in x
-    real(8), intent(out), allocatable, device :: etay(:)       !< coordinate transform metric in y
-    real(8), intent(out), allocatable, device :: Jacobian(:,:) !< Jacobian determinant for coordinate transform
-    real(8), intent(out), allocatable, device :: Q_1(:,:), Q_2(:,:), Q_3(:,:), Q_4(:,:) !< primitive variables (rho, u, v, p)
-    real(8), intent(out), allocatable, device :: T(:,:)        !< temperature field
-    real(8), intent(out), allocatable, device :: mu(:,:)       !< molecular viscosity
-    real(8), intent(out), allocatable, device :: ux(:,:)       !< cell-center du/dx (VISC_ORDER>2 only)
-    real(8), intent(out), allocatable, device :: vy(:,:)       !< cell-center dv/dy (VISC_ORDER>2 only)
-    real(8), intent(out), allocatable, device :: E(:,:,:)      !< flux in x direction
-    real(8), intent(out), allocatable, device :: F(:,:,:)      !< flux in y direction
+    ${WT}$, intent(out), allocatable, device :: dtdx(:)       !< dt * Sxy
+    ${WT}$, intent(out), allocatable, device :: dtdy(:)       !< dt * Syz
+    ${WT}$, intent(out), allocatable, device :: xix(:)        !< coordinate transform metric in x
+    ${WT}$, intent(out), allocatable, device :: etay(:)       !< coordinate transform metric in y
+    ${WT}$, intent(out), allocatable, device :: Jacobian(:,:) !< Jacobian determinant for coordinate transform
+    ${RT}$, intent(out), allocatable, device :: Q_1(:,:), Q_2(:,:), Q_3(:,:), Q_4(:,:) !< primitive variables (rho, u, v, p)
+    ${RT}$, intent(out), allocatable, device :: T(:,:)        !< temperature field
+    ${RT}$, intent(out), allocatable, device :: mu(:,:)       !< molecular viscosity
+    ${RT}$, intent(out), allocatable, device :: ux(:,:)       !< cell-center du/dx (VISC_ORDER>2 only)
+    ${RT}$, intent(out), allocatable, device :: vy(:,:)       !< cell-center dv/dy (VISC_ORDER>2 only)
+    ${RT}$, intent(out), allocatable, device :: E(:,:,:)      !< flux in x direction
+    ${RT}$, intent(out), allocatable, device :: F(:,:,:)      !< flux in y direction
     integer ierr
     allocate(Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny), &
              E(nx-1,ny-2,4), F(nx-2,ny-1,4), stat=ierr)
@@ -83,15 +83,15 @@ contains
     real(8), intent(in)                      :: Jacobian_cpu(nx,ny) !< Jacobian determinant (host)
     real(8), intent(inout)                   :: Q(nx,ny,4)          !< conservative variables on host
     integer, intent(out)                     :: overlap             !< ghost cell width for MPI halo exchange
-    real(8), intent(out), device, contiguous :: dtdx(nx-2)          !< dt * Sxy (device)
-    real(8), intent(out), device, contiguous :: dtdy(ny-2)          !< dt * Syz (device)
-    real(8), intent(out), device, contiguous :: xix(nx-1)           !< x coordinate metric (device)
-    real(8), intent(out), device, contiguous :: etay(ny-1)          !< y coordinate metric (device)
-    real(8), intent(out), device, contiguous :: Jacobian(nx,ny)     !< Jacobian determinant (device)
-    real(8), intent(out), device, contiguous :: QJ_1(nx,ny)         !< Q(rho) / Jacobian (device)
-    real(8), intent(out), device, contiguous :: QJ_2(nx,ny)         !< Q(rhou) / Jacobian (device)
-    real(8), intent(out), device, contiguous :: QJ_3(nx,ny)         !< Q(rhov) / Jacobian (device)
-    real(8), intent(out), device, contiguous :: QJ_4(nx,ny)         !< Q(E) / Jacobian (device)
+    ${WT}$, intent(out), device, contiguous :: dtdx(nx-2)          !< dt * Sxy (device)
+    ${WT}$, intent(out), device, contiguous :: dtdy(ny-2)          !< dt * Syz (device)
+    ${WT}$, intent(out), device, contiguous :: xix(nx-1)           !< x coordinate metric (device)
+    ${WT}$, intent(out), device, contiguous :: etay(ny-1)          !< y coordinate metric (device)
+    ${WT}$, intent(out), device, contiguous :: Jacobian(nx,ny)     !< Jacobian determinant (device)
+    ${RT}$, intent(out), device, contiguous :: QJ_1(nx,ny)         !< Q(rho) / Jacobian (device)
+    ${RT}$, intent(out), device, contiguous :: QJ_2(nx,ny)         !< Q(rhou) / Jacobian (device)
+    ${RT}$, intent(out), device, contiguous :: QJ_3(nx,ny)         !< Q(rhov) / Jacobian (device)
+    ${RT}$, intent(out), device, contiguous :: QJ_4(nx,ny)         !< Q(E) / Jacobian (device)
     real(4), intent(inout)                   :: ke0                 !< reference kinetic energy
     real(4), intent(inout)                   :: entropy0            !< reference entropy
     real(8) xix_cpu(nx-1), etay_cpu(ny-1)

@@ -71,7 +71,7 @@ _VALUE_NORMALIZE: dict[str, dict[str, str]] = {
     "SLAU_VARIANT": {"slau": "SLAU", "hrslau2": "HRSLAU2"},
     "RECON":        {"muscl": "MUSCL", "weno": "WENO"},
     "WENO_PREC":    {"fp64": "FP64", "w32p64": "W32P64", "mixed": "MIXED"},
-    "PREC":         {"fp64": "FP64", "df": "DF"},
+    "PREC":         {"fp64": "FP64", "df": "DF", "fp32": "FP32"},
     "KEEP_PREC":    {"fp64": "FP64", "mixed": "MIXED"},
     "RIEMANN":      {"slau": "SLAU", "lf": "LF"},
 }

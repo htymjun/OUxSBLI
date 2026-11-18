@@ -1,0 +1,103 @@
+#:include 'prec.fypp'
+#:block fp
+!> Primitive variables (rho, u, v, p), temperature and viscosity from Q / Jacobian (2D_solver).
+!> PREC = 'DF' evaluates the same formulas in the kernel prim2_df: a CUF loop cannot evaluate
+!> fltflt expressions (see "Precision modes" in 3D_solver/CLAUDE.md).
+module calc_physical_quantities
+  use cudafor
+  #:if PREC == 'DF'
+  use mod_prec
+  #:endif
+  use mod_globals, only : gamma, R
+  use mod_constant, only : gamma_1, mu0_T0_S_over_T0_2_3
+  implicit none
+contains
+  subroutine calc_quantities_2D(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T)
+    integer, intent(in), value                 :: nx, ny
+    ${WT}$, intent(in), device, contiguous    :: Jacobian(nx,ny)
+    ${RT}$, intent(in), device, contiguous    :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny) ! Q / Jacobian
+    ${RT}$, intent(inout), device, contiguous :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
+    ${RT}$, intent(inout), device, contiguous :: T(nx,ny)
+    integer i, j
+  #:if PREC == 'DF'
+    call prim2_df<<<dim3((nx+31)/32, (ny+3)/4, 1), dim3(32,4,1)>>>(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, &
+         Q_1, Q_2, Q_3, Q_4, T, T, .false.)
+  #:else
+    ${WT}$ :: over_Q1, rho, u, v, p
+    !$cuf kernel do(2) <<<*,(32,4)>>>
+    do j = 1, ny
+      do i = 1, nx
+        over_Q1  = 1.d0 / QJ_1(i,j)
+        rho      = Jacobian(i,j) * QJ_1(i,j)
+        u        = QJ_2(i,j) * over_Q1
+        v        = QJ_3(i,j) * over_Q1
+        p        = gamma_1 * (Jacobian(i,j) * QJ_4(i,j) - 0.5d0 * rho * (u*u + v*v))
+        Q_1(i,j) = rho
+        Q_2(i,j) = u
+        Q_3(i,j) = v
+        Q_4(i,j) = p
+        T(i,j)   = p / (${W('R')}$ * rho)
+    enddo;enddo
+  #:endif
+  end subroutine calc_quantities_2D
+
+
+  subroutine calc_quantities_T_2D(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T, mu)
+    integer, intent(in), value                 :: nx, ny
+    ${WT}$, intent(in), device, contiguous    :: Jacobian(nx,ny)
+    ${RT}$, intent(in), device, contiguous    :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny) ! Q / Jacobian
+    ${RT}$, intent(inout), device, contiguous :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
+    ${RT}$, intent(inout), device, contiguous :: T(nx,ny)
+    ${RT}$, intent(inout), device, contiguous :: mu(nx,ny)
+    integer i, j
+  #:if PREC == 'DF'
+    call prim2_df<<<dim3((nx+31)/32, (ny+3)/4, 1), dim3(32,4,1)>>>(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, &
+         Q_1, Q_2, Q_3, Q_4, T, mu, .true.)
+  #:else
+    ${WT}$ :: over_Q1, rho, u, v, p, temp
+    !$cuf kernel do(2) <<<*,(32,4)>>>
+    do j = 1, ny
+      do i = 1, nx
+        over_Q1  = 1.d0 / QJ_1(i,j)
+        rho      = Jacobian(i,j) * QJ_1(i,j)
+        u        = QJ_2(i,j) * over_Q1
+        v        = QJ_3(i,j) * over_Q1
+        p        = gamma_1 * (Jacobian(i,j) * QJ_4(i,j) - 0.5d0 * rho * (u*u + v*v))
+        Q_1(i,j) = rho
+        Q_2(i,j) = u
+        Q_3(i,j) = v
+        Q_4(i,j) = p
+        temp     = p / (${W('R')}$ * rho)
+        T(i,j)   = temp
+        mu(i,j)  = mu0_T0_S_over_T0_2_3 / (temp + 110.4d0) * (temp * sqrt(temp))
+    enddo;enddo
+  #:endif
+  end subroutine calc_quantities_T_2D
+  #:if PREC == 'DF'
+
+
+  !> PREC = 'DF': calc_quantities_2D / _T_2D as a kernel (same formulas, mu only if visc).
+  attributes(global) subroutine prim2_df(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T, mu, visc)
+    integer, intent(in), value    :: nx, ny
+    logical, intent(in), value    :: visc
+    real(8), intent(in), device   :: Jacobian(nx,ny)
+    ${RT}$, intent(in), device    :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
+    ${RT}$, intent(inout), device :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
+    ${RT}$, intent(inout), device :: T(nx,ny), mu(nx,ny)
+    ${RT}$ over_Q1, rho, u, v, p, temp
+    integer i, j
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    j = (blockIdx%y-1)*blockDim%y + threadIdx%y
+    if (i > nx .or. j > ny) return
+    over_Q1 = 1.d0 / QJ_1(i,j)
+    rho     = Jacobian(i,j) * QJ_1(i,j)
+    u       = QJ_2(i,j) * over_Q1
+    v       = QJ_3(i,j) * over_Q1
+    p       = gamma_1 * (Jacobian(i,j) * QJ_4(i,j) - 0.5d0 * rho * (u*u + v*v))
+    temp    = p / (R * rho)
+    Q_1(i,j) = rho; Q_2(i,j) = u; Q_3(i,j) = v; Q_4(i,j) = p; T(i,j) = temp
+    if (visc) mu(i,j) = mu0_T0_S_over_T0_2_3 / (temp + 110.4d0) * (temp * sqrt(temp))
+  end subroutine prim2_df
+  #:endif
+end module calc_physical_quantities
+#:endblock fp

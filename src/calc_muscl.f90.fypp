@@ -8,6 +8,7 @@
 #:if not defined('WENO_PREC')
   #:set WENO_PREC = 'FP64'
 #:endif
+#:block fp
 module calc_muscl
   use libm
   #:if RECON == 'WENO'
@@ -113,7 +114,7 @@ contains
     real(sp), intent(in)        :: sensor
     ${RT}$, intent(in)         :: a2, a3, d1, d2, d3
     ${RT}$, intent(out)        :: al, ar
-    real(8), constant :: b = (3.d0 - one_third) / (1.d0 - one_third)
+    ${WT}$, constant :: b = (3.d0 - one_third) / (1.d0 - one_third)
     block
       ${RT}$ dt1, dt2
       dt1 = minmod(d1, b * d2)
@@ -152,10 +153,10 @@ contains
     ${RT}$, intent(out)        :: al, ar
     ! al = a2 + (-0.4d0 * d1 + 2.2d0 * d2 + 4.8d0 * d3 - 0.6d0 * d4) * one_twelfth
     ! ar = a3 - (-0.6d0 * d2 + 4.8d0 * d3 + 2.2d0 * d4 - 0.4d0 * d5) * one_twelfth
-    real(8), parameter :: coef1 = - one_twelfth * 0.4d0
-    real(8), parameter :: coef2 =   one_twelfth * 2.2d0
-    real(8), parameter :: coef3 =   one_twelfth * 4.8d0
-    real(8), parameter :: coef4 = - one_twelfth * 0.6d0
+    ${WT}$, parameter :: coef1 = - one_twelfth * 0.4d0
+    ${WT}$, parameter :: coef2 =   one_twelfth * 2.2d0
+    ${WT}$, parameter :: coef3 =   one_twelfth * 4.8d0
+    ${WT}$, parameter :: coef4 = - one_twelfth * 0.6d0
     !al = a2 + (coef1 * d1 + coef2 * d2 + coef3 * d3 + coef4 * d4)
     al = fma(coef1, d1, a2)
     al = fma(coef2, d2, al)
@@ -411,3 +412,4 @@ contains
   end subroutine delta4_ff
   #:endif
 end module calc_muscl
+#:endblock fp

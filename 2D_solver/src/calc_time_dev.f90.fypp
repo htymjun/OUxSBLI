@@ -1,9 +1,10 @@
 !> Module for time-stepping orchestration and time integration schemes
 !> Implements 3rd-order and 4th-order Runge-Kutta time stepping with MPI/GPU support
-#:include 'config.fypp'
+#:include 'prec.fypp'
 #:if not defined('VISC_ORDER')
   #:set VISC_ORDER = 4 if ORDER >= 4 else 2
 #:endif
+#:block fp
 module calc_time_dev
   use cudafor
   use mpi
@@ -40,12 +41,12 @@ contains
     integer i, j, k, l, t1, t2, overlap, ierr, nranks, ndevices, stat, ireq, ireq2(2)
     integer istat(MPI_STATUS_SIZE), istat2(MPI_STATUS_SIZE,2)
     ! GPU !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    real(8), allocatable, device :: Q_1(:,:), Q_2(:,:), Q_3(:,:), Q_4(:,:)
-    real(8), allocatable, device :: QJ_1(:,:), QJ_2(:,:), QJ_3(:,:), QJ_4(:,:)
-    real(8), allocatable, device :: QJ2_1(:,:), QJ2_2(:,:), QJ2_3(:,:), QJ2_4(:,:)
-    real(8), allocatable, device :: E(:,:,:), F(:,:,:)
-    real(8), allocatable, device :: T(:,:), mu(:,:), ux(:,:), vy(:,:)
-    real(8), allocatable, device :: xix(:), etay(:), Jacobian(:,:), dtdx(:), dtdy(:)
+    ${RT}$, allocatable, device :: Q_1(:,:), Q_2(:,:), Q_3(:,:), Q_4(:,:)
+    ${RT}$, allocatable, device :: QJ_1(:,:), QJ_2(:,:), QJ_3(:,:), QJ_4(:,:)
+    ${RT}$, allocatable, device :: QJ2_1(:,:), QJ2_2(:,:), QJ2_3(:,:), QJ2_4(:,:)
+    ${RT}$, allocatable, device :: E(:,:,:), F(:,:,:)
+    ${RT}$, allocatable, device :: T(:,:), mu(:,:), ux(:,:), vy(:,:)
+    ${WT}$, allocatable, device :: xix(:), etay(:), Jacobian(:,:), dtdx(:), dtdy(:)
     ! for plot
     real(4) :: ke0 = 1.d0, entropy0 = 1.d0
 
@@ -136,13 +137,13 @@ contains
     integer i, j, k, l, t1, t2, overlap, ierr, nranks, ndevices, stat, ireq, ireq2(2)
     integer istat(MPI_STATUS_SIZE), istat2(MPI_STATUS_SIZE,2)
     ! GPU !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    real(8), allocatable, device :: Q_1(:,:), Q_2(:,:), Q_3(:,:), Q_4(:,:)
-    real(8), allocatable, device :: QJ_1(:,:), QJ_2(:,:), QJ_3(:,:), QJ_4(:,:)
-    real(8), allocatable, device :: QJs_1(:,:), QJs_2(:,:), QJs_3(:,:), QJs_4(:,:)
-    real(8), allocatable, device :: Rs(:,:,:)
-    real(8), allocatable, device :: E(:,:,:), F(:,:,:)
-    real(8), allocatable, device :: T(:,:), mu(:,:), ux(:,:), vy(:,:)
-    real(8), allocatable, device :: xix(:), etay(:), Jacobian(:,:), dtdx(:), dtdy(:)
+    ${RT}$, allocatable, device :: Q_1(:,:), Q_2(:,:), Q_3(:,:), Q_4(:,:)
+    ${RT}$, allocatable, device :: QJ_1(:,:), QJ_2(:,:), QJ_3(:,:), QJ_4(:,:)
+    ${RT}$, allocatable, device :: QJs_1(:,:), QJs_2(:,:), QJs_3(:,:), QJs_4(:,:)
+    ${RT}$, allocatable, device :: Rs(:,:,:)
+    ${RT}$, allocatable, device :: E(:,:,:), F(:,:,:)
+    ${RT}$, allocatable, device :: T(:,:), mu(:,:), ux(:,:), vy(:,:)
+    ${WT}$, allocatable, device :: xix(:), etay(:), Jacobian(:,:), dtdx(:), dtdy(:)
     ! for plot
     real(4) :: ke0 = 1.d0, entropy0 = 1.d0
 
@@ -215,3 +216,4 @@ contains
   end subroutine RungeKutta
 #:endif
 end module calc_time_dev
+#:endblock fp

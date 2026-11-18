@@ -24,14 +24,17 @@
   #:set RIEMANN = 'SLAU'
 #:endif
 #:include 'prec.fypp'
-#:if PREC not in ('FP64', 'DF') or KEEP_PREC not in ('FP64', 'MIXED')
-  #:stop "PREC must be 'FP64' or 'DF'; KEEP_PREC 'FP64' or 'MIXED'"
+#:if PREC not in ('FP64', 'DF', 'FP32') or KEEP_PREC not in ('FP64', 'MIXED')
+  #:stop "PREC must be 'FP64', 'DF' or 'FP32'; KEEP_PREC 'FP64' or 'MIXED'"
 #:endif
-#:if PREC == 'DF' and (KEEP_PREC != 'FP64' or WENO_PREC != 'FP64')
-  #:stop "PREC=DF replaces the mixed modes: KEEP_PREC and WENO_PREC must be 'FP64'"
+#:if PREC != 'FP64' and (KEEP_PREC != 'FP64' or WENO_PREC != 'FP64')
+  #:stop "PREC=DF/FP32 replace the mixed modes: KEEP_PREC and WENO_PREC must be 'FP64'"
 #:endif
-#:if (PREC != 'FP64' or KEEP_PREC != 'FP64') and getvar('DIM', 3) != 3
-  #:stop 'PREC and KEEP_PREC are implemented in 3D_solver only'
+#:if PREC == 'FP32' and getvar('DIM', 3) != 2
+  #:stop "PREC='FP32' is implemented in 2D_solver only"
+#:endif
+#:if KEEP_PREC != 'FP64' and getvar('DIM', 3) != 3
+  #:stop 'KEEP_PREC is implemented in 3D_solver only'
 #:endif
 #:if KEEP_PREC != 'FP64' and SCHEME != 'KEEP'
   #:stop 'KEEP_PREC needs SCHEME=KEEP'
@@ -57,29 +60,32 @@
 module mod_constant
   use cudafor
   use mod_globals, only : R, gamma, Pr, dimension
+  #:if PREC == 'FP32'
+  use mod_globals, only : sp
+  #:endif
   #:if FLTFLT_FORK
   use fltflt
   #:endif
   implicit none
   ! real(8)
-  real(8), parameter :: gamma_1        = gamma - 1.d0
-  real(8), parameter :: over_gamma     = 1.d0 / gamma
-  real(8), parameter :: over_gamma_1   = 1.d0 / (gamma - 1.d0)
-  real(8), parameter :: R_over_gamma_1 = R / (gamma - 1.d0)
-  real(8), parameter :: Cp = gamma * R / (gamma - 1.d0)
-  real(8), parameter :: over_Cp     = 1.d0 / Cp
-  real(8), parameter :: Cp_over_Pr  = Cp / Pr
-  real(8), parameter :: over_T0     = 1.d0 / 273.2d0
-  real(8), parameter :: mu0_T0_S_over_T0_2_3 = 1.716d-5 * 383.6d0 * 273.2d0**(-1.5d0) !1.716d-5 * 384.2d0 * 273.2d0**(-1.5d0)
-  real(8), parameter :: one_third   = 1.d0 / 3.d0
-  real(8), parameter :: two_third   = 2.d0 / 3.d0
-  real(8), parameter :: one_sixth   = 1.d0 / 6.d0
-  real(8), parameter :: one_twelfth = 1.d0 / 12.d0
-  real(8), parameter :: one_sixty   = 1.d0 / 60.d0
-  real(8), parameter :: tan10deg2   = (tan(10.d0 * acos(-1.d0) / 180.d0))**2
-  real(8), constant  :: Normal_x(5) = (/0.d0, 1.d0, 0.d0, 0.d0, 0.d0/)
-  real(8), constant  :: Normal_y(5) = (/0.d0, 0.d0, 1.d0, 0.d0, 0.d0/)
-  real(8), constant  :: Normal_z(5) = (/0.d0, 0.d0, 0.d0, 1.d0, 0.d0/)
+  ${WT}$, parameter :: gamma_1        = gamma - 1.d0
+  ${WT}$, parameter :: over_gamma     = 1.d0 / gamma
+  ${WT}$, parameter :: over_gamma_1   = 1.d0 / (gamma - 1.d0)
+  ${WT}$, parameter :: R_over_gamma_1 = R / (gamma - 1.d0)
+  ${WT}$, parameter :: Cp = gamma * R / (gamma - 1.d0)
+  ${WT}$, parameter :: over_Cp     = 1.d0 / Cp
+  ${WT}$, parameter :: Cp_over_Pr  = Cp / Pr
+  ${WT}$, parameter :: over_T0     = 1.d0 / 273.2d0
+  ${WT}$, parameter :: mu0_T0_S_over_T0_2_3 = 1.716d-5 * 383.6d0 * 273.2d0**(-1.5d0) !1.716d-5 * 384.2d0 * 273.2d0**(-1.5d0)
+  ${WT}$, parameter :: one_third   = 1.d0 / 3.d0
+  ${WT}$, parameter :: two_third   = 2.d0 / 3.d0
+  ${WT}$, parameter :: one_sixth   = 1.d0 / 6.d0
+  ${WT}$, parameter :: one_twelfth = 1.d0 / 12.d0
+  ${WT}$, parameter :: one_sixty   = 1.d0 / 60.d0
+  ${WT}$, parameter :: tan10deg2   = (tan(10.d0 * acos(-1.d0) / 180.d0))**2
+  ${WT}$, constant  :: Normal_x(5) = (/0.d0, 1.d0, 0.d0, 0.d0, 0.d0/)
+  ${WT}$, constant  :: Normal_y(5) = (/0.d0, 0.d0, 1.d0, 0.d0, 0.d0/)
+  ${WT}$, constant  :: Normal_z(5) = (/0.d0, 0.d0, 0.d0, 1.d0, 0.d0/)
   #:if FLTFLT_FORK
   ! fltflt (FP32-pair) counterparts -- 3D_solver_fltflt's convective (KEEP/SLAU/
   ! Hybrid/MUSCL) kernels only. Baseline 3D_solver never defines FLTFLT_FORK, so
@@ -113,6 +119,12 @@ module mod_constant
   ! every call (twice per flux point); gamma and over_gamma_1_ff are both fixed
   ! for the whole run, so precompute once.
   type(fltflt), constant :: gamma_over_gamma_1_ff
+  #:endif
+  #:if PREC == 'FP32'
+  ! PREC = 'FP32': the constants above are real(4), rounded once from the double expressions.
+  ! The sensor kind sp (mod_globals) must be 4 as well; an invalid kind here means the case's
+  ! mod_globals.f90 lacks the `#ifdef PREC_FP32` / `sp = 4` lines.
+  integer, parameter :: fp32_needs_sp_4 = int(1, kind=merge(4, -1, sp == 4))
   #:endif
   ! Fypp-generated kind-dispatch parameters
   #:if VISC == 'Euler'

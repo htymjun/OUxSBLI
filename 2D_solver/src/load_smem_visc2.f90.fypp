@@ -1,3 +1,5 @@
+#:include 'prec.fypp'
+#:block fp
 module load_smem_visc2
   use mod_globals, only : threadsEv, threadsFv
   implicit none
@@ -11,12 +13,12 @@ contains
     integer, intent(in), value              :: idx        !< index for shared memory
     integer, intent(in), value              :: nx         !< number of grid points in x direction
     integer, intent(in), value              :: ny         !< number of grid points in y direction
-    real(8), intent(in), device, contiguous :: Q_2(nx,ny) !< u
-    real(8), intent(in), device, contiguous :: Q_3(nx,ny) !< v
+    ${RT}$, intent(in), device, contiguous :: Q_2(nx,ny) !< u
+    ${RT}$, intent(in), device, contiguous :: Q_3(nx,ny) !< v
     integer, parameter :: sx = threadsEv%x + 1
     integer, parameter :: sy = threadsEv%y
-    real(8), intent(inout) :: u(0:sx*sy-1) !< attribute(shared)
-    real(8), intent(inout) :: v(0:sx*sy-1) !< attribute(shared)
+    ${RT}$, intent(inout) :: u(0:sx*sy-1) !< attribute(shared)
+    ${RT}$, intent(inout) :: v(0:sx*sy-1) !< attribute(shared)
     integer i_base, ii, i, idx_l, offset_y
     i_base   = (blockIdx%x-1)*blockDim%x
     offset_y = (jt-1)*sx
@@ -42,12 +44,12 @@ contains
     integer, intent(in), value              :: idx        !< index for shared memory
     integer, intent(in), value              :: nx         !< number of grid points in x direction
     integer, intent(in), value              :: ny         !< number of grid points in y direction
-    real(8), intent(in), device, contiguous :: Q_2(nx,ny) !< u
-    real(8), intent(in), device, contiguous :: Q_3(nx,ny) !< v
+    ${RT}$, intent(in), device, contiguous :: Q_2(nx,ny) !< u
+    ${RT}$, intent(in), device, contiguous :: Q_3(nx,ny) !< v
     integer, parameter :: sx = threadsFv%x
     integer, parameter :: sy = threadsFv%y + 1
-    real(8), intent(inout) :: u(0:sx*sy-1) !< attribute(shared)
-    real(8), intent(inout) :: v(0:sx*sy-1) !< attribute(shared)
+    ${RT}$, intent(inout) :: u(0:sx*sy-1) !< attribute(shared)
+    ${RT}$, intent(inout) :: v(0:sx*sy-1) !< attribute(shared)
     integer j_base, jj, j, idx_l, offset_x
     j_base   = (blockIdx%y-1)*blockDim%y
     offset_x = (it-1)*sy
@@ -65,3 +67,4 @@ contains
     call syncthreads()
   end subroutine load_smem_visc2_y
 end module load_smem_visc2
+#:endblock fp

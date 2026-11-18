@@ -74,16 +74,21 @@ module calc_weno
   #:endif
   implicit none
   private
+  #:if PREC == 'FP32'
+  public weno5z_fp64
+  #:else
   public weno5z_fp64, weno5z_w32p64, weno5z_mixed
+  #:endif
 
   real(8), parameter :: eps64 = 1.0d-20
   real(4), parameter :: eps32 = 1.0e-20_4
   real(4), parameter :: ratio_cap = 1.0e9_4
   ! candidate polynomials with the 1/6 folded into the coefficients
-  real(8), parameter :: c1 = 1.d0 / 6.d0, c2 = 2.d0 / 6.d0, c5 = 5.d0 / 6.d0
-  real(8), parameter :: c7 = 7.d0 / 6.d0, c11 = 11.d0 / 6.d0
+  ${WT}$, parameter :: c1 = 1.d0 / 6.d0, c2 = 2.d0 / 6.d0, c5 = 5.d0 / 6.d0
+  ${WT}$, parameter :: c7 = 7.d0 / 6.d0, c11 = 11.d0 / 6.d0
 contains
 
+  #:if PREC != 'FP32'
   ! ------------------------------------------------------------------
   ! FP64 nonlinear weights from one 5-point substencil window.
   ! d0..d2 are the linear weights of the bias (mirrored left/right).
@@ -114,6 +119,7 @@ contains
     w1 = a1 * invs
     w2 = a2 * invs
   end subroutine weights5_64
+  #:endif
 
 
   ! ------------------------------------------------------------------
@@ -125,7 +131,7 @@ contains
   ! normalisation is rcp + one Newton step.
   ! ------------------------------------------------------------------
   attributes(device) subroutine weights5_32(v1, v2, v3, v4, v5, d0, d1, d2, w0, w1, w2)
-    real(8), intent(in)  :: v1, v2, v3, v4, v5
+    ${WT}$, intent(in)  :: v1, v2, v3, v4, v5
     real(4), intent(in)  :: d0, d1, d2
     real(4), intent(out) :: w0, w1, w2
     real(4), parameter :: c13_12 = 13.0_4 / 12.0_4
@@ -169,6 +175,23 @@ contains
     ${RT}$, intent(in), contiguous :: a(6)
     ${RT}$, intent(out)            :: al, ar
     ${RT}$ w0, w1, w2, p0, p1, p2
+  #:if PREC == 'FP32'
+    ! PREC = 'FP32': the whole reconstruction in FP32. The weights are the capped FP32 ones of
+    ! W32P64 (the r*r of weights5_64 overflows in FP32 where a smoothness indicator vanishes),
+    ! and so is its partition-of-unity combine.
+    call weights5_32(a(1), a(2), a(3), a(4), a(5), 0.1_4, 0.6_4, 0.3_4, w0, w1, w2)
+    p0 =  c2 * a(1) - c7 * a(2) + c11 * a(3)
+    p1 = -c1 * a(2) + c5 * a(3) +  c2 * a(4)
+    p2 =  c2 * a(3) + c5 * a(4) -  c1 * a(5)
+    al = p0 + w1 * (p1 - p0)
+    al = al + w2 * (p2 - p0)
+    call weights5_32(a(2), a(3), a(4), a(5), a(6), 0.3_4, 0.6_4, 0.1_4, w0, w1, w2)
+    p0 = -c1 * a(2) + c5 * a(3) +  c2 * a(4)
+    p1 =  c2 * a(3) + c5 * a(4) -  c1 * a(5)
+    p2 = c11 * a(4) - c7 * a(5) +  c2 * a(6)
+    ar = p0 + w1 * (p1 - p0)
+    ar = ar + w2 * (p2 - p0)
+  #:else
     ! v^- from a(1..5), linear weights (1, 6, 3)/10
     call weights5_64(a(1), a(2), a(3), a(4), a(5), 0.1d0, 0.6d0, 0.3d0, w0, w1, w2)
     p0 =  c2 * a(1) - c7 * a(2) + c11 * a(3)
@@ -185,9 +208,11 @@ contains
     ar = w0 * p0
     ar = ar + w1 * p1
     ar = ar + w2 * p2
+  #:endif
   end subroutine weno5z_fp64
 
 
+  #:if PREC != 'FP32'
   ! ------------------------------------------------------------------
   ! W32P64 WENO5-Z: FP32 weights, FP64 polynomials, partition-of-unity
   ! combine p0 + w1*(p1-p0) + w2*(p2-p0) in FP64 (w0 is implied).
@@ -231,4 +256,5 @@ contains
     call weights5_32(a(2), a(3), a(4), a(5), a(6), 0.3_4, 0.6_4, 0.1_4, w0, w1, w2)
     ar = a(4) + dble((w0 * (g2 - 4.0_4 * g3) - w1 * (2.0_4 * g3 + g4) + w2 * (2.0_4 * g5 - 5.0_4 * g4)) / 6.0_4)
   end subroutine weno5z_mixed
+  #:endif
 end module calc_weno

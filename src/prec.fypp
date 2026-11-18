@@ -8,7 +8,12 @@
 #:if not defined('KEEP_PREC')
   #:set KEEP_PREC = 'FP64'
 #:endif
-#:set RT = 'type(fltflt)' if PREC == 'DF' else 'real(8)'
+#! WT: working real kind of metrics, coefficients and constants; RT: state/flux type.
+#!   PREC   FP64     DF            FP32 (2D_solver only)
+#!   WT     real(8)  real(8)       real(4)
+#!   RT     real(8)  type(fltflt)  real(4)
+#:set WT = 'real(4)' if PREC == 'FP32' else 'real(8)'
+#:set RT = 'type(fltflt)' if PREC == 'DF' else WT
 #:set KT = 'type(dev)' if KEEP_PREC != 'FP64' else RT
 #:set VAL = '' if PREC == 'DF' else ', value'
 #:set KEEP_PROCS = 'KEEP2, KEEP4, KEEP6' + (', KEEPm2, KEEPm4, KEEPm6' if KEEP_PREC != 'FP64' else '')
@@ -16,3 +21,12 @@
 #:set STCG = 'store' if PREC == 'DF' else '__stcg'
 #:set LDCS = 'ld' if PREC == 'DF' else '__ldcs'
 #:set LDLU = 'ld' if PREC == 'DF' else '__ldlu'
+#:set STCS = 'store' if PREC == 'DF' else '__stcs'
+#! W(name): a real(8) named constant (mod_globals' gamma, R, ...) in the working kind
+#:set W = lambda n: n if PREC != 'FP32' else 'real(%s, 4)' % n
+#! fp: block filter around device code. PREC = 'FP32' turns every double literal (1.d0, 2.5d-3)
+#! into a single one, so that no expression is promoted to FP64; other modes pass the text
+#! through unchanged. Needs `fypp -m re` (2D_solver/CMakeLists.txt) only when PREC = 'FP32'.
+#:def fp(code)
+$:re.sub(r'(?i)(?<![\w.])(\d+\.?\d*|\.\d+)d([-+]?\d+)', r'\1e\2', code) if PREC == 'FP32' else code
+#:enddef fp
