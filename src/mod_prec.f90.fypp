@@ -14,6 +14,28 @@ module mod_prec
 #:endif
   implicit none
 #:if PREC == 'DF'
+  !> fltw: a real(8) metric or coefficient split into fltflt on the host (fltflt_init). Its mixed
+  !> operations with fltflt reproduce FmaX's real(8) overloads bit for bit (same operand order,
+  !> same split) without the FP64 instructions of the split on the device.
+  type, public :: fltw
+    type(fltflt) :: v
+  end type fltw
+  interface operator(+)
+    module procedure add_wf, add_fw
+  end interface
+  interface operator(-)
+    module procedure sub_wf, sub_fw, neg_w
+  end interface
+  interface operator(*)
+    module procedure mul_wf, mul_fw
+  end interface
+  interface operator(/)
+    module procedure div_wf, div_fw
+  end interface
+  interface wsplit
+    module procedure wsplit_s
+  end interface
+  public :: wsplit, whi, wlo
   interface sqrt
     procedure fltflt_sqrt
   end interface
@@ -49,7 +71,7 @@ module mod_prec
     module procedure real_f
   end interface
   interface fma
-    module procedure fma_fff, fma_rff, fma_ffr
+    module procedure fma_fff, fma_rff, fma_ffr, fma_wff, fma_ffw
   end interface
   interface dble
     module procedure dble_ff
@@ -61,7 +83,7 @@ module mod_prec
     module procedure ld_ff, ld_r8
   end interface
   interface assignment(=)
-    module procedure set_ff_r8, set_r8_ff, upload3, download3, copy3, fill3, fill4${', upload2, download2, copy2' if getvar('DIM', 3) == 2 else ''}$
+    module procedure set_ff_r8, set_r8_ff, set_ff_w, upload_w1, upload_w2, upload3, download3, copy3, fill3, fill4${', upload2, download2, copy2' if getvar('DIM', 3) == 2 else ''}$
   end interface
 #:endif
 #:if KEEP_PREC != 'FP64'
@@ -292,6 +314,117 @@ contains
     call copy8(size(a), a, b)
   end subroutine copy2
   #:endif
+
+  ! ---- fltw: the FmaX real(8) overload with init_from_r8(b) replaced by the pre-split w%v
+  attributes(device) type(fltflt) function add_wf(a, b)  ! add_r8_ff: add_ff_ff(b, init(a))
+    type(fltw), intent(in)   :: a
+    type(fltflt), intent(in) :: b
+    add_wf = b + a%v
+  end function add_wf
+
+  attributes(device) type(fltflt) function add_fw(a, b)  ! add_ff_r8: add_ff_ff(a, init(b))
+    type(fltflt), intent(in) :: a
+    type(fltw), intent(in)   :: b
+    add_fw = a + b%v
+  end function add_fw
+
+  attributes(device) type(fltflt) function sub_wf(a, b)  ! sub_r8_ff: add_ff_ff(-b, init(a))
+    type(fltw), intent(in)   :: a
+    type(fltflt), intent(in) :: b
+    sub_wf = (-b) + a%v
+  end function sub_wf
+
+  attributes(device) type(fltflt) function sub_fw(a, b)  ! sub_ff_r8: add_ff_ff(a, init(-b)), init(-b) = -init(b)
+    type(fltflt), intent(in) :: a
+    type(fltw), intent(in)   :: b
+    sub_fw = a + (-b%v)
+  end function sub_fw
+
+  attributes(device) type(fltw) function neg_w(a)  ! init(-a) = -init(a)
+    type(fltw), intent(in) :: a
+    neg_w%v = -a%v
+  end function neg_w
+
+  attributes(device) type(fltflt) function mul_wf(a, b)  ! mul_r8_ff: mul_ff_ff(b, init(a))
+    type(fltw), intent(in)   :: a
+    type(fltflt), intent(in) :: b
+    mul_wf = b * a%v
+  end function mul_wf
+
+  attributes(device) type(fltflt) function mul_fw(a, b)  ! mul_ff_r8: mul_ff_ff(a, init(b))
+    type(fltflt), intent(in) :: a
+    type(fltw), intent(in)   :: b
+    mul_fw = a * b%v
+  end function mul_fw
+
+  attributes(device) type(fltflt) function div_wf(a, b)  ! div_r8_ff: div_ff_ff(init(a), b)
+    type(fltw), intent(in)   :: a
+    type(fltflt), intent(in) :: b
+    div_wf = a%v / b
+  end function div_wf
+
+  attributes(device) type(fltflt) function div_fw(a, b)  ! div_ff_r8: div_ff_ff(a, init(b))
+    type(fltflt), intent(in) :: a
+    type(fltw), intent(in)   :: b
+    div_fw = a / b%v
+  end function div_fw
+
+  attributes(device) type(fltflt) function fma_wff(a, b, c)  ! fma_rff: a * b + c
+    type(fltw), intent(in)   :: a
+    type(fltflt), intent(in) :: b, c
+    fma_wff = mul_wf(a, b) + c
+  end function fma_wff
+
+  attributes(device) type(fltflt) function fma_ffw(a, b, c)  ! fma_ffr: a * b + c
+    type(fltflt), intent(in) :: a, b
+    type(fltw), intent(in)   :: c
+    fma_ffw = add_fw(a * b, c)
+  end function fma_ffw
+
+  elemental attributes(host, device) subroutine set_ff_w(a, b)
+    type(fltflt), intent(out) :: a
+    type(fltw), intent(in)    :: b
+    a = b%v
+  end subroutine set_ff_w
+
+  !> host split of real(8) values (the device arrays are set with the assignments below)
+  elemental type(fltw) function wsplit_s(b)
+    real(8), intent(in) :: b
+    wsplit_s%v = fltflt_init(b)
+  end function wsplit_s
+
+  !> FP32 parts of the split of a real(8) host value (DF kernel arguments, prec.fypp KACT)
+  real(4) function whi(b)
+    real(8), intent(in) :: b
+    type(fltflt) :: t
+    t = fltflt_init(b)
+    whi = t%hi
+  end function whi
+
+  real(4) function wlo(b)
+    real(8), intent(in) :: b
+    type(fltflt) :: t
+    t = fltflt_init(b)
+    wlo = t%lo
+  end function wlo
+
+  subroutine upload_w1(a, b)
+    type(fltw), device, intent(out) :: a(:)
+    real(8), intent(in)             :: b(:)
+    type(fltw), allocatable :: t(:)
+    allocate(t(size(b)))
+    t = wsplit_s(b)
+    a = t
+  end subroutine upload_w1
+
+  subroutine upload_w2(a, b)
+    type(fltw), device, intent(out) :: a(:,:)
+    real(8), intent(in)             :: b(:,:)
+    type(fltw), allocatable :: t(:,:)
+    allocate(t(size(b,1), size(b,2)))
+    t = wsplit_s(b)
+    a = t
+  end subroutine upload_w2
 #:endif
 #:if KEEP_PREC != 'FP64'
   pure attributes(device) type(dev) function add_vv(x, y)

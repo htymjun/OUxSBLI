@@ -15,6 +15,19 @@
 #:set WT = 'real(4)' if PREC == 'FP32' else 'real(8)'
 #:set RT = 'type(fltflt)' if PREC == 'DF' else WT
 #:set KT = 'type(dev)' if KEEP_PREC != 'FP64' else RT
+#! MT: device metrics and RK coefficients of the 2D_solver kernels. DF: type(fltw) (mod_prec), the
+#!   real(8) values split on the host, so no kernel splits a real(8) on the FP64 pipe; else WT.
+#:set MT = 'type(fltw)' if PREC == 'DF' else WT
+#! MT scalars: kernels cannot take a derived type by value (nvfortran 25.5), so a DF kernel takes
+#!   the two FP32 parts. KARG(n): dummy list; KDECL(n): their declaration; KSET(n): rebuild n
+#!   (declare `${MT}$ n` locally in DF); KACT(x): actual list from a real(8) host expression.
+#!   MVAL: ', value' for MT dummies of device procedures (DF passes fltw by reference).
+#:set KARG = lambda n: '%s_h, %s_l' % (n, n) if PREC == 'DF' else n
+#:set KDECL = lambda n: 'real(4), intent(in), value :: %s_h, %s_l' % (n, n) if PREC == 'DF' else '%s, intent(in), value :: %s' % (WT, n)
+#:set KSET = lambda n: '%s = fltw(fltflt(%s_h, %s_l))' % (n, n, n) if PREC == 'DF' else ''
+#:set KACT = lambda x: 'whi(%s), wlo(%s)' % (x, x) if PREC == 'DF' else x
+#:set MVAL = '' if PREC == 'DF' else ', value'
+#:set ONE_MT = 'fltw(fltflt(1.e0, 0.e0))' if PREC == 'DF' else '1.d0'
 #:set VAL = '' if PREC == 'DF' else ', value'
 #:set KEEP_PROCS = 'KEEP2, KEEP4, KEEP6' + (', KEEPm2, KEEPm4, KEEPm6' if KEEP_PREC != 'FP64' else '')
 #! cache-hint loads/stores take intrinsic types only: plain ones for DF (mod_prec ld/store)

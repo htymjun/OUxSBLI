@@ -25,8 +25,8 @@ contains
   attributes(global) subroutine calc_Ev4(nx, ny, dx, dy, Q_2, Q_3, T, mu, vy_in, E)
     integer, intent(in), value                 :: nx             !< number of grid points in x direction
     integer, intent(in), value                 :: ny             !< number of grid points in y direction
-    ${WT}$, intent(in), device, contiguous    :: dx(nx-1)       !< inverse grid spacing in x (1/dx)
-    ${WT}$, intent(in), device, contiguous    :: dy(ny-1)       !< inverse grid spacing in y (1/dy)
+    ${MT}$, intent(in), device, contiguous    :: dx(nx-1)       !< inverse grid spacing in x (1/dx)
+    ${MT}$, intent(in), device, contiguous    :: dy(ny-1)       !< inverse grid spacing in y (1/dy)
     ${RT}$, intent(in), device, contiguous    :: Q_2(nx,ny)     !< u
     ${RT}$, intent(in), device, contiguous    :: Q_3(nx,ny)     !< v
     ${RT}$, intent(in), device, contiguous    :: T(nx,ny)       !< temperature at grid points
@@ -105,8 +105,8 @@ contains
   attributes(global) subroutine calc_Fv4(nx, ny, dy, dx, Q_2, Q_3, T, mu, ux_in, F)
     integer, intent(in), value                 :: nx             !< number of grid points in x direction
     integer, intent(in), value                 :: ny             !< number of grid points in y direction
-    ${WT}$, intent(in), device, contiguous    :: dy(ny-1)       !< inverse grid spacing in y (1/dy)
-    ${WT}$, intent(in), device, contiguous    :: dx(nx-1)       !< inverse grid spacing in x (1/dx)
+    ${MT}$, intent(in), device, contiguous    :: dy(ny-1)       !< inverse grid spacing in y (1/dy)
+    ${MT}$, intent(in), device, contiguous    :: dx(nx-1)       !< inverse grid spacing in x (1/dx)
     ${RT}$, intent(in), device, contiguous    :: Q_2(nx,ny)     !< u
     ${RT}$, intent(in), device, contiguous    :: Q_3(nx,ny)     !< v
     ${RT}$, intent(in), device, contiguous    :: T(nx,ny)       !< temperature at grid points

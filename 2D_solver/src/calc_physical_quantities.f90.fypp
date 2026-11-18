@@ -14,7 +14,7 @@ module calc_physical_quantities
 contains
   subroutine calc_quantities_2D(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T)
     integer, intent(in), value                 :: nx, ny
-    ${WT}$, intent(in), device, contiguous    :: Jacobian(nx,ny)
+    ${MT}$, intent(in), device, contiguous    :: Jacobian(nx,ny)
     ${RT}$, intent(in), device, contiguous    :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny) ! Q / Jacobian
     ${RT}$, intent(inout), device, contiguous :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
     ${RT}$, intent(inout), device, contiguous :: T(nx,ny)
@@ -44,7 +44,7 @@ contains
 
   subroutine calc_quantities_T_2D(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T, mu)
     integer, intent(in), value                 :: nx, ny
-    ${WT}$, intent(in), device, contiguous    :: Jacobian(nx,ny)
+    ${MT}$, intent(in), device, contiguous    :: Jacobian(nx,ny)
     ${RT}$, intent(in), device, contiguous    :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny) ! Q / Jacobian
     ${RT}$, intent(inout), device, contiguous :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
     ${RT}$, intent(inout), device, contiguous :: T(nx,ny)
@@ -80,7 +80,7 @@ contains
   attributes(global) subroutine prim2_df(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T, mu, visc)
     integer, intent(in), value    :: nx, ny
     logical, intent(in), value    :: visc
-    real(8), intent(in), device   :: Jacobian(nx,ny)
+    ${MT}$, intent(in), device   :: Jacobian(nx,ny)
     ${RT}$, intent(in), device    :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
     ${RT}$, intent(inout), device :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
     ${RT}$, intent(inout), device :: T(nx,ny), mu(nx,ny)

@@ -18,7 +18,7 @@
     ${RT}$, intent(in), contiguous :: mu(3) !< viscosity at 3 stencil points
     ${RT}$, intent(in), contiguous :: u(6)  !< velocity u at 6-point stencil
     ${RT}$, intent(in), contiguous :: vy(6) !< dv/dy at 6-point stencil
-    ${WT}$, intent(in)             :: d     !< inverse grid spacing (1/dx or 1/dy)
+    ${MT}$, intent(in)             :: d     !< inverse grid spacing (1/dx or 1/dy)
     ${RT}$, intent(out)            :: t11   !< stress tensor component t_11
     ${RT}$, intent(out)            :: ut11  !< work term u * t_11
     ${RT}$ tmp1, tmp2, tmp3
@@ -58,7 +58,7 @@
     ${RT}$, intent(in), contiguous :: mu(3) !< viscosity at 3 stencil points
     ${RT}$, intent(in), contiguous :: v(6)  !< velocity v at 6-point stencil
     ${RT}$, intent(in), contiguous :: uy(6) !< du/dy at 6-point stencil
-    ${WT}$, intent(in)             :: d      !< inverse grid spacing
+    ${MT}$, intent(in)             :: d      !< inverse grid spacing
     ${RT}$, intent(out)            :: t12    !< shear stress component t_12
     ${RT}$, intent(out)            :: vt12   !< work term v * t_12
     ${RT}$ tmp1, tmp2, tmp3

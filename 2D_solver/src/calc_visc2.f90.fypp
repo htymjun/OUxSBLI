@@ -15,8 +15,8 @@ contains
   attributes(global) subroutine calc_Ev2(nx, ny, dx, dy, Q_2, Q_3, T, mu, E)
     integer, intent(in), value                 :: nx
     integer, intent(in), value                 :: ny
-    ${WT}$, intent(in), device, contiguous    :: dx(nx-1)
-    ${WT}$, intent(in), device, contiguous    :: dy(ny-1)
+    ${MT}$, intent(in), device, contiguous    :: dx(nx-1)
+    ${MT}$, intent(in), device, contiguous    :: dy(ny-1)
     ${RT}$, intent(in), device, contiguous    :: Q_2(nx,ny)
     ${RT}$, intent(in), device, contiguous    :: Q_3(nx,ny)
     ${RT}$, intent(in), device, contiguous    :: T(nx,ny)
@@ -89,8 +89,8 @@ contains
   attributes(global) subroutine calc_Fv2(nx, ny, dy, dx, Q_2, Q_3, T, mu, F)
     integer, intent(in), value                 :: nx
     integer, intent(in), value                 :: ny
-    ${WT}$, intent(in), device, contiguous    :: dy(ny-1)
-    ${WT}$, intent(in), device, contiguous    :: dx(nx-1)
+    ${MT}$, intent(in), device, contiguous    :: dy(ny-1)
+    ${MT}$, intent(in), device, contiguous    :: dx(nx-1)
     ${RT}$, intent(in), device, contiguous    :: Q_2(nx,ny)
     ${RT}$, intent(in), device, contiguous    :: Q_3(nx,ny)
     ${RT}$, intent(in), device, contiguous    :: T(nx,ny)
