@@ -66,7 +66,7 @@ DF / FP32 differ by 1e-9..1e-6 (OS, BL) and 1e-3 (SWLBLI, after 40 steps from th
 start), for the wiggle-detector reason given above; EVC with HR-SLAU2 5e-11 (velocity) under DF.
 
 TVD-RK3 stages 2 and 3 (`calc_step2_3`) are evaluated in increment form,
-Q^(n+1) = Q^(*) + (alpha (Q^n - Q^(*)) - gamma R) / (alpha + beta), as in cns2d; the former
+Q^(n+1) = Q^(*) + (alpha (Q^n - Q^(*)) - gamma R) / (alpha + beta); the former
 (alpha Q^n + beta Q^(*) - gamma R) / (alpha + beta) multiplied the whole state by the rounded
 1/3. Uniform gas (EVC with beta = 0, 150 steps): in FP32 the old form moved rho by 1 ulp within
 the first 50 steps, the increment form keeps it unchanged. FP64: RK4 configurations unchanged,

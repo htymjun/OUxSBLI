@@ -137,7 +137,7 @@ contains
     coef3_dtdx = coef3 * dtdx(i)
     coef3_dtdy = coef3 * dtdy(j)
     call calc_R(nx, ny, i, j, coef3_dtdx, coef3_dtdy, E, F, R)
-    ! Increment form of the convex combination (same as ~2d/cns calc_step2_3)
+    ! Increment form of the convex combination
     ! Qout is write-once here, not re-read until the next kernel launch: __stcs
     block
       ${RT}$ qin_val, qout_val, val
