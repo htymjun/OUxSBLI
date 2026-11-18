@@ -20,7 +20,7 @@ contains
     integer, intent(in), value              :: j            !< global idx for y direction
     integer, intent(in), value              :: nx           !< number of grid points in x direction
     integer, intent(in), value              :: ny           !< number of grid points in y direction
-    ${WT}$, intent(in), device, contiguous :: inv_dy(ny-1) !< inverse grid spacing in y (1/dy)
+    ${MT}$, intent(in), device, contiguous :: inv_dy(ny-1) !< inverse grid spacing in y (1/dy)
     ${RT}$, intent(in), device, contiguous :: Q_2(nx,ny)   !< rho*u
     ${RT}$, intent(in), device, contiguous :: Q_3(nx,ny)   !< rho*v
     integer, parameter :: io_v = 2
@@ -59,7 +59,7 @@ contains
     integer, intent(in), value              :: i            !< global idx for x direction
     integer, intent(in), value              :: nx           !< number of grid points in x direction
     integer, intent(in), value              :: ny           !< number of grid points in y direction
-    ${WT}$, intent(in), device, contiguous :: inv_dx(nx-1) !< inverse grid spacing in x (1/dx)
+    ${MT}$, intent(in), device, contiguous :: inv_dx(nx-1) !< inverse grid spacing in x (1/dx)
     ${RT}$, intent(in), device, contiguous :: Q_2(nx,ny)   !< rho*u
     ${RT}$, intent(in), device, contiguous :: Q_3(nx,ny)   !< rho*v
     integer, parameter :: io_v = 2

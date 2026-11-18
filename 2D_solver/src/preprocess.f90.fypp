@@ -38,10 +38,10 @@ contains
     integer, intent(in)                       :: myrank        !< MPI rank
     integer, intent(in)                       :: nx            !< x grid dimension
     integer, intent(in)                       :: ny            !< y grid dimension
-    ${WT}$, intent(out), allocatable, device :: dtdx(:)       !< dt * Sxy
-    ${WT}$, intent(out), allocatable, device :: dtdy(:)       !< dt * Syz
-    ${WT}$, intent(out), allocatable, device :: xix(:)        !< coordinate transform metric in x
-    ${WT}$, intent(out), allocatable, device :: etay(:)       !< coordinate transform metric in y
+    ${MT}$, intent(out), allocatable, device :: dtdx(:)       !< dt * Sxy
+    ${MT}$, intent(out), allocatable, device :: dtdy(:)       !< dt * Syz
+    ${MT}$, intent(out), allocatable, device :: xix(:)        !< coordinate transform metric in x
+    ${MT}$, intent(out), allocatable, device :: etay(:)       !< coordinate transform metric in y
     ${WT}$, intent(out), allocatable, device :: Jacobian(:,:) !< Jacobian determinant for coordinate transform
     ${RT}$, intent(out), allocatable, device :: Q_1(:,:), Q_2(:,:), Q_3(:,:), Q_4(:,:) !< primitive variables (rho, u, v, p)
     ${RT}$, intent(out), allocatable, device :: T(:,:)        !< temperature field
@@ -90,10 +90,10 @@ contains
     real(8), intent(in)                      :: Jacobian_cpu(nx,ny) !< Jacobian determinant (host)
     real(8), intent(inout)                   :: Q(nx,ny,4)          !< conservative variables on host
     integer, intent(out)                     :: overlap             !< ghost cell width for MPI halo exchange
-    ${WT}$, intent(out), device, contiguous :: dtdx(nx-2)          !< dt * Sxy (device)
-    ${WT}$, intent(out), device, contiguous :: dtdy(ny-2)          !< dt * Syz (device)
-    ${WT}$, intent(out), device, contiguous :: xix(nx-1)           !< x coordinate metric (device)
-    ${WT}$, intent(out), device, contiguous :: etay(ny-1)          !< y coordinate metric (device)
+    ${MT}$, intent(out), device, contiguous :: dtdx(nx-2)          !< dt * Sxy (device)
+    ${MT}$, intent(out), device, contiguous :: dtdy(ny-2)          !< dt * Syz (device)
+    ${MT}$, intent(out), device, contiguous :: xix(nx-1)           !< x coordinate metric (device)
+    ${MT}$, intent(out), device, contiguous :: etay(ny-1)          !< y coordinate metric (device)
     ${WT}$, intent(out), device, contiguous :: Jacobian(nx,ny)     !< Jacobian determinant (device)
     ${RT}$, intent(out), device, contiguous :: QJ_1(nx,ny)         !< Q(rho) / Jacobian (device)
     ${RT}$, intent(out), device, contiguous :: QJ_2(nx,ny)         !< Q(rhou) / Jacobian (device)
@@ -140,4 +140,37 @@ contains
     call print0(myrank, nx, ny, x, y, Jacobian_cpu, Q, ke0, entropy0)
 #:endif
   end subroutine pre_calc
+#:if PREC == 'DF'
+
+
+  !> DF: the real(8) metrics of calc_EF and the RK3 stages split on the host (mod_prec fltw), so
+  !> that no kernel splits a real(8) value on the FP64 pipe. JacW is the split of Jacobian; the
+  !> RK3 stage weights 1/4 and 2 are powers of two, so scaling both FP32 parts of the split
+  !> of dtdx is exact and equals the split of (weight * dtdx).
+  subroutine split_metrics(nx, ny, Jacobian_cpu, dtdx, dtdy, JacW, dtdx_q, dtdy_q, dtdx_2, dtdy_2)
+    use mod_globals, only : dt
+    integer, intent(in)                            :: nx, ny
+    real(8), intent(in)                            :: Jacobian_cpu(nx,ny)
+    type(fltw), intent(in), device                 :: dtdx(nx-2), dtdy(ny-2)
+    type(fltw), allocatable, intent(out), device   :: JacW(:,:)
+    type(fltw), allocatable, intent(out), device   :: dtdx_q(:), dtdy_q(:), dtdx_2(:), dtdy_2(:)
+    type(fltw) hx(nx-2), hy(ny-2)
+    allocate(JacW(nx,ny), dtdx_q(nx-2), dtdy_q(ny-2), dtdx_2(nx-2), dtdy_2(ny-2))
+    JacW   = Jacobian_cpu
+    hx = dtdx
+    hy = dtdy
+    dtdx_q = scaled(hx, 0.25e0)
+    dtdy_q = scaled(hy, 0.25e0)
+    dtdx_2 = scaled(hx, 2.e0)
+    dtdy_2 = scaled(hy, 2.e0)
+  contains
+    function scaled(a, c) result(b)
+      type(fltw), intent(in) :: a(:)
+      real(4), intent(in)    :: c  ! a power of two
+      type(fltw) :: b(size(a))
+      b%v%hi = c * a%v%hi
+      b%v%lo = c * a%v%lo
+    end function scaled
+  end subroutine split_metrics
+#:endif
 end module preprocess
