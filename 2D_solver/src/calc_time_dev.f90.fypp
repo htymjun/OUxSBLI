@@ -1,8 +1,9 @@
 !> Module for time-stepping orchestration and time integration schemes
 !> Implements 3rd-order and 4th-order Runge-Kutta time stepping with MPI/GPU support
 #:include 'prec.fypp'
-#! DF: split metric arrays (mod_prec fltw) for calc_EF and the RK3 stages 2 and 3
+#! DF: split metric arrays (mod_prec fltw) for calc_EF, calc_source and the RK3 stages 2 and 3
 #:set JEF = 'JacW' if PREC == 'DF' else 'Jacobian'
+#:set JSRC = 'dtdV_w' if PREC == 'DF' else 'Jacobian'
 #:set DTQ = 'dtdx_q, dtdy_q' if PREC == 'DF' else 'dtdx, dtdy'
 #:set DT2 = 'dtdx_2, dtdy_2' if PREC == 'DF' else 'dtdx, dtdy'
 #:if not defined('VISC_ORDER')
@@ -71,9 +72,9 @@ contains
     ${MT}$, allocatable, device :: xix(:), etay(:), dtdx(:), dtdy(:)
     ${WT}$, allocatable, device :: Jacobian(:,:)
 #:if PREC == 'DF'
-    ! split on the host (mod_prec fltw): Jacobian for calc_EF, dtdx and dtdy times the RK3 stage
-    ! weights 1/4 and 2
-    type(fltw), allocatable, device :: JacW(:,:), dtdx_q(:), dtdy_q(:), dtdx_2(:), dtdy_2(:)
+    ! split on the host (mod_prec fltw): Jacobian for calc_EF, dt / Jacobian for calc_source,
+    ! dtdx and dtdy times the RK3 stage weights 1/4 and 2
+    type(fltw), allocatable, device :: JacW(:,:), dtdV_w(:,:), dtdx_q(:), dtdy_q(:), dtdx_2(:), dtdy_2(:)
 #:endif
 #:if FLUCT
     integer(8) keyA, keyB
@@ -105,7 +106,7 @@ contains
       call pre_calc(nx, ny, myrank, nranks, x, dx_cpu, y, dy_cpu, Jacobian_cpu, Q, overlap, &
                     dtdx, dtdy, xix, etay, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, ke0, entropy0)
 #:if PREC == 'DF'
-      call split_metrics(nx, ny, Jacobian_cpu, dtdx, dtdy, JacW, dtdx_q, dtdy_q, dtdx_2, dtdy_2)
+      call split_metrics(nx, ny, Jacobian_cpu, dtdx, dtdy, JacW, dtdV_w, dtdx_q, dtdy_q, dtdx_2, dtdy_2)
 #:endif
 #:if SOURCE
       ! body force per unit mass, tabulated by the case (set_force in set.f90)
@@ -154,10 +155,10 @@ contains
 #:if SOURCE
           call calc_cooling(nx, ny, Q_4, q_cool)
 #:if FLUCT
-          call calc_source_term<<<blocks,threads>>>(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr, &
+          call calc_source_term<<<blocks,threads>>>(nx, ny, ${JSRC}$, Q_1, Q_2, Q_3, fx, fy, ${KACT('q_cool')}$, Sr, &
                                                     T, s_fric, keyA, keyB, beta_s)
 #:else
-          call calc_source_term<<<blocks,threads>>>(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr)
+          call calc_source_term<<<blocks,threads>>>(nx, ny, ${JSRC}$, Q_1, Q_2, Q_3, fx, fy, ${KACT('q_cool')}$, Sr)
 #:endif
 #:endif
           ! Step 2a: TVD RK3 Stage 1 - compute Q(1), store in QJ2
@@ -180,10 +181,10 @@ contains
 #:endif
 #:if SOURCE
 #:if FLUCT
-          call calc_source_term<<<blocks,threads>>>(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr, &
+          call calc_source_term<<<blocks,threads>>>(nx, ny, ${JSRC}$, Q_1, Q_2, Q_3, fx, fy, ${KACT('q_cool')}$, Sr, &
                                                     T, s_fric, keyA, keyB, beta_s)
 #:else
-          call calc_source_term<<<blocks,threads>>>(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr)
+          call calc_source_term<<<blocks,threads>>>(nx, ny, ${JSRC}$, Q_1, Q_2, Q_3, fx, fy, ${KACT('q_cool')}$, Sr)
 #:endif
 #:endif
 #:if SOURCE
@@ -205,10 +206,10 @@ contains
 #:endif
 #:if SOURCE
 #:if FLUCT
-          call calc_source_term<<<blocks,threads>>>(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr, &
+          call calc_source_term<<<blocks,threads>>>(nx, ny, ${JSRC}$, Q_1, Q_2, Q_3, fx, fy, ${KACT('q_cool')}$, Sr, &
                                                     T, s_fric, keyA, keyB, beta_s)
 #:else
-          call calc_source_term<<<blocks,threads>>>(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr)
+          call calc_source_term<<<blocks,threads>>>(nx, ny, ${JSRC}$, Q_1, Q_2, Q_3, fx, fy, ${KACT('q_cool')}$, Sr)
 #:endif
 #:endif
 #:if SOURCE
@@ -244,7 +245,7 @@ contains
       deallocate(Q_1, Q_2, Q_3, Q_4, T, mu, ux, vy, QJ_1, QJ_2, QJ_3, QJ_4, QJ2_1, QJ2_2, QJ2_3, QJ2_4, &
                  E, F, xix, etay, Jacobian, dtdx, dtdy)
 #:if PREC == 'DF'
-      deallocate(JacW, dtdx_q, dtdy_q, dtdx_2, dtdy_2)
+      deallocate(JacW, dtdV_w, dtdx_q, dtdy_q, dtdx_2, dtdy_2)
 #:endif
 #:if SOURCE
       deallocate(Sr, fx, fy)
@@ -281,9 +282,9 @@ contains
     ${MT}$, allocatable, device :: xix(:), etay(:), dtdx(:), dtdy(:)
     ${WT}$, allocatable, device :: Jacobian(:,:)
 #:if PREC == 'DF'
-    ! split on the host (mod_prec fltw): Jacobian for calc_EF, dtdx and dtdy times the RK3 stage
-    ! weights 1/4 and 2
-    type(fltw), allocatable, device :: JacW(:,:), dtdx_q(:), dtdy_q(:), dtdx_2(:), dtdy_2(:)
+    ! split on the host (mod_prec fltw): Jacobian for calc_EF, dt / Jacobian for calc_source,
+    ! dtdx and dtdy times the RK3 stage weights 1/4 and 2
+    type(fltw), allocatable, device :: JacW(:,:), dtdV_w(:,:), dtdx_q(:), dtdy_q(:), dtdx_2(:), dtdy_2(:)
 #:endif
 #:if SOURCE
     ${RT}$, allocatable, device :: Sr(:,:,:), fx(:,:), fy(:,:) ! cell sources (calc_source)
@@ -308,7 +309,7 @@ contains
       call pre_calc(nx, ny, myrank, nranks, x, dx_cpu, y, dy_cpu, Jacobian_cpu, Q, overlap, &
                     dtdx, dtdy, xix, etay, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, ke0, entropy0)
 #:if PREC == 'DF'
-      call split_metrics(nx, ny, Jacobian_cpu, dtdx, dtdy, JacW, dtdx_q, dtdy_q, dtdx_2, dtdy_2)
+      call split_metrics(nx, ny, Jacobian_cpu, dtdx, dtdy, JacW, dtdV_w, dtdx_q, dtdy_q, dtdx_2, dtdy_2)
 #:endif
 #:if SOURCE
       ! body force per unit mass, tabulated by the case (set_force in set.f90)
@@ -339,7 +340,7 @@ contains
           call calc_EF(nx, ny, xix, etay, ${JEF}$, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T, mu, ux, vy, E, F)
 #:if SOURCE
           call calc_cooling(nx, ny, Q_4, q_cool)
-          call calc_source_term<<<blocks,threads>>>(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr)
+          call calc_source_term<<<blocks,threads>>>(nx, ny, ${JSRC}$, Q_1, Q_2, Q_3, fx, fy, ${KACT('q_cool')}$, Sr)
 #:endif
 #:if SOURCE
           call calc_step<<<blocks,threads>>>(nx, ny, ${KACT('0.5d0')}$, ${KACT('1.d0')}$, dtdx, dtdy, E, F, Sr, &
@@ -353,7 +354,7 @@ contains
           ! Stage 2: k2 = RHS(Q^n + 0.5*dt*k1), weight 2.0 to Rs for (2*k2 term)
           call calc_EF(nx, ny, xix, etay, ${JEF}$, QJs_1, QJs_2, QJs_3, QJs_4, Q_1, Q_2, Q_3, Q_4, T, mu, ux, vy, E, F)
 #:if SOURCE
-          call calc_source_term<<<blocks,threads>>>(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr)
+          call calc_source_term<<<blocks,threads>>>(nx, ny, ${JSRC}$, Q_1, Q_2, Q_3, fx, fy, ${KACT('q_cool')}$, Sr)
 #:endif
 #:if SOURCE
           call calc_step<<<blocks,threads>>>(nx, ny, ${KACT('0.5d0')}$, ${KACT('2.d0')}$, dtdx, dtdy, E, F, Sr, &
@@ -367,7 +368,7 @@ contains
           ! Stage 3: k3 = RHS(Q^n + 0.5*dt*k2), weight 2.0 for (2*k3 term)
           call calc_EF(nx, ny, xix, etay, ${JEF}$, QJs_1, QJs_2, QJs_3, QJs_4, Q_1, Q_2, Q_3, Q_4, T, mu, ux, vy, E, F)
 #:if SOURCE
-          call calc_source_term<<<blocks,threads>>>(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr)
+          call calc_source_term<<<blocks,threads>>>(nx, ny, ${JSRC}$, Q_1, Q_2, Q_3, fx, fy, ${KACT('q_cool')}$, Sr)
 #:endif
 #:if SOURCE
           call calc_step<<<blocks,threads>>>(nx, ny, ${KACT('1.0d0')}$, ${KACT('2.d0')}$, dtdx, dtdy, E, F, Sr, &
@@ -381,7 +382,7 @@ contains
           ! Stage 4: k4 = RHS(Q^n + dt*k3), weight 1.0, assemble final Q^(n+1)
           call calc_EF(nx, ny, xix, etay, ${JEF}$, QJs_1, QJs_2, QJs_3, QJs_4, Q_1, Q_2, Q_3, Q_4, T, mu, ux, vy, E, F)
 #:if SOURCE
-          call calc_source_term<<<blocks,threads>>>(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr)
+          call calc_source_term<<<blocks,threads>>>(nx, ny, ${JSRC}$, Q_1, Q_2, Q_3, fx, fy, ${KACT('q_cool')}$, Sr)
 #:endif
 #:if SOURCE
           call calc_step4<<<blocks,threads>>>(nx, ny, dtdx, dtdy, E, F, Sr, Rs, QJ_1, QJ_2, QJ_3, QJ_4)  ! QJ = Q^(n+1)
@@ -414,7 +415,7 @@ contains
       deallocate(Q_1, Q_2, Q_3, Q_4, T, mu, ux, vy, QJ_1, QJ_2, QJ_3, QJ_4, QJs_1, QJs_2, QJs_3, QJs_4, Rs, &
                  E, F, xix, etay, Jacobian, dtdx, dtdy)
 #:if PREC == 'DF'
-      deallocate(JacW, dtdx_q, dtdy_q, dtdx_2, dtdy_2)
+      deallocate(JacW, dtdV_w, dtdx_q, dtdy_q, dtdx_2, dtdy_2)
 #:endif
 #:if SOURCE
       deallocate(Sr, fx, fy)

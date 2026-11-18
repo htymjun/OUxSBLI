@@ -1,4 +1,5 @@
 #:include 'prec.fypp'
+#:set JS = 'dtdV_w' if PREC == 'DF' else 'Jacobian'
 #:block fp
 !> Cell source terms of the momentum and energy equations (2D_solver, config.fypp SOURCE = True):
 !>   momentum  S_m = rho (f - fric u)
@@ -32,16 +33,20 @@ contains
 #:if FLUCT
   !> FLUCT = True adds the friction noise: rho (f - fric u) + eta, <eta eta> = 2 fric rho kB T / (dV dt)
   !> per component (s_fric = 2 fric kB / (dV dt); amplitude and sample in FP32, stage noise of mod_rng).
-  attributes(global) subroutine calc_source_term(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr, &
+  attributes(global) subroutine calc_source_term(nx, ny, ${JS}$, Q_1, Q_2, Q_3, fx, fy, ${KARG('q_cool')}$, Sr, &
                                                  T, s_fric, keyA, keyB, beta)
 #:else
-  attributes(global) subroutine calc_source_term(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr)
+  attributes(global) subroutine calc_source_term(nx, ny, ${JS}$, Q_1, Q_2, Q_3, fx, fy, ${KARG('q_cool')}$, Sr)
 #:endif
     integer, intent(in), value               :: nx, ny
+#:if PREC == 'DF'
+    ${MT}$, intent(in), device, contiguous  :: dtdV_w(nx,ny)                       !< dt / Jacobian, split on the host
+#:else
     ${WT}$, intent(in), device, contiguous  :: Jacobian(nx,ny)
+#:endif
     ${RT}$, intent(in), device, contiguous  :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny) !< rho, u, v
     ${RT}$, intent(in), device, contiguous  :: fx(nx,ny), fy(nx,ny)                !< body force per unit mass
-    ${WT}$, intent(in), value               :: q_cool                              !< uniform energy sink
+    ${KDECL('q_cool')}$ !< uniform energy sink
     ${RT}$, intent(out), device, contiguous :: Sr(nx-2,ny-2,4)                    !< dt / J * S
 #:if FLUCT
     ${RT}$, intent(in), device, contiguous  :: T(nx,ny)
@@ -51,7 +56,10 @@ contains
     real(4) sg
 #:endif
     ${RT}$ rho, u, v, Smx, Smy, SE, qc, fr
-    ${WT}$ dtdV
+    ${MT}$ dtdV
+#:if PREC == 'DF'
+    ${MT}$ q_cool
+#:endif
     integer i, j
     i = (blockIdx%x-1)*blockDim%x + threadIdx%x
     j = (blockIdx%y-1)*blockDim%y + threadIdx%y
@@ -60,8 +68,14 @@ contains
     u    = Q_2(i+1,j+1)
     v    = Q_3(i+1,j+1)
     fr   = ${W('fric')}$
+#:if PREC == 'DF'
+    ${KSET('q_cool')}$
+    qc   = q_cool
+    dtdV = dtdV_w(i+1,j+1)
+#:else
     qc   = q_cool
     dtdV = ${W('dt')}$ / Jacobian(i+1,j+1)
+#:endif
 #:if FLUCT
     id   = int(periodic_index(j+1, H, ny - 2*H), 8) * (nx - 2*H) + periodic_index(i+1, H, nx - 2*H)
     sg   = sqrt(s_fric * ${TOF('rho')}$ * ${TOF('T(i+1,j+1)')}$)

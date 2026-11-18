@@ -143,20 +143,22 @@ contains
 #:if PREC == 'DF'
 
 
-  !> DF: the real(8) metrics of calc_EF and the RK3 stages split on the host (mod_prec fltw), so
-  !> that no kernel splits a real(8) value on the FP64 pipe. JacW is the split of Jacobian; the
-  !> RK3 stage weights 1/4 and 2 are powers of two, so scaling both FP32 parts of the split
+  !> DF: the real(8) metrics of calc_EF, calc_source and the RK3 stages split on the host
+  !> (mod_prec fltw), so that no kernel splits a real(8) value on the FP64 pipe. JacW and dtdV_w
+  !> are the splits of Jacobian and of dt / Jacobian (the real(8) quotient the FP64 kernel forms);
+  !> the RK3 stage weights 1/4 and 2 are powers of two, so scaling both FP32 parts of the split
   !> of dtdx is exact and equals the split of (weight * dtdx).
-  subroutine split_metrics(nx, ny, Jacobian_cpu, dtdx, dtdy, JacW, dtdx_q, dtdy_q, dtdx_2, dtdy_2)
+  subroutine split_metrics(nx, ny, Jacobian_cpu, dtdx, dtdy, JacW, dtdV_w, dtdx_q, dtdy_q, dtdx_2, dtdy_2)
     use mod_globals, only : dt
     integer, intent(in)                            :: nx, ny
     real(8), intent(in)                            :: Jacobian_cpu(nx,ny)
     type(fltw), intent(in), device                 :: dtdx(nx-2), dtdy(ny-2)
-    type(fltw), allocatable, intent(out), device   :: JacW(:,:)
+    type(fltw), allocatable, intent(out), device   :: JacW(:,:), dtdV_w(:,:)
     type(fltw), allocatable, intent(out), device   :: dtdx_q(:), dtdy_q(:), dtdx_2(:), dtdy_2(:)
     type(fltw) hx(nx-2), hy(ny-2)
-    allocate(JacW(nx,ny), dtdx_q(nx-2), dtdy_q(ny-2), dtdx_2(nx-2), dtdy_2(ny-2))
+    allocate(JacW(nx,ny), dtdV_w(nx,ny), dtdx_q(nx-2), dtdy_q(ny-2), dtdx_2(nx-2), dtdy_2(ny-2))
     JacW   = Jacobian_cpu
+    dtdV_w = dt / Jacobian_cpu
     hx = dtdx
     hy = dtdy
     dtdx_q = scaled(hx, 0.25e0)

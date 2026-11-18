@@ -150,7 +150,7 @@ Rules for code that runs on the device (they keep FP64 bit-identical and FP32 fr
 * DF kernels split no real(8) value at run time. A real(8) operand of a fltflt operation is split
   by FmaX on the FP64 pipe (`init_from_r8`: two conversions and a DADD per use; FP64 runs at 1/64
   rate on consumer GPUs). The device metrics (`xix`, `etay`, `dtdx`, `dtdy`, the `Jacobian` of
-  `calc_EF`) are therefore `${MT}$` = `type(fltw)` under DF:
+  `calc_EF`, `dt / Jacobian` of `calc_source`) are therefore `${MT}$` = `type(fltw)` under DF:
   real(8) values split once on the host (`split_metrics`, `upload_w1/2`). The operators of `fltw`
   in `mod_prec` repeat FmaX's real(8) overloads with the pre-split value (same operand order),
   so DF results are bit-identical to splitting on the device. Kernel scalar coefficients
