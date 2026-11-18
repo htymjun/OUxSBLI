@@ -65,6 +65,16 @@ boundary, SBLI at the leading edge); the median difference is 1e-15. With the co
 DF / FP32 differ by 1e-9..1e-6 (OS, BL) and 1e-3 (SWLBLI, after 40 steps from the analytic
 start), for the wiggle-detector reason given above; EVC with HR-SLAU2 5e-11 (velocity) under DF.
 
+TVD-RK3 stages 2 and 3 (`calc_step2_3`) are evaluated in increment form,
+Q^(n+1) = Q^(*) + (alpha (Q^n - Q^(*)) - gamma R) / (alpha + beta), as in cns2d; the former
+(alpha Q^n + beta Q^(*) - gamma R) / (alpha + beta) multiplied the whole state by the rounded
+1/3. Uniform gas (EVC with beta = 0, 150 steps): in FP32 the old form moved rho by 1 ulp within
+the first 50 steps, the increment form keeps it unchanged. FP64: RK4 configurations unchanged,
+RK3 configurations differ by 3e-15..9e-14 (HR-SLAU2: BL 2e-6, SWLBLI 8e-4).
+Existing suites with `OUXSBLI_CONFIG=prec=df`: test_st, test_os, test_bl, test_evc 9 passed.
+With `prec=fp32`, test_evc (KEEP4/6 orders; the vortex's density amplitude 2e-7 is at FP32
+rounding) and test_bl's velocity profile fail; their tolerances are left as they are.
+
 FP32 SASS (`cuobjdump -sass`, `bench_prec.FP64_OP`): no FP64 instruction in any kernel of any
 of the configurations above. 3D_solver TBL (RESCALE, 65 x 49 x 22, 20 steps; `calc_rescale`'s
 `calc_mean` / `copy` and the TBL boundary conditions as hand-written kernels): FP64 output
