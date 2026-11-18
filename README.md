@@ -194,7 +194,18 @@ M=2 freestream with θ=8° flow deflection. Pre- and post-shock states agree wit
 </div>
 
 ## Related Publication
-This repository contains the implementation used in the following publication:
+This repository contains the implementation used in the following publications:
+
+Jun Hatayama, Daichi Mukunoki, Yusuke Onishi, Atsushi Sekimoto, and Toshinori Kouchi. "Concurrent Use of FP32 and FP64 Computing Units on GPUs and Mixed-Precision Placement in WENO Reconstruction" arXiv (2026): 2611.09651
+
+~~~bash
+@article{hatayama2026concurrent,
+  title={Concurrent Use of FP32 and FP64 Computing Units on GPUs and Mixed-Precision Placement in WENO Reconstruction},
+  author={Hatayama, Jun and Mukunoki, Daichi and Onishi, Yusuke and Sekimoto, Atsushi and Kouchi, Toshinori},
+  journal={arXiv preprint arXiv:2611.09651},
+  year={2026}
+}
+~~~
 
 Jun Hatayama, Kento Tanaka, and Toshinori Kouchi. "Nonlinear causal relationship between separation bubbles and reflected shock wave in shock wave/turbulent boundary layer interaction based on information theory." Computers & Fluids (2026): 107016.
 
