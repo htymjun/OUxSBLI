@@ -124,6 +124,52 @@ Warm-start workflow:
 3. Copy `recal/Q_3d0000N.dat` to `3D_solver/SWLBLI/recal/Q0000N.dat` (the name the
    3D `main.f90` reads) and run the 3D case.
 
+## Precision modes (`PREC`)
+
+`PREC = 'FP64'` (default), `'DF'` or `'FP32'` in `config.fypp` (or `Case(prec=...)`).
+`src/prec.fypp` defines the two types every template uses:
+
+| | FP64 | DF | FP32 |
+|---|---|---|---|
+| `RT` (state, fluxes, primitives) | real(8) | `type(fltflt)` | real(4) |
+| `WT` (metrics, coefficients, constants) | real(8) | real(8) | real(4) |
+| `MT` (device metrics and RK coefficients of the kernels) | real(8) | `type(fltw)` | real(4) |
+
+`set.f90` and `mod_globals.f90` are not fypp templates; they see the same choice through cpp:
+`REAL_T` (= `RT`), `REAL_W` (= `WT`), `PREC_DF`, `PREC_FP32` (set in `2D_solver/CMakeLists.txt`).
+FP32 also needs `sp = 4` in `mod_globals.f90` (the `#ifdef PREC_FP32` lines every case carries);
+`mod_constant` refuses to compile otherwise.
+
+Rules for code that runs on the device (they keep FP64 bit-identical and FP32 free of FP64 instructions):
+
+* No `!$cuf kernel do` loop may touch a DF value beyond a plain copy: nvfortran 25.5 cannot compile
+  fltflt arithmetic, `dble()` or a defined assignment there. Boundary conditions are therefore
+  hand-written `attributes(global)` kernels (every case's `set_bc`), and `calc_div` calls the
+  device subroutine `div4` from its CUF loop. The cyclic copies in `set_bc_common` stay CUF loops
+  (DF passes the state as 8-byte words through `IGNORE_TKR`).
+* DF kernels split no real(8) value at run time. A real(8) operand of a fltflt operation is split
+  by FmaX on the FP64 pipe (`init_from_r8`: two conversions and a DADD per use; FP64 runs at 1/64
+  rate on consumer GPUs). The device metrics (`xix`, `etay`, `dtdx`, `dtdy`, the `Jacobian` of
+  `calc_EF`) are therefore `${MT}$` = `type(fltw)` under DF:
+  real(8) values split once on the host (`split_metrics`, `upload_w1/2`). The operators of `fltw`
+  in `mod_prec` repeat FmaX's real(8) overloads with the pre-split value (same operand order),
+  so DF results are bit-identical to splitting on the device. Kernel scalar coefficients
+  travel as two FP32 values (`KARG`/`KDECL`/`KSET`/`KACT` in `src/prec.fypp`: a kernel cannot
+  take a derived type by value in nvfortran 25.5). The RK3 stage weights 1/4 and 2 scale both
+  parts of the split `dtdx` exactly. Exceptions: the Hybrid Ducros sensor and the fourth-order
+  `calc_div` add two split metrics in DF (FP64: real(8) sum, then split), and the KEEP / SLAU /
+  Hybrid flux kernels still split their few real(8) constants (`Normal_x`, shared with 3D).
+  Effect: 4-5 % less time per step for a periodic NS KEEP6 case on an RTX 4060 Laptop.
+* No real(8) constant or literal in FP32 arithmetic. Templates wrap device code in the `fp` block of
+  `src/prec.fypp` (turns `1.d0` into `1.e0` when `PREC = 'FP32'`). The boundary kernels in `set.f90` declare
+  their constants as `REAL_W, parameter` locals (`rho0 = g_rho0`, `half = 0.5d0`, ...) and
+  leave mixed real(8) expressions only on the host, for example SWLBLI's top-boundary zones,
+  which are computed once as index bounds `i_sh` and `i_09`.
+
+Accuracy against FP64 (40 steps, `prec2d` runs; `ouxsbli/tests/test_prec_2d.py`): see
+`docs/precision_modes.md`. HR-SLAU2 configurations differ at 1e-9..1e-3 under DF and FP32 for the
+same reason as in 3D (the 0/1 wiggle switch); compare them with `SLAU_VARIANT = 'SLAU'`.
+
 ## Adding a New Test Case
 
 1. `cp -r 2D_solver/OS 2D_solver/MYCASE`

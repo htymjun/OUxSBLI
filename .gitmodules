@@ -1,0 +1,3 @@
+[submodule "extern/FmaX"]
+	path = extern/FmaX
+	url = https://github.com/htymjun/FmaX.git

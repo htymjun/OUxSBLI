@@ -1,4 +1,4 @@
-#:include 'config.fypp'
+#:include 'prec.fypp'
 #:if not defined('FLTFLT_FORK')
   #:set FLTFLT_FORK = False
 #:endif
@@ -8,6 +8,7 @@
 #:if not defined('WENO_PREC')
   #:set WENO_PREC = 'FP64'
 #:endif
+#:block fp
 module calc_muscl
   use libm
   #:if RECON == 'WENO'
@@ -15,6 +16,9 @@ module calc_muscl
   use calc_weno, only : weno5z => weno5z_${WENO_PREC.lower()}$
   #:endif
   use mod_globals, only : sp
+  #:if PREC == 'DF'
+  use mod_prec
+  #:endif
   use mod_constant, only : one_third, one_sixth, one_twelfth
   #:if FLTFLT_FORK
   use mod_constant, only : one_third_ff, one_sixth_ff, one_twelfth_ff
@@ -71,24 +75,24 @@ module calc_muscl
   end interface delta6
 contains
   attributes(device) function minmod2(x, y) result(ans)
-    real(8), intent(in), value :: x, y
-    real(8) :: ans, sgn
+    ${RT}$, intent(in)${VAL}$ :: x, y
+    ${RT}$ :: ans, sgn
     sgn = copysign(1.d0, x)
     ans = sgn * max(min(abs(x), sgn * y), 0.d0)
   end function minmod2
 
 
   attributes(device) function minmod3(x, y, z) result(ans)
-    real(8), intent(in), value :: x, y, z
-    real(8) :: ans, sgn
+    ${RT}$, intent(in)${VAL}$ :: x, y, z
+    ${RT}$ :: ans, sgn
     sgn = copysign(1.d0, x)
     ans = sgn * max(min(abs(x), sgn * y, sgn * z), 0.d0)
   end function minmod3
 
 
   attributes(device) function d33(d1, d2, d3) result(ans)
-    real(8), intent(in), value :: d1, d2, d3 
-    real(8) :: ans
+    ${RT}$, intent(in)${VAL}$ :: d1, d2, d3 
+    ${RT}$ :: ans
     ans =          minmod(d1, 2.d0 * d2, 2.d0 * d3) &
           - 2.d0 * minmod(d2, 2.d0 * d1, 2.d0 * d3) &
                  + minmod(d3, 2.d0 * d1, 2.d0 * d2)
@@ -98,8 +102,8 @@ contains
   attributes(device) subroutine MUSCL3rdnonTVD(id_tvd, sensor, a2, a3, d1, d2, d3, al, ar)
     integer(kind=2), intent(in) :: id_tvd
     real(sp), intent(in)        :: sensor
-    real(8), intent(in)         :: a2, a3, d1, d2, d3
-    real(8), intent(out)        :: al, ar
+    ${RT}$, intent(in)         :: a2, a3, d1, d2, d3
+    ${RT}$, intent(out)        :: al, ar
     al = a2 + fma(2.d0, d2, d1) * one_sixth
     ar = a3 - fma(2.d0, d2, d3) * one_sixth
   end subroutine MUSCL3rdnonTVD
@@ -108,17 +112,17 @@ contains
   attributes(device) subroutine MUSCL3rdMinmod(id_tvd, sensor, a2, a3, d1, d2, d3, al, ar)
     integer(kind=4), intent(in) :: id_tvd
     real(sp), intent(in)        :: sensor
-    real(8), intent(in)         :: a2, a3, d1, d2, d3
-    real(8), intent(out)        :: al, ar
-    real(8), constant :: b = (3.d0 - one_third) / (1.d0 - one_third)
+    ${RT}$, intent(in)         :: a2, a3, d1, d2, d3
+    ${RT}$, intent(out)        :: al, ar
+    ${WT}$, constant :: b = (3.d0 - one_third) / (1.d0 - one_third)
     block
-      real(8) dt1, dt2
+      ${RT}$ dt1, dt2
       dt1 = minmod(d1, b * d2)
       dt2 = minmod(d2, b * d1)
       al  = a2 + fma(2.d0, dt2, dt1) * one_sixth
     end block
     block
-      real(8) dt3, dt4
+      ${RT}$ dt3, dt4
       dt3 = minmod(d3, b * d2)
       dt4 = minmod(d2, b * d3)
       ar  = a3 - fma(2.d0, dt4, dt3) * one_sixth
@@ -130,8 +134,8 @@ contains
     use mod_globals, only : threshold
     integer(kind=8), intent(in) :: id_tvd
     real(sp), intent(in)        :: sensor
-    real(8), intent(in)         :: a2, a3, d1, d2, d3
-    real(8), intent(out)        :: al, ar
+    ${RT}$, intent(in)         :: a2, a3, d1, d2, d3
+    ${RT}$, intent(out)        :: al, ar
     integer(kind=2) :: id2 = 0_2
     integer(kind=4) :: id4 = 0_4
     if (sensor < threshold) then
@@ -145,14 +149,14 @@ contains
   attributes(device) subroutine MUSCL4thnonTVD(id_tvd, sensor, a2, a3, d1, d2, d3, d4, d5, al, ar)
     integer(kind=2), intent(in) :: id_tvd
     real(sp), intent(in)        :: sensor
-    real(8), intent(in)         :: a2, a3, d1, d2, d3, d4, d5
-    real(8), intent(out)        :: al, ar
+    ${RT}$, intent(in)         :: a2, a3, d1, d2, d3, d4, d5
+    ${RT}$, intent(out)        :: al, ar
     ! al = a2 + (-0.4d0 * d1 + 2.2d0 * d2 + 4.8d0 * d3 - 0.6d0 * d4) * one_twelfth
     ! ar = a3 - (-0.6d0 * d2 + 4.8d0 * d3 + 2.2d0 * d4 - 0.4d0 * d5) * one_twelfth
-    real(8), parameter :: coef1 = - one_twelfth * 0.4d0
-    real(8), parameter :: coef2 =   one_twelfth * 2.2d0
-    real(8), parameter :: coef3 =   one_twelfth * 4.8d0
-    real(8), parameter :: coef4 = - one_twelfth * 0.6d0
+    ${WT}$, parameter :: coef1 = - one_twelfth * 0.4d0
+    ${WT}$, parameter :: coef2 =   one_twelfth * 2.2d0
+    ${WT}$, parameter :: coef3 =   one_twelfth * 4.8d0
+    ${WT}$, parameter :: coef4 = - one_twelfth * 0.6d0
     !al = a2 + (coef1 * d1 + coef2 * d2 + coef3 * d3 + coef4 * d4)
     al = fma(coef1, d1, a2)
     al = fma(coef2, d2, al)
@@ -169,19 +173,19 @@ contains
   attributes(device) subroutine MUSCL4thTVD(id_tvd, sensor, a2, a3, d1, d2, d3, d4, d5, al, ar)
     integer(kind=4), intent(in) :: id_tvd
     real(sp), intent(in)        :: sensor
-    real(8), intent(in)         :: a2, a3, d1, d2, d3, d4, d5
-    real(8), intent(out)        :: al, ar
-    real(8) delta2
+    ${RT}$, intent(in)         :: a2, a3, d1, d2, d3, d4, d5
+    ${RT}$, intent(out)        :: al, ar
+    ${RT}$ delta2
     delta2 = d3 - d33(d2, d3, d4) * one_sixth
     block
-      real(8) delta1, dl, dr
+      ${RT}$ delta1, dl, dr
       delta1 = d2 - d33(d1, d2, d3) * one_sixth
       dl = minmod(delta1, 4.d0 * delta2)
       dr = minmod(delta2, 4.d0 * delta1)
       al = a2 + fma(2.d0, dr, dl) * one_sixth
     end block
     block
-      real(8) delta3, dl, dr
+      ${RT}$ delta3, dl, dr
       delta3 = d4 - d33(d3, d4, d5) * one_sixth
       dl = minmod(delta2, 4.d0 * delta3)
       dr = minmod(delta3, 4.d0 * delta2)
@@ -194,9 +198,9 @@ contains
     use mod_globals, only : threshold
     integer(kind=8), intent(in) :: id_tvd
     real(sp), intent(in)        :: sensor
-    real(8), intent(in)         :: a2, a3, d1, d2, d3, d4, d5
-    real(8), intent(out)        :: al, ar
-    real(8) alr(2)
+    ${RT}$, intent(in)         :: a2, a3, d1, d2, d3, d4, d5
+    ${RT}$, intent(out)        :: al, ar
+    ${RT}$ alr(2)
     integer(kind=2) :: id2 = 0_2
     integer(kind=4) :: id4 = 0_4
     if (sensor < threshold) then
@@ -211,9 +215,9 @@ contains
     use mod_globals, only : sp
     use mod_constant, only : id_tvd
     real(sp), intent(in), value     :: sensor
-    real(8), intent(in), contiguous :: a(4)
-    real(8), intent(out)            :: al, ar
-    real(8) d1, d2, d3
+    ${RT}$, intent(in), contiguous :: a(4)
+    ${RT}$, intent(out)            :: al, ar
+    ${RT}$ d1, d2, d3
     d1 = -a(1) + a(2)
     d2 = -a(2) + a(3)
     d3 = -a(3) + a(4)
@@ -225,14 +229,14 @@ contains
     use mod_globals, only : sp
     use mod_constant, only : id_tvd
     real(sp), intent(in), value     :: sensor
-    real(8), intent(in), contiguous :: a(6)
-    real(8), intent(out)            :: al, ar
+    ${RT}$, intent(in), contiguous :: a(6)
+    ${RT}$, intent(out)            :: al, ar
     #:if RECON == 'WENO'
     ! WENO5-Z on the same 6-point window: al from a(1..5), ar from a(2..6).
     ! sensor and id_tvd (TVD) do not apply; delta4 (near-wall faces) stays MUSCL.
     call weno5z(a, al, ar)
     #:else
-    real(8) d1, d2, d3, d4, d5
+    ${RT}$ d1, d2, d3, d4, d5
     d1 = -a(1) + a(2)
     d2 = -a(2) + a(3)
     d3 = -a(3) + a(4)
@@ -408,3 +412,4 @@ contains
   end subroutine delta4_ff
   #:endif
 end module calc_muscl
+#:endblock fp

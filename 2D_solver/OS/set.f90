@@ -1,4 +1,7 @@
 module set
+#ifdef PREC_DF
+  use mod_prec
+#endif
   use cudafor
   use mod_globals, only : rho0, p0, u0, rho2, p2, ux, uy
   use mod_constant, only : gamma_1, over_gamma, over_gamma_1
@@ -47,41 +50,66 @@ contains
 
   subroutine set_bc(myrank, nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4)
     integer, intent(in), value     :: myrank, nx, ny
-    real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
-    real(8) Jacobian_tmp
-    integer :: i, j
-    !$cuf kernel do(1)<<<*,*>>>
-    do i = 1, nx
-      Jacobian_tmp = 1.d0 / Jacobian(1,ny-1)
-      if (i < int(0.1d0 * nx)) then
-        QJ_1(i,ny) = rho0 * Jacobian_tmp
-        QJ_2(i,ny) = rho0 * u0 * Jacobian_tmp
-        QJ_3(i,ny) = 0.d0
-        QJ_4(i,ny) = (p0 * over_gamma_1 + 0.5d0 * rho0 * u0**2) * Jacobian_tmp
-      else
-        QJ_1(i,ny) = rho2 * Jacobian_tmp
-        QJ_2(i,ny) = rho2 * ux * Jacobian_tmp
-        QJ_3(i,ny) = rho2 * uy * Jacobian_tmp
-        QJ_4(i,ny) = (p2 * over_gamma_1 + 0.5d0 * rho2 * (ux**2 + uy**2)) * Jacobian_tmp
-      endif
-      ! Slip
-      QJ_1(i,1) =  QJ_1(i,2)
-      QJ_2(i,1) =  QJ_2(i,2)
-      QJ_3(i,1) = -QJ_3(i,2)
-      QJ_4(i,1) =  QJ_4(i,2)
-    enddo
-    !$cuf kernel do(1)<<<*,*>>>
-    do j = 1, ny
-      Jacobian_tmp = 1.d0 / Jacobian(1,j)
-      QJ_1(1,j)  = rho0 * Jacobian_tmp
-      QJ_2(1,j)  = rho0 * u0 * Jacobian_tmp
-      QJ_3(1,j)  = 0.d0
-      QJ_4(1,j)  = (p0 * over_gamma_1 + 0.5d0 * rho0 * u0**2) * Jacobian_tmp
-      QJ_1(nx,j) = QJ_1(nx-1,j)
-      QJ_2(nx,j) = QJ_2(nx-1,j)
-      QJ_3(nx,j) = QJ_3(nx-1,j)
-      QJ_4(nx,j) = QJ_4(nx-1,j)
-    enddo
+    REAL_W, intent(in), device     :: Jacobian(nx,ny)
+    REAL_T, intent(inout), device  :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
+    call bc_top_bottom<<<(nx+127)/128, 128>>>(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4)
+    call bc_in_out<<<(ny+127)/128, 128>>>(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4)
   end subroutine set_bc
+
+
+  !> top: pre-shock state for i < nx/10, post-shock state beyond; bottom: slip (i = 1 .. nx)
+  attributes(global) subroutine bc_top_bottom(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4)
+    use mod_globals, only : g_rho0 => rho0, g_p0 => p0, g_u0 => u0, g_rho2 => rho2, g_p2 => p2, &
+                            g_ux => ux, g_uy => uy
+    integer, intent(in), value     :: nx, ny
+    REAL_W, intent(in), device     :: Jacobian(nx,ny)
+    REAL_T, intent(inout), device  :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
+    ! freestream constants in the working kind (no FP64 arithmetic when PREC = 'FP32')
+    REAL_W, parameter :: rho0 = g_rho0, p0 = g_p0, u0 = g_u0, rho2 = g_rho2, p2 = g_p2, &
+                         ux = g_ux, uy = g_uy, zero = 0.d0, half = 0.5d0, one = 1.d0
+    REAL_W Jacobian_tmp
+    integer i
+    i = (blockIdx%x - 1) * blockDim%x + threadIdx%x
+    if (i > nx) return
+    Jacobian_tmp = one / Jacobian(1,ny-1)
+    if (i < nx / 10) then  ! = int(0.1d0 * nx)
+      QJ_1(i,ny) = rho0 * Jacobian_tmp
+      QJ_2(i,ny) = rho0 * u0 * Jacobian_tmp
+      QJ_3(i,ny) = zero
+      QJ_4(i,ny) = (p0 * over_gamma_1 + half * rho0 * u0**2) * Jacobian_tmp
+    else
+      QJ_1(i,ny) = rho2 * Jacobian_tmp
+      QJ_2(i,ny) = rho2 * ux * Jacobian_tmp
+      QJ_3(i,ny) = rho2 * uy * Jacobian_tmp
+      QJ_4(i,ny) = (p2 * over_gamma_1 + half * rho2 * (ux**2 + uy**2)) * Jacobian_tmp
+    endif
+    ! Slip
+    QJ_1(i,1) =  QJ_1(i,2)
+    QJ_2(i,1) =  QJ_2(i,2)
+    QJ_3(i,1) = -QJ_3(i,2)
+    QJ_4(i,1) =  QJ_4(i,2)
+  end subroutine bc_top_bottom
+
+
+  !> inlet: freestream; outlet: zero gradient (j = 1 .. ny)
+  attributes(global) subroutine bc_in_out(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4)
+    use mod_globals, only : g_rho0 => rho0, g_p0 => p0, g_u0 => u0
+    integer, intent(in), value     :: nx, ny
+    REAL_W, intent(in), device     :: Jacobian(nx,ny)
+    REAL_T, intent(inout), device  :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
+    REAL_W, parameter :: rho0 = g_rho0, p0 = g_p0, u0 = g_u0, zero = 0.d0, half = 0.5d0, one = 1.d0
+    REAL_W Jacobian_tmp
+    integer j
+    j = (blockIdx%x - 1) * blockDim%x + threadIdx%x
+    if (j > ny) return
+    Jacobian_tmp = one / Jacobian(1,j)
+    QJ_1(1,j)  = rho0 * Jacobian_tmp
+    QJ_2(1,j)  = rho0 * u0 * Jacobian_tmp
+    QJ_3(1,j)  = zero
+    QJ_4(1,j)  = (p0 * over_gamma_1 + half * rho0 * u0**2) * Jacobian_tmp
+    QJ_1(nx,j) = QJ_1(nx-1,j)
+    QJ_2(nx,j) = QJ_2(nx-1,j)
+    QJ_3(nx,j) = QJ_3(nx-1,j)
+    QJ_4(nx,j) = QJ_4(nx-1,j)
+  end subroutine bc_in_out
 end module set

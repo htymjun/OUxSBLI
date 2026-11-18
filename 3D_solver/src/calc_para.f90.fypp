@@ -21,6 +21,7 @@ contains
     integer, intent(in), value   :: nz                                      !< z dimension
     integer, intent(in), value   :: overlap                                 !< ghost cell width
     real(8), intent(in), device  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz) !< 3D conservative variables
+    !DIR$ IGNORE_TKR (tk) Q_1, Q_2, Q_3, Q_4, Q_5   ! PREC = 'DF': fltflt state moved as 8-byte words
     real(8), intent(out), device :: Q1d_left(overlap*(ny-2)*(nz-6)*5)       !< left boundary 1D array
     real(8), intent(out), device :: Q1d_right(overlap*(ny-2)*(nz-6)*5)      !< right boundary 1D array
     integer i, j, k, ni, nj, nk
@@ -52,6 +53,7 @@ contains
     integer, intent(in), value   :: nz                                 !< z dimension
     integer, intent(in), value   :: overlap                            !< ghost cell width
     real(8), intent(in), device  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz) !< 3D conservative variables
+    !DIR$ IGNORE_TKR (tk) Q_1, Q_2, Q_3, Q_4, Q_5   ! PREC = 'DF': fltflt state moved as 8-byte words
     real(8), intent(out), device :: Q1d_left(overlap*(ny-2)*(nz-6)*5) !< left boundary 1D array
     integer i, j, k, ni, nj, nk
     ni = overlap
@@ -77,6 +79,7 @@ contains
     integer, intent(in), value   :: nz                                  !< z dimension
     integer, intent(in), value   :: overlap                             !< ghost cell width
     real(8), intent(in), device  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz) !< 3D conservative variables
+    !DIR$ IGNORE_TKR (tk) Q_1, Q_2, Q_3, Q_4, Q_5   ! PREC = 'DF': fltflt state moved as 8-byte words
     real(8), intent(out), device :: Q1d_right(overlap*(ny-2)*(nz-6)*5) !< right boundary 1D array
     integer i, j, k, ni, nj, nk
     ni = overlap
@@ -98,6 +101,7 @@ contains
   subroutine flatten_rescale(nx, ny, nz, nre, overlap, Q_1, Q_2, Q_3, Q_4, Q_5, Q1d_right)
     integer, intent(in), value   :: nx, ny, nz, nre, overlap
     real(8), intent(in), device  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    !DIR$ IGNORE_TKR (tk) Q_1, Q_2, Q_3, Q_4, Q_5   ! PREC = 'DF': fltflt state moved as 8-byte words
     real(8), intent(out), device :: Q1d_right(overlap*(ny-2)*(nz-6)*5)
     integer i, j, k, ni, nj, nk
     ni = overlap
@@ -121,6 +125,7 @@ contains
     real(8), intent(in), device  :: Q1d_left(overlap*(ny-2)*(nz-6)*5)
     real(8), intent(in), device  :: Q1d_right(overlap*(ny-2)*(nz-6)*5)
     real(8), intent(out), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    !DIR$ IGNORE_TKR (tk) Q_1, Q_2, Q_3, Q_4, Q_5   ! PREC = 'DF': fltflt state moved as 8-byte words
     integer i, j, k, ni, nj, nk
     ni = overlap
     nj = ny-2
@@ -147,6 +152,7 @@ contains
     integer, intent(in), value   :: nx, ny, nz, overlap
     real(8), intent(in), device  :: Q1d_left(overlap*(ny-2)*(nz-6)*5)
     real(8), intent(out), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    !DIR$ IGNORE_TKR (tk) Q_1, Q_2, Q_3, Q_4, Q_5   ! PREC = 'DF': fltflt state moved as 8-byte words
     integer i, j, k, ni, nj, nk
     ni = overlap
     nj = ny-2
@@ -168,6 +174,7 @@ contains
     integer, intent(in), value   :: nx, ny, nz, overlap
     real(8), intent(in), device  :: Q1d_right(overlap*(ny-2)*(nz-6)*5)
     real(8), intent(out), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    !DIR$ IGNORE_TKR (tk) Q_1, Q_2, Q_3, Q_4, Q_5   ! PREC = 'DF': fltflt state moved as 8-byte words
     integer i, j, k, ni, nj, nk
     ni = overlap
     nj = ny-2
@@ -189,6 +196,7 @@ contains
     integer, intent(in), value     :: nx, ny1, ny2, nz, overlap
     real(8), intent(in), device    :: Q1d(overlap*(ny1-2)*(nz-6)*5)
     real(8), intent(inout), device :: Q_1(nx,ny2,nz), Q_2(nx,ny2,nz), Q_3(nx,ny2,nz), Q_4(nx,ny2,nz), Q_5(nx,ny2,nz)
+    !DIR$ IGNORE_TKR (tk) Q_1, Q_2, Q_3, Q_4, Q_5   ! PREC = 'DF': fltflt state moved as 8-byte words
     integer i, j, k, ni, nj, nk
     ni = overlap
     nj = ny1-2
@@ -210,6 +218,7 @@ contains
     integer(kind=2), intent(in), value :: id_rescale
     integer, intent(in), value         :: myrank, nranks, overlap, nx, ny, nz
     real(8), intent(inout), device     :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz) ! Q / Jacobian
+    !DIR$ IGNORE_TKR (tk) QJ_1, QJ_2, QJ_3, QJ_4, QJ_5   ! PREC = 'DF': fltflt state moved as 8-byte words
     integer rank1, rank2, stat, ierr, istat(MPI_STATUS_SIZE)
     real(8), allocatable                                 :: Qs_left(:),   Qs_right(:),   Qr_left(:),   Qr_right(:)
     real(8), dimension(overlap*(ny-2)*(nz-6)*5), device :: Qs1d_left, Qs1d_right, Qr1d_left, Qr1d_right
@@ -250,6 +259,7 @@ contains
     integer(kind=4), intent(in), value :: id_rescale
     integer, intent(in), value         :: myrank, nranks, overlap, nx, ny, nz
     real(8), intent(inout), device     :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz) ! Q / Jacobian
+    !DIR$ IGNORE_TKR (tk) QJ_1, QJ_2, QJ_3, QJ_4, QJ_5   ! PREC = 'DF': fltflt state moved as 8-byte words
     integer rank1, rank2, stat, ierr, istat(MPI_STATUS_SIZE)
     real(8), allocatable                                 :: Qs_left(:),   Qs_right(:),   Qr_left(:),   Qr_right(:)
     real(8), dimension(overlap*(ny-2)*(nz-6)*5), device :: Qs1d_left, Qs1d_right, Qr1d_left, Qr1d_right
@@ -309,6 +319,7 @@ contains
   subroutine flatten_z_lo(nx, ny, nz, overlap, Q_1, Q_2, Q_3, Q_4, Q_5, Q1d_lo)
     integer, intent(in), value   :: nx, ny, nz, overlap
     real(8), intent(in), device  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    !DIR$ IGNORE_TKR (tk) Q_1, Q_2, Q_3, Q_4, Q_5   ! PREC = 'DF': fltflt state moved as 8-byte words
     real(8), intent(out), device :: Q1d_lo(nx*ny*overlap*5)
     integer i, j, k
     !$cuf kernel do(3)<<<*,*>>>
@@ -328,6 +339,7 @@ contains
   subroutine flatten_z_hi(nx, ny, nz, overlap, Q_1, Q_2, Q_3, Q_4, Q_5, Q1d_hi)
     integer, intent(in), value   :: nx, ny, nz, overlap
     real(8), intent(in), device  :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    !DIR$ IGNORE_TKR (tk) Q_1, Q_2, Q_3, Q_4, Q_5   ! PREC = 'DF': fltflt state moved as 8-byte words
     real(8), intent(out), device :: Q1d_hi(nx*ny*overlap*5)
     integer i, j, k
     !$cuf kernel do(3)<<<*,*>>>
@@ -348,6 +360,7 @@ contains
     integer, intent(in), value     :: nx, ny, nz, overlap
     real(8), intent(in), device    :: Q1d_lo(nx*ny*overlap*5)
     real(8), intent(inout), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    !DIR$ IGNORE_TKR (tk) Q_1, Q_2, Q_3, Q_4, Q_5   ! PREC = 'DF': fltflt state moved as 8-byte words
     integer i, j, k
     !$cuf kernel do(3)<<<*,*>>>
     do k = 1, overlap
@@ -367,6 +380,7 @@ contains
     integer, intent(in), value     :: nx, ny, nz, overlap
     real(8), intent(in), device    :: Q1d_hi(nx*ny*overlap*5)
     real(8), intent(inout), device :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    !DIR$ IGNORE_TKR (tk) Q_1, Q_2, Q_3, Q_4, Q_5   ! PREC = 'DF': fltflt state moved as 8-byte words
     integer i, j, k
     !$cuf kernel do(3)<<<*,*>>>
     do k = 1, overlap
@@ -394,6 +408,7 @@ contains
                                send_lo, send_hi, recv_lo, recv_hi, req)
     integer, intent(in)            :: myrank, nranks, overlap, nx, ny, nz
     real(8), intent(in), device    :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    !DIR$ IGNORE_TKR (tk) QJ_1, QJ_2, QJ_3, QJ_4, QJ_5   ! PREC = 'DF': fltflt state moved as 8-byte words
     real(8), intent(inout), device :: Qs1d_lo(nx*ny*overlap*5), Qs1d_hi(nx*ny*overlap*5)
     real(8), intent(inout), device :: Qr1d_lo(nx*ny*overlap*5), Qr1d_hi(nx*ny*overlap*5)
     real(8), intent(inout)         :: send_lo(nx*ny*overlap*5), send_hi(nx*ny*overlap*5)
@@ -420,6 +435,7 @@ contains
                                send_lo, send_hi, recv_lo, recv_hi, req)
     integer, intent(in)            :: myrank, nranks, overlap, nx, ny, nz
     real(8), intent(in), device    :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    !DIR$ IGNORE_TKR (tk) QJ_1, QJ_2, QJ_3, QJ_4, QJ_5   ! PREC = 'DF': fltflt state moved as 8-byte words
     real(8), intent(inout), device :: Qs1d_lo(nx*ny*overlap*5), Qs1d_hi(nx*ny*overlap*5)
     real(8), intent(inout), device :: Qr1d_lo(nx*ny*overlap*5), Qr1d_hi(nx*ny*overlap*5)
     real(8), intent(inout)         :: send_lo(nx*ny*overlap*5), send_hi(nx*ny*overlap*5)
@@ -580,6 +596,7 @@ contains
     real(8), intent(in)            :: recv_lo(nx*ny*overlap*5), recv_hi(nx*ny*overlap*5)
     real(8), intent(inout), device :: Qr1d_lo(nx*ny*overlap*5), Qr1d_hi(nx*ny*overlap*5)
     real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    !DIR$ IGNORE_TKR (tk) QJ_1, QJ_2, QJ_3, QJ_4, QJ_5   ! PREC = 'DF': fltflt state moved as 8-byte words
     integer, intent(inout)         :: req(4)
     integer msglen, stat, ierr
     integer istat4(MPI_STATUS_SIZE,4)
@@ -599,6 +616,7 @@ contains
     real(8), intent(in), device    :: recv_lo(nx*ny*overlap*5), recv_hi(nx*ny*overlap*5)
     real(8), intent(inout), device :: Qr1d_lo(nx*ny*overlap*5), Qr1d_hi(nx*ny*overlap*5)
     real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    !DIR$ IGNORE_TKR (tk) QJ_1, QJ_2, QJ_3, QJ_4, QJ_5   ! PREC = 'DF': fltflt state moved as 8-byte words
     integer, intent(inout)         :: req(4)
     integer msglen, stat, ierr
     integer istat4(MPI_STATUS_SIZE,4)

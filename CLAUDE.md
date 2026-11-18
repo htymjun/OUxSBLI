@@ -55,7 +55,7 @@ cmake -B build && cmake --build build -j   # fypp preprocess + compile
 cd build && mpirun -n 1 ./a.out            # run simulation
 ```
 
-**Compiler requirement:** NVIDIA HPC SDK (`mpif90` with `-cuda -acc -fast -gpu=ptxinfo,rdc,lto`). Versions 24.* and 25.* are confirmed working.
+**Compiler requirement:** NVIDIA HPC SDK (`mpif90` with `-cuda -acc -fast -gpu=ptxinfo,rdc,lto`). Version 25.5 or newer is required. 24.x is not supported: under WSL2 its `-gpu=ccnative` does not find the GPU and silently builds for cc50, and that image with `-gpu=lto` does not run on a newer GPU (kernels are skipped or the run stops with "PTX JIT compilation failed"). `ouxsbli.Case` selects an installed 25.5+ when the `nvfortran` on `PATH` is older.
 
 **Output format:** XML VTK files, readable with ParaView.
 
@@ -125,7 +125,9 @@ All compile-time scheme/method choices live in `<CASE>/config.fypp`. The fypp pr
 | `MPI` | `'CPU'`, `'GPU'` | COMMZ z-halo transport: stage through pinned host buffers (`'CPU'`, default, verified) or hand device buffers straight to a CUDA-aware MPI (`'GPU'` — only where a real multi-rank device-pointer exchange has been checked; see the COMMZ section of `3D_solver/CLAUDE.md`) |
 | `BC_FORCING` | `True`, `False` | `set_bc` takes extra `(x, z, phi_l_gpu, phi_m_gpu, t_now)` arguments for a time-dependent blowing/suction strip (SWLBLI only; default `False`; RK=3 and RK=4, with or without COMMZ; `RESCALE=True` unsupported) |
 | `RECON` | `'MUSCL'`, `'WENO'` | SLAU-family face reconstruction: MUSCL (`delta6`/`delta4`, default) or WENO5-Z in `delta6` (`src/calc_weno.f90.fypp`; needs `ORDER=6` and `SCHEME='SLAU'`/`'Hybrid'`; `TVD` then only affects the near-wall `delta4` faces) |
-| `WENO_PREC` | `'FP64'`, `'W32P64'` | WENO5-Z precision placement: all FP64 (IEEE division), or W32P64 — FP32 smoothness indicators/weights with the approximate reciprocal, FP64 polynomials and combine (after `WENO_ILP`'s `Recon<3,P,RecipRcp>`, with two accuracy fixes; see the WENO section of `3D_solver/CLAUDE.md`) |
+| `WENO_PREC` | `'FP64'`, `'W32P64'`, `'MIXED'` | WENO5-Z precision placement: all FP64 (IEEE division), or W32P64 — FP32 smoothness indicators/weights with the approximate reciprocal, FP64 polynomials and combine (after `WENO_ILP`'s `Recon<3,P,RecipRcp>`, with two accuracy fixes; see the WENO section of `3D_solver/CLAUDE.md`), or MIXED — diffFP32's `mixed`: FP32 weights and increments on an FP64 base (`weno5z_mixed`) |
+| `PREC` | `'FP64'`, `'DF'`, `'FP32'` | Whole-solver precision: `'DF'` keeps the state, RK stages, primitives and fluxes in FmaX double-float (`type(fltflt)`, submodule `extern/FmaX`); FP64 conversion only at upload/output. `3D_solver` and `2D_solver` (not curv); DF builds use `-O1 -Mflushz` instead of `-fast`. `'FP32'` (`2D_solver` only) makes state, metrics, coefficients and constants real(4), with no FP64 instruction in any kernel. See "Precision modes" in `3D_solver/CLAUDE.md` and `2D_solver/CLAUDE.md` |
+| `KEEP_PREC` | `'FP64'`, `'MIXED'` | KEEP with FP64 state, difference-first FP32 arithmetic (face form: FP64 point flux of the left cell + FP32 deviation; conservative, every KEEP kernel). diffFP32's cell form was tried and dropped (same accuracy floor, 5x larger velocity error, not conservative) |
 | `RIEMANN` | `'SLAU'`, `'LF'` | Face flux of the SLAU-family kernels: SLAU (`SLAU_VARIANT`, default) or local Lax-Friedrichs/Rusanov (`LFflux` in `src/calc_scheme_math.f90.fypp`; `id_slau` becomes `integer(8)`). Not wired into `3D_solver_curv` |
 
 ### mod_globals.f90 (grid, physical parameters, thread blocks)

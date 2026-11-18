@@ -1,4 +1,4 @@
-#:include 'config.fypp'
+#:include 'prec.fypp'
 #:if not defined('COMMZ')
   #:set COMMZ = False
 #:endif
@@ -10,6 +10,7 @@ module calc_keep_kernel_internal
   use mod_globals, only : gamma, threadsE, threadsF, threadsG
   use mod_constant, only : R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third
   use libm
+  use mod_prec
   implicit none
   private
   public calc_keep_x_in, calc_keep_y_in, calc_keep_z_in, calc_keep_z_in_koff
@@ -33,7 +34,7 @@ module calc_keep_kernel_internal
 #:endif
 
   interface KEEP
-    module procedure KEEP2, KEEP4, KEEP6
+    module procedure ${KEEP_PROCS}$
   end interface KEEP
 contains
   include 'calc_scheme_math.f90'
@@ -44,15 +45,15 @@ contains
   attributes(global) subroutine calc_keep_x_in${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, E${karg}$)
     use mod_constant, only : Normal_x
     integer, intent(in), value                :: nx, ny, nz${karg}$
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
+    ${RT}$, intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    ${RT}$, intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: E(nx-1,ny-2,nz-2,5)
     integer i, j, k, it, jt, kt
     integer :: ii, i_base, idx, offset_yz
     logical :: jk_in_range
     integer, parameter :: sx = threadsE%x + 2*io + 1
     integer, parameter :: sy = threadsE%y
     integer, parameter :: sz = threadsE%z
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
+    ${RT}$, dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -73,14 +74,12 @@ contains
     call syncthreads()
     i = (blockIdx%x-1)*blockDim%x + it
     if (io+1 <= i .and. i <= nx-(io+1) .and. j <= ny-1 .and. k <= ${'k_hi' if is_koff else 'nz-1'}$) then
-      associate(uu => u)
       idx = it + offset_yz
       E(i,j-1,k-1,:) = KEEP(id_acc, &
                             rho(idx-io:idx+io+1), u(idx-io:idx+io+1), &
                               v(idx-io:idx+io+1), w(idx-io:idx+io+1), &
-                             uu(idx-io:idx+io+1), p(idx-io:idx+io+1), &
+                               u(idx-io:idx+io+1), p(idx-io:idx+io+1), &
                             tmp(idx-io:idx+io+1), Normal_x)
-      end associate
     endif
   end subroutine calc_keep_x_in${sfx}$
 #:endfor
@@ -92,15 +91,15 @@ contains
   attributes(global) subroutine calc_keep_y_in${sfx}$(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, F${karg}$)
     use mod_constant, only : Normal_y
     integer, intent(in), value                :: nx, ny, nz${karg}$
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
+    ${RT}$, intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    ${RT}$, intent(${'inout' if is_koff else 'out'}$), device, contiguous  :: F(nx-2,ny-1,nz-2,5)
     integer i, j, k, it, jt, kt
     integer :: jj, j_base, idx, offset_xz
     logical :: ik_in_range
     integer, parameter :: sx = threadsF%x
     integer, parameter :: sy = threadsF%y + 2*io + 1
     integer, parameter :: sz = threadsF%z
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
+    ${RT}$, dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -121,14 +120,12 @@ contains
     call syncthreads()
     j = (blockIdx%y-1)*blockDim%y + jt
     if (io+1 <= j .and. j <= ny-(io+1) .and. i <= nx-1 .and. k <= ${'k_hi' if is_koff else 'nz-1'}$) then
-      associate(vv => v)
       idx = jt + offset_xz
       F(i-1,j,k-1,:) = KEEP(id_acc, &
                             rho(idx-io:idx+io+1), u(idx-io:idx+io+1), &
                               v(idx-io:idx+io+1), w(idx-io:idx+io+1), &
-                             vv(idx-io:idx+io+1), p(idx-io:idx+io+1), &
+                               v(idx-io:idx+io+1), p(idx-io:idx+io+1), &
                             tmp(idx-io:idx+io+1), Normal_y)
-      end associate
     endif
   end subroutine calc_keep_y_in${sfx}$
 #:endfor
@@ -137,15 +134,15 @@ contains
   attributes(global) subroutine calc_keep_z_in(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, G)
     use mod_constant, only : Normal_z
     integer, intent(in), value                :: nx, ny, nz
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(out), device, contiguous  :: G(nx-2,ny-2,nz-1,5)
+    ${RT}$, intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    ${RT}$, intent(out), device, contiguous  :: G(nx-2,ny-2,nz-1,5)
     integer i, j, k, it, jt, kt
     integer :: kk, k_base, idx, offset_xy
     logical :: ij_in_range
     integer, parameter :: sx = threadsG%x
     integer, parameter :: sy = threadsG%y
     integer, parameter :: sz = threadsG%z + 2*io + 1
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
+    ${RT}$, dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -166,14 +163,12 @@ contains
     call syncthreads()
     k = (blockIdx%z-1)*blockDim%z + kt
     if (io+1 <= k .and. k <= nz-(io+1) .and. i <= nx-1 .and. j <= ny-1) then
-      associate(ww => w)
       idx = kt + offset_xy
       G(i-1,j-1,k,:) = KEEP(id_acc, &
                             rho(idx-io:idx+io+1), u(idx-io:idx+io+1), &
                               v(idx-io:idx+io+1), w(idx-io:idx+io+1), &
-                             ww(idx-io:idx+io+1), p(idx-io:idx+io+1), &
+                               w(idx-io:idx+io+1), p(idx-io:idx+io+1), &
                             tmp(idx-io:idx+io+1), Normal_z)
-      end associate
     endif
   end subroutine calc_keep_z_in
 
@@ -181,15 +176,15 @@ contains
   attributes(global) subroutine calc_keep_z_in_koff(nx, ny, nz, Q_1, Q_2, Q_3, Q_4, Q_5, T, G, k_lo, k_hi)
     use mod_constant, only : Normal_z
     integer, intent(in), value                :: nx, ny, nz, k_lo, k_hi
-    real(8), intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    ${RT}$, intent(in), device, contiguous   :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    ${RT}$, intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     integer i, j, k, it, jt, kt
     integer :: kk, k_base, idx, offset_xy
     logical :: ij_in_range
     integer, parameter :: sx = threadsG%x
     integer, parameter :: sy = threadsG%y
     integer, parameter :: sz = threadsG%z + 2*io + 1
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
+    ${RT}$, dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -210,14 +205,12 @@ contains
     call syncthreads()
     k = k_base + kt
     if (k_lo <= k .and. k <= k_hi .and. i <= nx-1 .and. j <= ny-1) then
-      associate(ww => w)
       idx = kt + offset_xy
       G(i-1,j-1,k,:) = KEEP(id_acc, &
                             rho(idx-io:idx+io+1), u(idx-io:idx+io+1), &
                               v(idx-io:idx+io+1), w(idx-io:idx+io+1), &
-                             ww(idx-io:idx+io+1), p(idx-io:idx+io+1), &
+                               w(idx-io:idx+io+1), p(idx-io:idx+io+1), &
                             tmp(idx-io:idx+io+1), Normal_z)
-      end associate
     endif
   end subroutine calc_keep_z_in_koff
 end module calc_keep_kernel_internal

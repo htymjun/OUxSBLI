@@ -1,4 +1,5 @@
 module load_smem_visc_me4_base
+  use mod_prec
   use mod_globals, only : threadsEv, threadsFv, threadsGv
   use mod_constant, only : two_third, one_twelfth
   implicit none
@@ -17,20 +18,20 @@ contains
     integer, intent(in), value              :: nz            !< number of grid points in z direction
     real(8), intent(in), value              :: inv_dy_j      !< inverse grid spacing in y (1/dy) at j
     real(8), intent(in), value              :: inv_dz_k      !< inverse grid spacing in z (1/dz) at k
-    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz) !< conservative variables
-    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz) !< conservative variables
-    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz) !< conservative variables
+    REAL_T, intent(in), device, contiguous :: Q_2(nx,ny,nz)  !< conservative variables
+    REAL_T, intent(in), device, contiguous :: Q_3(nx,ny,nz)  !< conservative variables
+    REAL_T, intent(in), device, contiguous :: Q_4(nx,ny,nz)  !< conservative variables
     integer, parameter :: io_v = 2
     integer, parameter :: sx = threadsEv%x + 2*io_v + 1
     integer, parameter :: sy = threadsEv%y
     integer, parameter :: sz = threadsEv%z
-    real(8), intent(inout) ::  u(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared)
-    real(8), intent(inout) ::  v(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared)
-    real(8), intent(inout) ::  w(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared)
-    real(8), intent(inout) :: uy(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared) gradient 4th-order accuracy
-    real(8), intent(inout) :: vy(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared) gradient 4th-order accuracy
-    real(8), intent(inout) :: uz(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared) gradient 4th-order accuracy
-    real(8), intent(inout) :: wz(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared) gradient 4th-order accuracy
+    REAL_T, intent(inout) :: u(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared)
+    REAL_T, intent(inout) :: v(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared)
+    REAL_T, intent(inout) :: w(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared)
+    REAL_T, intent(inout) :: uy(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared) gradient 4th-order accuracy
+    REAL_T, intent(inout) :: vy(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared) gradient 4th-order accuracy
+    REAL_T, intent(inout) :: uz(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared) gradient 4th-order accuracy
+    REAL_T, intent(inout) :: wz(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared) gradient 4th-order accuracy
     integer i_base, ii, i, idx, offset_yz
     logical :: jk_in_range, jk_in_range_grad_y, jk_in_range_grad_z
     i_base = (blockIdx%x-1)*blockDim%x
@@ -71,20 +72,20 @@ contains
     integer, intent(in), value              :: nz            !< number of grid points in z direction
     real(8), intent(in), value              :: inv_dx_i      !< inverse grid spacing in x (1/dx) at i
     real(8), intent(in), value              :: inv_dz_k      !< inverse grid spacing in z (1/dz) at k
-    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz) !< conservative variables
-    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz) !< conservative variables
-    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz) !< conservative variables
+    REAL_T, intent(in), device, contiguous :: Q_2(nx,ny,nz)  !< conservative variables
+    REAL_T, intent(in), device, contiguous :: Q_3(nx,ny,nz)  !< conservative variables
+    REAL_T, intent(in), device, contiguous :: Q_4(nx,ny,nz)  !< conservative variables
     integer, parameter :: io_v = 2
     integer, parameter :: sx = threadsFv%x
     integer, parameter :: sy = threadsFv%y + 2*io_v + 1
     integer, parameter :: sz = threadsFv%z
-    real(8), intent(inout) ::  u(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared)
-    real(8), intent(inout) ::  v(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared)
-    real(8), intent(inout) ::  w(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared)
-    real(8), intent(inout) :: ux(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared) gradient 4th-order accuracy
-    real(8), intent(inout) :: vx(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared) gradient 4th-order accuracy
-    real(8), intent(inout) :: vz(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared) gradient 4th-order accuracy
-    real(8), intent(inout) :: wz(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared) gradient 4th-order accuracy
+    REAL_T, intent(inout) :: u(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared)
+    REAL_T, intent(inout) :: v(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared)
+    REAL_T, intent(inout) :: w(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared)
+    REAL_T, intent(inout) :: ux(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared) gradient 4th-order accuracy
+    REAL_T, intent(inout) :: vx(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared) gradient 4th-order accuracy
+    REAL_T, intent(inout) :: vz(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared) gradient 4th-order accuracy
+    REAL_T, intent(inout) :: wz(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared) gradient 4th-order accuracy
     integer j_base, jj, j, idx, offset_xz
     logical :: ik_in_range, ik_in_range_grad_x, ik_in_range_grad_z
     j_base = (blockIdx%y-1)*blockDim%y
@@ -125,20 +126,20 @@ contains
     integer, intent(in), value              :: nz            !< number of grid points in z direction
     real(8), intent(in), value              :: inv_dx_i      !< inverse grid spacing in x (1/dx) at i
     real(8), intent(in), value              :: inv_dy_j      !< inverse grid spacing in y (1/dy) at j
-    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz) !< conservative variables
-    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz) !< conservative variables
-    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz) !< conservative variables
+    REAL_T, intent(in), device, contiguous :: Q_2(nx,ny,nz)  !< conservative variables
+    REAL_T, intent(in), device, contiguous :: Q_3(nx,ny,nz)  !< conservative variables
+    REAL_T, intent(in), device, contiguous :: Q_4(nx,ny,nz)  !< conservative variables
     integer, parameter :: io_v = 2
     integer, parameter :: sx = threadsGv%x
     integer, parameter :: sy = threadsGv%y
     integer, parameter :: sz = threadsGv%z + 2*io_v + 1
-    real(8), intent(inout) ::  u(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared)
-    real(8), intent(inout) ::  v(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared)
-    real(8), intent(inout) ::  w(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared)
-    real(8), intent(inout) :: ux(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared) gradient 4th-order accuracy
-    real(8), intent(inout) :: wx(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared) gradient 4th-order accuracy
-    real(8), intent(inout) :: vy(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared) gradient 4th-order accuracy
-    real(8), intent(inout) :: wy(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared) gradient 4th-order accuracy
+    REAL_T, intent(inout) :: u(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared)
+    REAL_T, intent(inout) :: v(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared)
+    REAL_T, intent(inout) :: w(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared)
+    REAL_T, intent(inout) :: ux(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared) gradient 4th-order accuracy
+    REAL_T, intent(inout) :: wx(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared) gradient 4th-order accuracy
+    REAL_T, intent(inout) :: vy(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared) gradient 4th-order accuracy
+    REAL_T, intent(inout) :: wy(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared) gradient 4th-order accuracy
     integer k_base, kk, k, idx, offset_xy
     logical :: ij_in_range, ij_in_range_grad_x, ij_in_range_grad_y
     k_base = (blockIdx%z-1)*blockDim%z
@@ -180,21 +181,21 @@ contains
     integer, intent(in), value              :: nz            !< number of grid points in z direction
     real(8), intent(in), value              :: inv_dx_i      !< inverse grid spacing in x (1/dx) at i
     real(8), intent(in), value              :: inv_dy_j      !< inverse grid spacing in y (1/dy) at j
-    real(8), intent(in), device, contiguous :: Q_2(nx,ny,nz) !< conservative variables
-    real(8), intent(in), device, contiguous :: Q_3(nx,ny,nz) !< conservative variables
-    real(8), intent(in), device, contiguous :: Q_4(nx,ny,nz) !< conservative variables
+    REAL_T, intent(in), device, contiguous :: Q_2(nx,ny,nz)  !< conservative variables
+    REAL_T, intent(in), device, contiguous :: Q_3(nx,ny,nz)  !< conservative variables
+    REAL_T, intent(in), device, contiguous :: Q_4(nx,ny,nz)  !< conservative variables
     integer, intent(in), value              :: k_lo          !< z-index lower bound (global, 1-based)
     integer, parameter :: io_v = 2
     integer, parameter :: sx = threadsGv%x
     integer, parameter :: sy = threadsGv%y
     integer, parameter :: sz = threadsGv%z + 2*io_v + 1
-    real(8), intent(inout) ::  u(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared)
-    real(8), intent(inout) ::  v(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared)
-    real(8), intent(inout) ::  w(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared)
-    real(8), intent(inout) :: ux(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared) gradient 4th-order accuracy
-    real(8), intent(inout) :: wx(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared) gradient 4th-order accuracy
-    real(8), intent(inout) :: vy(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared) gradient 4th-order accuracy
-    real(8), intent(inout) :: wy(-(io_v-1):sx*sy*sz-io_v) !< attribute(shared) gradient 4th-order accuracy
+    REAL_T, intent(inout) :: u(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared)
+    REAL_T, intent(inout) :: v(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared)
+    REAL_T, intent(inout) :: w(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared)
+    REAL_T, intent(inout) :: ux(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared) gradient 4th-order accuracy
+    REAL_T, intent(inout) :: wx(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared) gradient 4th-order accuracy
+    REAL_T, intent(inout) :: vy(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared) gradient 4th-order accuracy
+    REAL_T, intent(inout) :: wy(-(io_v-1):sx*sy*sz-io_v)  !< attribute(shared) gradient 4th-order accuracy
     integer k_base, kk, k, idx, offset_xy
     logical :: ij_in_range, ij_in_range_grad_x, ij_in_range_grad_y
     k_base = (blockIdx%z-1)*blockDim%z + k_lo - 1

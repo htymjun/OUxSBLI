@@ -1,4 +1,4 @@
-#:include 'config.fypp'
+#:include 'prec.fypp'
 #:if not defined('VISC_ORDER')
   #:set VISC_ORDER = ORDER
 #:endif
@@ -27,6 +27,7 @@ module calc_keep_visc_kernel_internal
   use mod_globals, only : gamma, threadsE, threadsF, threadsG
   use mod_constant, only : R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third, &
                             Cp_over_Pr, one_sixty
+  use mod_prec
   implicit none
   private
   public calc_keepv_x_in, calc_keepv_y_in, calc_keepv_z_in
@@ -41,7 +42,7 @@ module calc_keep_visc_kernel_internal
   integer(8), parameter :: id_acc = 0_8
 
   interface KEEP
-    module procedure KEEP2, KEEP4, KEEP6
+    module procedure ${KEEP_PROCS}$
   end interface KEEP
 contains
   include 'calc_scheme_math.f90'
@@ -52,19 +53,19 @@ contains
     use mod_constant, only : Normal_x
     integer, intent(in), value                 :: nx, ny, nz
     real(8), intent(in), device, contiguous    :: dx(nx-1), dy(ny-1), dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: vy(nx,ny,nz) !< dv/dy at cell-center, precomputed by calc_div
-    real(8), intent(in), device, contiguous    :: wz(nx,ny,nz) !< dw/dz at cell-center, precomputed by calc_div
-    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
+    ${RT}$, intent(in), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: mu(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: vy(nx,ny,nz)  !< dv/dy at cell-center, precomputed by calc_div
+    ${RT}$, intent(in), device, contiguous :: wz(nx,ny,nz)  !< dw/dz at cell-center, precomputed by calc_div
+    ${RT}$, intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
     integer i, j, k, it, jt, kt
     integer :: ii, i_base, idx, offset_yz
     logical :: jk_in_range, jk_in_range_grad_y, jk_in_range_grad_z, interior
     integer, parameter :: sx = threadsE%x + 2*io + 1
     integer, parameter :: sy = threadsE%y
     integer, parameter :: sz = threadsE%z
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp, uy, uz
-    real(8) :: flux(5), mui
+    ${RT}$, dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp, uy, uz
+    ${RT}$ :: flux(5), mui
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -94,38 +95,36 @@ contains
     i = (blockIdx%x-1)*blockDim%x + it
     if (io+1 <= i .and. i <= nx-(io+1) .and. j <= ny-1 .and. k <= nz-1) then
       idx = it + offset_yz
-      associate(uu => u)
       flux = KEEP(id_acc, &
                   rho(idx-io:idx+io+1), u(idx-io:idx+io+1), &
                     v(idx-io:idx+io+1), w(idx-io:idx+io+1), &
-                   uu(idx-io:idx+io+1), p(idx-io:idx+io+1), &
+                   u(idx-io:idx+io+1), p(idx-io:idx+io+1), &
                   tmp(idx-io:idx+io+1), Normal_x)
-      end associate
       ! narrower than the convective validity above: vy/wz are only valid
       ! where calc_div_vy_6_in/calc_div_wz_6_in's own y/z-margin covers them
       interior = (4 <= j .and. j <= ny-3 .and. 4 <= k .and. k <= nz-3)
       if (interior) then
         mui = interp6_s(mu(i-2,j,k)+mu(i+3,j,k), mu(i-1,j,k)+mu(i+2,j,k), mu(i,j,k)+mu(i+1,j,k))
         block
-          real(8) :: tau, utau
+          ${RT}$ :: tau, utau
           call calc_tau_straight(mui, u(idx-io_v:idx+io_v+1), vy(i-io_v:i+io_v+1,j,k), wz(i-io_v:i+io_v+1,j,k), dx(i), tau, utau)
           flux(2) = flux(2) - tau
           flux(5) = flux(5) - utau
         end block
         block
-          real(8) :: tau, utau
+          ${RT}$ :: tau, utau
           call calc_tau_cross(mui, v(idx-io_v:idx+io_v+1), uy(idx-io_v:idx+io_v+1), dx(i), tau, utau)
           flux(3) = flux(3) - tau
           flux(5) = flux(5) - utau
         end block
         block
-          real(8) :: tau, utau
+          ${RT}$ :: tau, utau
           call calc_tau_cross(mui, w(idx-io_v:idx+io_v+1), uz(idx-io_v:idx+io_v+1), dx(i), tau, utau)
           flux(4) = flux(4) - tau
           flux(5) = flux(5) - utau
         end block
         block
-          real(8) :: Tx, kTx
+          ${RT}$ :: Tx, kTx
           ! T sourced from the shared tmp tile (already loaded for KEEP's
           ! own energy term) instead of an independent global read -- a
           ! dedup only available because KEEP already tiles T.
@@ -143,19 +142,19 @@ contains
     use mod_constant, only : Normal_y
     integer, intent(in), value                 :: nx, ny, nz
     real(8), intent(in), device, contiguous    :: dx(nx-1), dy(ny-1), dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: ux(nx,ny,nz) !< du/dx at cell-center, precomputed by calc_div
-    real(8), intent(in), device, contiguous    :: wz(nx,ny,nz) !< dw/dz at cell-center, precomputed by calc_div
-    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
+    ${RT}$, intent(in), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: mu(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: ux(nx,ny,nz)  !< du/dx at cell-center, precomputed by calc_div
+    ${RT}$, intent(in), device, contiguous :: wz(nx,ny,nz)  !< dw/dz at cell-center, precomputed by calc_div
+    ${RT}$, intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
     integer i, j, k, it, jt, kt
     integer :: jj, j_base, idx, offset_xz
     logical :: ik_in_range, ik_in_range_grad_x, ik_in_range_grad_z, interior
     integer, parameter :: sx = threadsF%x
     integer, parameter :: sy = threadsF%y + 2*io + 1
     integer, parameter :: sz = threadsF%z
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp, vx, vz
-    real(8) :: flux(5), mui
+    ${RT}$, dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp, vx, vz
+    ${RT}$ :: flux(5), mui
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -185,18 +184,16 @@ contains
     j = (blockIdx%y-1)*blockDim%y + jt
     if (io+1 <= j .and. j <= ny-(io+1) .and. i <= nx-1 .and. k <= nz-1) then
       idx = jt + offset_xz
-      associate(vv => v)
       flux = KEEP(id_acc, &
                   rho(idx-io:idx+io+1), u(idx-io:idx+io+1), &
                     v(idx-io:idx+io+1), w(idx-io:idx+io+1), &
-                   vv(idx-io:idx+io+1), p(idx-io:idx+io+1), &
+                   v(idx-io:idx+io+1), p(idx-io:idx+io+1), &
                   tmp(idx-io:idx+io+1), Normal_y)
-      end associate
       interior = (4 <= i .and. i <= nx-3 .and. 4 <= k .and. k <= nz-3)
       if (interior) then
         mui = interp6_s(mu(i,j-2,k)+mu(i,j+3,k), mu(i,j-1,k)+mu(i,j+2,k), mu(i,j,k)+mu(i,j+1,k))
         block
-          real(8) :: tau, utau
+          ${RT}$ :: tau, utau
           call calc_tau_straight_s(mui, v(idx-io_v:idx+io_v+1), &
                wz(i,j-2,k)+wz(i,j+3,k), ux(i,j-2,k)+ux(i,j+3,k), &
                wz(i,j-1,k)+wz(i,j+2,k), ux(i,j-1,k)+ux(i,j+2,k), &
@@ -206,19 +203,19 @@ contains
           flux(5) = flux(5) - utau
         end block
         block
-          real(8) :: tau, utau
+          ${RT}$ :: tau, utau
           call calc_tau_cross(mui, u(idx-io_v:idx+io_v+1), vx(idx-io_v:idx+io_v+1), dy(j), tau, utau)
           flux(2) = flux(2) - tau
           flux(5) = flux(5) - utau
         end block
         block
-          real(8) :: tau, utau
+          ${RT}$ :: tau, utau
           call calc_tau_cross(mui, w(idx-io_v:idx+io_v+1), vz(idx-io_v:idx+io_v+1), dy(j), tau, utau)
           flux(4) = flux(4) - tau
           flux(5) = flux(5) - utau
         end block
         block
-          real(8) :: Ty, kTy
+          ${RT}$ :: Ty, kTy
           Ty  = diff6_s(dy(j), -tmp(idx-2)+tmp(idx+3), tmp(idx-1)-tmp(idx+2), -tmp(idx)+tmp(idx+1))
           kTy = Cp_over_Pr * mui * Ty
           flux(5) = flux(5) - kTy
@@ -233,19 +230,19 @@ contains
     use mod_constant, only : Normal_z
     integer, intent(in), value                 :: nx, ny, nz
     real(8), intent(in), device, contiguous    :: dx(nx-1), dy(ny-1), dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: ux(nx,ny,nz) !< du/dx at cell-center, precomputed by calc_div
-    real(8), intent(in), device, contiguous    :: vy(nx,ny,nz) !< dv/dy at cell-center, precomputed by calc_div
-    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    ${RT}$, intent(in), device, contiguous :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz), T(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: mu(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: ux(nx,ny,nz)  !< du/dx at cell-center, precomputed by calc_div
+    ${RT}$, intent(in), device, contiguous :: vy(nx,ny,nz)  !< dv/dy at cell-center, precomputed by calc_div
+    ${RT}$, intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     integer i, j, k, it, jt, kt
     integer :: kk, k_base, idx, offset_xy
     logical :: ij_in_range, ij_in_range_grad_x, ij_in_range_grad_y, interior
     integer, parameter :: sx = threadsG%x
     integer, parameter :: sy = threadsG%y
     integer, parameter :: sz = threadsG%z + 2*io + 1
-    real(8), dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp, wx, wy
-    real(8) :: flux(5), mui
+    ${RT}$, dimension(-(io-1):sx*sy*sz-io), shared :: rho, u, v, w, p, tmp, wx, wy
+    ${RT}$ :: flux(5), mui
     it = threadIdx%x
     jt = threadIdx%y
     kt = threadIdx%z
@@ -275,18 +272,16 @@ contains
     k = (blockIdx%z-1)*blockDim%z + kt
     if (io+1 <= k .and. k <= nz-(io+1) .and. i <= nx-1 .and. j <= ny-1) then
       idx = kt + offset_xy
-      associate(ww => w)
       flux = KEEP(id_acc, &
                   rho(idx-io:idx+io+1), u(idx-io:idx+io+1), &
                     v(idx-io:idx+io+1), w(idx-io:idx+io+1), &
-                   ww(idx-io:idx+io+1), p(idx-io:idx+io+1), &
+                   w(idx-io:idx+io+1), p(idx-io:idx+io+1), &
                   tmp(idx-io:idx+io+1), Normal_z)
-      end associate
       interior = (4 <= i .and. i <= nx-3 .and. 4 <= j .and. j <= ny-3)
       if (interior) then
         mui = interp6_s(mu(i,j,k-2)+mu(i,j,k+3), mu(i,j,k-1)+mu(i,j,k+2), mu(i,j,k)+mu(i,j,k+1))
         block
-          real(8) :: tau, utau
+          ${RT}$ :: tau, utau
           call calc_tau_straight_s(mui, w(idx-io_v:idx+io_v+1), &
                ux(i,j,k-2)+ux(i,j,k+3), vy(i,j,k-2)+vy(i,j,k+3), &
                ux(i,j,k-1)+ux(i,j,k+2), vy(i,j,k-1)+vy(i,j,k+2), &
@@ -296,19 +291,19 @@ contains
           flux(5) = flux(5) - utau
         end block
         block
-          real(8) :: tau, utau
+          ${RT}$ :: tau, utau
           call calc_tau_cross(mui, u(idx-io_v:idx+io_v+1), wx(idx-io_v:idx+io_v+1), dz(k), tau, utau)
           flux(2) = flux(2) - tau
           flux(5) = flux(5) - utau
         end block
         block
-          real(8) :: tau, utau
+          ${RT}$ :: tau, utau
           call calc_tau_cross(mui, v(idx-io_v:idx+io_v+1), wy(idx-io_v:idx+io_v+1), dz(k), tau, utau)
           flux(3) = flux(3) - tau
           flux(5) = flux(5) - utau
         end block
         block
-          real(8) :: Tz, kTz
+          ${RT}$ :: Tz, kTz
           Tz  = diff6_s(dz(k), -tmp(idx-2)+tmp(idx+3), tmp(idx-1)-tmp(idx+2), -tmp(idx)+tmp(idx+1))
           kTz = Cp_over_Pr * mui * Tz
           flux(5) = flux(5) - kTz

@@ -44,8 +44,8 @@ contains
 
   subroutine set_bc(myrank, nx, ny, Jacobian, Q_1, Q_2, Q_3, Q_4)
     integer, intent(in), value     :: myrank, nx, ny
-    real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
+    REAL_W, intent(in), device     :: Jacobian(nx,ny)
+    REAL_T, intent(inout), device  :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)
     call set_bc_cyclic(id_accuracy, nx, ny, Q_1, Q_2, Q_3, Q_4)
   end subroutine set_bc
 end module set

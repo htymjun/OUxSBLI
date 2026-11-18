@@ -1,4 +1,4 @@
-#:include 'config.fypp'
+#:include 'prec.fypp'
 #:if not defined('VISC_ORDER')
   #:set VISC_ORDER = ORDER
 #:endif
@@ -10,6 +10,7 @@ end module calc_visc_high_internal
 #:else
 module calc_visc_high_internal
   use libm
+  use mod_prec
   use mod_globals, only : gamma, R, Pr, Prt, dt, threadsEv, threadsFv, threadsGv
   use mod_constant, only : id_visc, Cp, gamma_1, Cp_over_Pr, one_third, two_third, one_twelfth
   use load_smem_visc_cent${VISC_ORDER}$
@@ -51,18 +52,18 @@ contains
     real(8), intent(in), device, contiguous    :: dx(nx-1)
     real(8), intent(in), device, contiguous    :: dy(ny-1)
     real(8), intent(in), device, contiguous    :: dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: T(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: T(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: mu(nx,ny,nz)
     #:if is_les
-    real(8), intent(in), device, contiguous    :: mut(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: qc2(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: mut(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: qc2(nx,ny,nz)
     #:endif
-    real(8), intent(in), device, contiguous    :: vy(nx,ny,nz) !< dv/dy at cell-center, precomputed by calc_div
-    real(8), intent(in), device, contiguous    :: wz(nx,ny,nz) !< dw/dz at cell-center, precomputed by calc_div
-    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
+    ${RT}$, intent(in), device, contiguous :: vy(nx,ny,nz)  !< dv/dy at cell-center, precomputed by calc_div
+    ${RT}$, intent(in), device, contiguous :: wz(nx,ny,nz)  !< dw/dz at cell-center, precomputed by calc_div
+    ${RT}$, intent(inout), device, contiguous :: E(nx-1,ny-2,nz-2,5)
     #:if is_koff
     integer, intent(in), value                 :: k_lo
     integer, intent(in), value                 :: k_hi
@@ -75,17 +76,17 @@ contains
     integer, parameter :: sx = threadsEv%x + 2*io_v + 1
     integer, parameter :: sy = threadsEv%y
     integer, parameter :: sz = threadsEv%z
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared ::  u
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared ::  v
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared ::  w
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: uy
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: uz
+    ${RT}$, dimension(-(io_v-1):sx*sy*sz-io_v), shared :: u
+    ${RT}$, dimension(-(io_v-1):sx*sy*sz-io_v), shared :: v
+    ${RT}$, dimension(-(io_v-1):sx*sy*sz-io_v), shared :: w
+    ${RT}$, dimension(-(io_v-1):sx*sy*sz-io_v), shared :: uy
+    ${RT}$, dimension(-(io_v-1):sx*sy*sz-io_v), shared :: uz
     integer i, j, k, it, jt, kt, idx
     logical :: valid, interior
-    real(8) :: utau_sum, mui
+    ${RT}$ :: utau_sum, mui
     #:if is_les
-    real(8) :: Hsgs, muti
-    real(8) :: H(2*io_v+2)
+    ${RT}$ :: Hsgs, muti
+    ${RT}$ :: H(2*io_v+2)
     #:endif
     interior = .false.
     it = threadIdx%x
@@ -132,40 +133,43 @@ contains
       #:endif
       #:endif
       #:if is_les
-      H(:) = H(:) + 0.5d0*v(idx-io_v:idx+io_v+1)**2 + 0.5d0*w(idx-io_v:idx+io_v+1)**2
+      #! element-wise: the fltflt operators are not elemental (PREC = 'DF')
+      #:for m in range(1, VISC_ORDER + 1)
+      H(${m}$) = H(${m}$) + 0.5d0*v(idx-io_v-1+${m}$)**2 + 0.5d0*w(idx-io_v-1+${m}$)**2
+      #:endfor
       #:endif
       block
-        real(8) :: tau, utau
+        ${RT}$ :: tau, utau
         #:if is_les
         call calc_tau_straight_LES(mui, muti, u(idx-io_v:idx+io_v+1), vy(i-io_v:i+io_v+1,j,k), wz(i-io_v:i+io_v+1,j,k), dx(i), tau, utau)
         #:else
         call calc_tau_straight(mui, u(idx-io_v:idx+io_v+1), vy(i-io_v:i+io_v+1,j,k), wz(i-io_v:i+io_v+1,j,k), dx(i), tau, utau)
         #:endif
-        call __stcg(E(i,j-1,k-1,2), __ldlu(E(i,j-1,k-1,2)) - tau)
+        call ${STCG}$(E(i,j-1,k-1,2), ${LDLU}$(E(i,j-1,k-1,2)) - tau)
         utau_sum = utau
       end block
       block
-        real(8) :: tau, utau
+        ${RT}$ :: tau, utau
         #:if is_les
         call calc_tau_cross_LES(mui, muti, v(idx-io_v:idx+io_v+1), uy(idx-io_v:idx+io_v+1), dx(i), tau, utau)
         #:else
         call calc_tau_cross(mui, v(idx-io_v:idx+io_v+1), uy(idx-io_v:idx+io_v+1), dx(i), tau, utau)
         #:endif
-        call __stcg(E(i,j-1,k-1,3), __ldlu(E(i,j-1,k-1,3)) - tau)
+        call ${STCG}$(E(i,j-1,k-1,3), ${LDLU}$(E(i,j-1,k-1,3)) - tau)
         utau_sum = utau_sum + utau
       end block
       block
-        real(8) :: tau, utau
+        ${RT}$ :: tau, utau
         #:if is_les
         call calc_tau_cross_LES(mui, muti, w(idx-io_v:idx+io_v+1), uz(idx-io_v:idx+io_v+1), dx(i), tau, utau)
         #:else
         call calc_tau_cross(mui, w(idx-io_v:idx+io_v+1), uz(idx-io_v:idx+io_v+1), dx(i), tau, utau)
         #:endif
-        call __stcg(E(i,j-1,k-1,4), __ldlu(E(i,j-1,k-1,4)) - tau)
+        call ${STCG}$(E(i,j-1,k-1,4), ${LDLU}$(E(i,j-1,k-1,4)) - tau)
         utau_sum = utau_sum + utau
       end block
       block
-        real(8) :: e5v, Tx, kTx
+        ${RT}$ :: e5v, Tx, kTx
         #:if VISC_ORDER == 4
         Tx  = diff${VISC_ORDER}$_s(dx(i), T(i,j,k)-T(i+1,j,k), T(i-1,j,k)-T(i+2,j,k))
         #:else
@@ -181,8 +185,8 @@ contains
         #:endif
         ) / Prt
         #:endif
-        e5v = __ldlu(E(i,j-1,k-1,5))
-        call __stcg(E(i,j-1,k-1,5), e5v - (utau_sum + kTx &
+        e5v = ${LDLU}$(E(i,j-1,k-1,5))
+        call ${STCG}$(E(i,j-1,k-1,5), e5v - (utau_sum + kTx &
     #:if is_les
       + Hsgs &
     #:endif
@@ -213,18 +217,18 @@ contains
     real(8), intent(in), device, contiguous    :: dx(nx-1)
     real(8), intent(in), device, contiguous    :: dy(ny-1)
     real(8), intent(in), device, contiguous    :: dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: T(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: T(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: mu(nx,ny,nz)
     #:if is_les
-    real(8), intent(in), device, contiguous    :: mut(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: qc2(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: mut(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: qc2(nx,ny,nz)
     #:endif
-    real(8), intent(in), device, contiguous    :: ux(nx,ny,nz) !< du/dx at cell-center, precomputed by calc_div
-    real(8), intent(in), device, contiguous    :: wz(nx,ny,nz) !< dw/dz at cell-center, precomputed by calc_div
-    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
+    ${RT}$, intent(in), device, contiguous :: ux(nx,ny,nz)  !< du/dx at cell-center, precomputed by calc_div
+    ${RT}$, intent(in), device, contiguous :: wz(nx,ny,nz)  !< dw/dz at cell-center, precomputed by calc_div
+    ${RT}$, intent(inout), device, contiguous :: F(nx-2,ny-1,nz-2,5)
     #:if is_koff
     integer, intent(in), value                 :: k_lo
     integer, intent(in), value                 :: k_hi
@@ -237,17 +241,17 @@ contains
     integer, parameter :: sx = threadsFv%x
     integer, parameter :: sy = threadsFv%y + 2*io_v + 1
     integer, parameter :: sz = threadsFv%z
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared ::  u
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared ::  v
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared ::  w
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: vx
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: vz
+    ${RT}$, dimension(-(io_v-1):sx*sy*sz-io_v), shared :: u
+    ${RT}$, dimension(-(io_v-1):sx*sy*sz-io_v), shared :: v
+    ${RT}$, dimension(-(io_v-1):sx*sy*sz-io_v), shared :: w
+    ${RT}$, dimension(-(io_v-1):sx*sy*sz-io_v), shared :: vx
+    ${RT}$, dimension(-(io_v-1):sx*sy*sz-io_v), shared :: vz
     integer i, j, k, it, jt, kt, idx
     logical :: valid, interior
-    real(8) :: utau_sum, mui
+    ${RT}$ :: utau_sum, mui
     #:if is_les
-    real(8) :: Hsgs, muti
-    real(8) :: H(2*io_v+2)
+    ${RT}$ :: Hsgs, muti
+    ${RT}$ :: H(2*io_v+2)
     #:endif
     interior = .false.
     it = threadIdx%x
@@ -294,10 +298,13 @@ contains
       #:endif
       #:endif
       #:if is_les
-      H(:) = H(:) + 0.5d0*u(idx-io_v:idx+io_v+1)**2 + 0.5d0*w(idx-io_v:idx+io_v+1)**2
+      #! element-wise: the fltflt operators are not elemental (PREC = 'DF')
+      #:for m in range(1, VISC_ORDER + 1)
+      H(${m}$) = H(${m}$) + 0.5d0*u(idx-io_v-1+${m}$)**2 + 0.5d0*w(idx-io_v-1+${m}$)**2
+      #:endfor
       #:endif
       block
-        real(8) :: tau, utau
+        ${RT}$ :: tau, utau
         #:if VISC_ORDER == 4
         #:if is_les
         call calc_tau_straight_LES_s(mui, muti, v(idx-io_v:idx+io_v+1), &
@@ -325,31 +332,31 @@ contains
              dy(j), tau, utau)
         #:endif
         #:endif
-        call __stcg(F(i-1,j,k-1,3), __ldlu(F(i-1,j,k-1,3)) - tau)
+        call ${STCG}$(F(i-1,j,k-1,3), ${LDLU}$(F(i-1,j,k-1,3)) - tau)
         utau_sum = utau
       end block
       block
-        real(8) :: tau, utau
+        ${RT}$ :: tau, utau
         #:if is_les
         call calc_tau_cross_LES(mui, muti, u(idx-io_v:idx+io_v+1), vx(idx-io_v:idx+io_v+1), dy(j), tau, utau)
         #:else
         call calc_tau_cross(mui, u(idx-io_v:idx+io_v+1), vx(idx-io_v:idx+io_v+1), dy(j), tau, utau)
         #:endif
-        call __stcg(F(i-1,j,k-1,2), __ldlu(F(i-1,j,k-1,2)) - tau)
+        call ${STCG}$(F(i-1,j,k-1,2), ${LDLU}$(F(i-1,j,k-1,2)) - tau)
         utau_sum = utau_sum + utau
       end block
       block
-        real(8) :: tau, utau
+        ${RT}$ :: tau, utau
         #:if is_les
         call calc_tau_cross_LES(mui, muti, w(idx-io_v:idx+io_v+1), vz(idx-io_v:idx+io_v+1), dy(j), tau, utau)
         #:else
         call calc_tau_cross(mui, w(idx-io_v:idx+io_v+1), vz(idx-io_v:idx+io_v+1), dy(j), tau, utau)
         #:endif
-        call __stcg(F(i-1,j,k-1,4), __ldlu(F(i-1,j,k-1,4)) - tau)
+        call ${STCG}$(F(i-1,j,k-1,4), ${LDLU}$(F(i-1,j,k-1,4)) - tau)
         utau_sum = utau_sum + utau
       end block
       block
-        real(8) :: f5v, Ty, kTy
+        ${RT}$ :: f5v, Ty, kTy
         #:if VISC_ORDER == 4
         Ty  = diff${VISC_ORDER}$_s(dy(j), T(i,j,k)-T(i,j+1,k), T(i,j-1,k)-T(i,j+2,k))
         #:else
@@ -365,8 +372,8 @@ contains
         #:endif
         ) / Prt
         #:endif
-        f5v = __ldlu(F(i-1,j,k-1,5))
-        call __stcg(F(i-1,j,k-1,5), f5v - (utau_sum + kTy &
+        f5v = ${LDLU}$(F(i-1,j,k-1,5))
+        call ${STCG}$(F(i-1,j,k-1,5), f5v - (utau_sum + kTy &
     #:if is_les
       + Hsgs &
     #:endif
@@ -397,18 +404,18 @@ contains
     real(8), intent(in), device, contiguous    :: dx(nx-1)
     real(8), intent(in), device, contiguous    :: dy(ny-1)
     real(8), intent(in), device, contiguous    :: dz(nz-1)
-    real(8), intent(in), device, contiguous    :: Q_2(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: Q_3(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: Q_4(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: T(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: mu(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_2(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_3(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: Q_4(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: T(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: mu(nx,ny,nz)
     #:if is_les
-    real(8), intent(in), device, contiguous    :: mut(nx,ny,nz)
-    real(8), intent(in), device, contiguous    :: qc2(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: mut(nx,ny,nz)
+    ${RT}$, intent(in), device, contiguous :: qc2(nx,ny,nz)
     #:endif
-    real(8), intent(in), device, contiguous    :: ux(nx,ny,nz) !< du/dx at cell-center, precomputed by calc_div
-    real(8), intent(in), device, contiguous    :: vy(nx,ny,nz) !< dv/dy at cell-center, precomputed by calc_div
-    real(8), intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
+    ${RT}$, intent(in), device, contiguous :: ux(nx,ny,nz)  !< du/dx at cell-center, precomputed by calc_div
+    ${RT}$, intent(in), device, contiguous :: vy(nx,ny,nz)  !< dv/dy at cell-center, precomputed by calc_div
+    ${RT}$, intent(inout), device, contiguous :: G(nx-2,ny-2,nz-1,5)
     #:if is_koff
     integer, intent(in), value                 :: k_lo
     integer, intent(in), value                 :: k_hi
@@ -421,17 +428,17 @@ contains
     integer, parameter :: sx = threadsGv%x
     integer, parameter :: sy = threadsGv%y
     integer, parameter :: sz = threadsGv%z + 2*io_v + 1
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared ::  u
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared ::  v
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared ::  w
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: wx
-    real(8), dimension(-(io_v-1):sx*sy*sz-io_v), shared :: wy
+    ${RT}$, dimension(-(io_v-1):sx*sy*sz-io_v), shared :: u
+    ${RT}$, dimension(-(io_v-1):sx*sy*sz-io_v), shared :: v
+    ${RT}$, dimension(-(io_v-1):sx*sy*sz-io_v), shared :: w
+    ${RT}$, dimension(-(io_v-1):sx*sy*sz-io_v), shared :: wx
+    ${RT}$, dimension(-(io_v-1):sx*sy*sz-io_v), shared :: wy
     integer i, j, k, it, jt, kt, idx
     logical :: valid, interior
-    real(8) :: utau_sum, mui
+    ${RT}$ :: utau_sum, mui
     #:if is_les
-    real(8) :: Hsgs, muti
-    real(8) :: H(2*io_v+2)
+    ${RT}$ :: Hsgs, muti
+    ${RT}$ :: H(2*io_v+2)
     #:endif
     interior = .false.
     it = threadIdx%x
@@ -476,10 +483,13 @@ contains
       #:endif
       #:endif
       #:if is_les
-      H(:) = H(:) + 0.5d0*u(idx-io_v:idx+io_v+1)**2 + 0.5d0*v(idx-io_v:idx+io_v+1)**2
+      #! element-wise: the fltflt operators are not elemental (PREC = 'DF')
+      #:for m in range(1, VISC_ORDER + 1)
+      H(${m}$) = H(${m}$) + 0.5d0*u(idx-io_v-1+${m}$)**2 + 0.5d0*v(idx-io_v-1+${m}$)**2
+      #:endfor
       #:endif
       block
-        real(8) :: tau, utau
+        ${RT}$ :: tau, utau
         #:if VISC_ORDER == 4
         #:if is_les
         call calc_tau_straight_LES_s(mui, muti, w(idx-io_v:idx+io_v+1), &
@@ -507,31 +517,31 @@ contains
              dz(k), tau, utau)
         #:endif
         #:endif
-        call __stcg(G(i-1,j-1,k,4), __ldlu(G(i-1,j-1,k,4)) - tau)
+        call ${STCG}$(G(i-1,j-1,k,4), ${LDLU}$(G(i-1,j-1,k,4)) - tau)
         utau_sum = utau
       end block
       block
-        real(8) :: tau, utau
+        ${RT}$ :: tau, utau
         #:if is_les
         call calc_tau_cross_LES(mui, muti, u(idx-io_v:idx+io_v+1), wx(idx-io_v:idx+io_v+1), dz(k), tau, utau)
         #:else
         call calc_tau_cross(mui, u(idx-io_v:idx+io_v+1), wx(idx-io_v:idx+io_v+1), dz(k), tau, utau)
         #:endif
-        call __stcg(G(i-1,j-1,k,2), __ldlu(G(i-1,j-1,k,2)) - tau)
+        call ${STCG}$(G(i-1,j-1,k,2), ${LDLU}$(G(i-1,j-1,k,2)) - tau)
         utau_sum = utau_sum + utau
       end block
       block
-        real(8) :: tau, utau
+        ${RT}$ :: tau, utau
         #:if is_les
         call calc_tau_cross_LES(mui, muti, v(idx-io_v:idx+io_v+1), wy(idx-io_v:idx+io_v+1), dz(k), tau, utau)
         #:else
         call calc_tau_cross(mui, v(idx-io_v:idx+io_v+1), wy(idx-io_v:idx+io_v+1), dz(k), tau, utau)
         #:endif
-        call __stcg(G(i-1,j-1,k,3), __ldlu(G(i-1,j-1,k,3)) - tau)
+        call ${STCG}$(G(i-1,j-1,k,3), ${LDLU}$(G(i-1,j-1,k,3)) - tau)
         utau_sum = utau_sum + utau
       end block
       block
-        real(8) :: g5v, Tz, kTz
+        ${RT}$ :: g5v, Tz, kTz
         #:if VISC_ORDER == 4
         Tz  = diff${VISC_ORDER}$_s(dz(k), T(i,j,k)-T(i,j,k+1), T(i,j,k-1)-T(i,j,k+2))
         #:else
@@ -547,8 +557,8 @@ contains
         #:endif
         ) / Prt
         #:endif
-        g5v = __ldlu(G(i-1,j-1,k,5))
-        call __stcg(G(i-1,j-1,k,5), g5v - (utau_sum + kTz &
+        g5v = ${LDLU}$(G(i-1,j-1,k,5))
+        call ${STCG}$(G(i-1,j-1,k,5), g5v - (utau_sum + kTz &
     #:if is_les
       + Hsgs &
     #:endif

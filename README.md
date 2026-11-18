@@ -23,7 +23,7 @@ OUxSBLI is a GPU-accelerated CFD code with Python-API written in CUDA Fortran. I
 ## Dependency
 
 ### CUDA Fortran
-* NVIDIA HPC SDK 24.x or 25.x — provides `mpif90` and bundled MPI
+* NVIDIA HPC SDK 25.5 or newer — provides `mpif90` and bundled MPI
 * CMake 3.18 or newer
 * [fypp](https://fypp.readthedocs.io/) (`pip install fypp`) — Fortran preprocessor
 * ParaView — for visualizing VTK output
@@ -90,11 +90,15 @@ cd build && bash ../profile.sh
 
 ### Python API
 
-1. Install the `ouxsbli` package:
+1. Install the `ouxsbli` package (editable, so that the solver sources of this checkout are found from
+   any directory; `OUXSBLI_ROOT=<checkout>` selects another one):
 
 ```bash
 pip install -e ".[dev]"
 ```
+
+   The same steps are available as a command: `ouxsbli init 3D_solver/NSTGV ./run nx=65`,
+   `ouxsbli run ./run` (see `docs/api.md`).
 
 2. Create a `Case`, build, and run:
 

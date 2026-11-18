@@ -1,0 +1,473 @@
+#:include 'prec.fypp'
+!> Arithmetic types selected by PREC / KEEP_PREC (see src/prec.fypp).
+!> PREC = 'DF': the intrinsics and assignments the solver uses, extended to FmaX
+!> fltflt, so the FP64 source runs unchanged on double-float state. FP64 <-> DF
+!> conversions happen only in the host <-> device array assignments (up/download).
+
+!> KEEP_PREC = 'MIXED*': type(dev) = (b, d) carries the FP32 base-stencil value b
+!> and the deviation d from it (an FP64 difference narrowed to FP32). Sums and
+!> products follow the exact identities (B1+D1)(B2+D2) - B1*B2 = B1*D2 + D1*(B2+D2),
+!> so KEEP evaluated on dev returns F(q) - F(base) in FP32 without cancellation.
+module mod_prec
+#:if PREC == 'DF'
+  use fltflt
+#:endif
+  implicit none
+#:if PREC == 'DF'
+  !> fltw: a real(8) metric or coefficient split into fltflt on the host (fltflt_init). Its mixed
+  !> operations with fltflt reproduce FmaX's real(8) overloads bit for bit (same operand order,
+  !> same split) without the FP64 instructions of the split on the device.
+  type, public :: fltw
+    type(fltflt) :: v
+  end type fltw
+  interface operator(+)
+    module procedure add_wf, add_fw
+  end interface
+  interface operator(-)
+    module procedure sub_wf, sub_fw, neg_w
+  end interface
+  interface operator(*)
+    module procedure mul_wf, mul_fw
+  end interface
+  interface operator(/)
+    module procedure div_wf, div_fw
+  end interface
+  interface wsplit
+    module procedure wsplit_s
+  end interface
+  public :: wsplit, whi, wlo
+  interface sqrt
+    procedure fltflt_sqrt
+  end interface
+  interface abs
+    procedure fltflt_abs
+  end interface
+  #! fltflt (f) / real(8) (r) argument patterns the solver uses
+  #:set MM = [('ff', 'type(fltflt)', 'type(fltflt)'), ('fr', 'type(fltflt)', 'real(8)'), ('rf', 'real(8)', 'type(fltflt)')]
+  #:set CMP = [('lt', '<'), ('gt', '>'), ('le', '<='), ('ge', '>=')]
+  #:for f in ('max', 'min')
+  interface ${f}$
+    module procedure ${', '.join(f + '_' + t for t, _, _ in MM)}$${', ' + f + '_fff' if f != 'fmin' else ''}$
+  end interface
+  #:endfor
+  #:for c, op in CMP
+  interface operator(${op}$)
+    module procedure ${c}$_fr, ${c}$_rf
+  end interface
+  #:endfor
+  interface operator(**)
+    module procedure pow_fi, pow_fr
+  end interface
+  interface merge
+    module procedure ${', '.join('merge_' + t for t, _, _ in MM)}$
+  end interface
+  interface sign
+    module procedure sign_rf
+  end interface
+  interface copysign
+    module procedure sign_rf
+  end interface
+  interface real
+    module procedure real_f
+  end interface
+  interface fma
+    module procedure fma_fff, fma_rff, fma_ffr, fma_wff, fma_ffw
+  end interface
+  interface dble
+    module procedure dble_ff
+  end interface
+  interface store
+    module procedure store_ff, store_r8
+  end interface
+  interface ld
+    module procedure ld_ff, ld_r8
+  end interface
+  interface assignment(=)
+    module procedure set_ff_r8, set_r8_ff, set_ff_w, upload_w1, upload_w2, upload3, download3, copy3, fill3, fill4${', upload2, download2, copy2' if getvar('DIM', 3) == 2 else ''}$
+  end interface
+#:endif
+#:if KEEP_PREC != 'FP64'
+  type dev
+    real(4) :: b, d
+  end type dev
+  interface operator(+)
+    module procedure add_vv
+  end interface
+  interface operator(-)
+    module procedure sub_vv, neg_v
+  end interface
+  interface operator(*)
+    module procedure mul_vv, mul_rv, mul_vr
+  end interface
+  interface fma
+    module procedure fma_vvv, fma_rvv
+  end interface
+#:endif
+#:if PREC == 'DF' or KEEP_PREC != 'FP64'
+contains
+#:endif
+#:if PREC == 'DF'
+  #:for f, g in (('max', 'fltflt_max'), ('min', 'fltflt_min'))
+  #:for t, ta, tb in MM
+  attributes(device) type(fltflt) function ${f}$_${t}$(a, b)
+    ${ta}$, intent(in) :: a
+    ${tb}$, intent(in) :: b
+    ${f}$_${t}$ = ${g}$(${'a' if t[0] == 'f' else 'fltflt_init(a)'}$, ${'b' if t[1] == 'f' else 'fltflt_init(b)'}$)
+  end function ${f}$_${t}$
+
+  #:endfor
+  #:endfor
+  #:for f in ('max', 'min')
+  attributes(device) type(fltflt) function ${f}$_fff(a, b, c)
+    type(fltflt), intent(in) :: a, b, c
+    ${f}$_fff = fltflt_${f}$(fltflt_${f}$(a, b), c)
+  end function ${f}$_fff
+
+  #:endfor
+  #:for c, op in CMP
+  attributes(device) logical function ${c}$_fr(a, b)
+    type(fltflt), intent(in) :: a
+    real(8), intent(in)      :: b
+    ${c}$_fr = a ${op}$ fltflt_init(b)
+  end function ${c}$_fr
+
+  attributes(device) logical function ${c}$_rf(a, b)
+    real(8), intent(in)      :: a
+    type(fltflt), intent(in) :: b
+    ${c}$_rf = fltflt_init(a) ${op}$ b
+  end function ${c}$_rf
+
+  #:endfor
+  attributes(device) type(fltflt) function pow_fi(a, n)
+    type(fltflt), intent(in) :: a
+    integer, intent(in)      :: n
+    integer i
+    pow_fi = fltflt_init(1.0_4)
+    do i = 1, n
+      pow_fi = pow_fi * a
+    end do
+  end function pow_fi
+
+  !> real exponent (LES model coefficients only): evaluated in FP64
+  attributes(device) type(fltflt) function pow_fr(a, b)
+    type(fltflt), intent(in) :: a
+    real(8), intent(in)      :: b
+    pow_fr = fltflt_init((dble(a%hi) + dble(a%lo)) ** b)
+  end function pow_fr
+
+  #:for t, ta, tb in MM
+  attributes(device) type(fltflt) function merge_${t}$(a, b, mask)
+    ${ta}$, intent(in) :: a
+    ${tb}$, intent(in) :: b
+    logical, intent(in) :: mask
+    if (mask) then
+      merge_${t}$ = a
+    else
+      merge_${t}$ = b
+    end if
+  end function merge_${t}$
+
+  #:endfor
+  attributes(device) real(8) function sign_rf(a, b)
+    real(8), intent(in)      :: a
+    type(fltflt), intent(in) :: b
+    sign_rf = sign(a, dble(b%hi))
+  end function sign_rf
+
+  attributes(host, device) real(8) function real_f(a, kind)
+    type(fltflt), intent(in) :: a
+    integer, intent(in)      :: kind
+    real_f = dble(a%hi) + dble(a%lo)
+  end function real_f
+
+  attributes(device) type(fltflt) function fma_fff(a, b, c)
+    type(fltflt), intent(in) :: a, b, c
+    fma_fff = fltflt_fma(a, b, c)
+  end function fma_fff
+
+  attributes(device) type(fltflt) function fma_rff(a, b, c)
+    real(8), intent(in)      :: a
+    type(fltflt), intent(in) :: b, c
+    fma_rff = a * b + c
+  end function fma_rff
+
+  attributes(device) type(fltflt) function fma_ffr(a, b, c)
+    type(fltflt), intent(in) :: a, b
+    real(8), intent(in)      :: c
+    fma_ffr = a * b + c
+  end function fma_ffr
+
+  elemental attributes(host, device) real(8) function dble_ff(a)
+    type(fltflt), intent(in) :: a
+    dble_ff = dble(a%hi) + dble(a%lo)
+  end function dble_ff
+
+  attributes(device) subroutine store_ff(a, b)
+    type(fltflt), intent(out) :: a
+    type(fltflt), intent(in)  :: b
+    a = b
+  end subroutine store_ff
+
+  attributes(device) subroutine store_r8(a, b)
+    real(8), intent(out) :: a
+    real(8), intent(in)  :: b
+    a = b
+  end subroutine store_r8
+
+  attributes(device) type(fltflt) function ld_ff(a)
+    type(fltflt), intent(in) :: a
+    ld_ff = a
+  end function ld_ff
+
+  attributes(device) real(8) function ld_r8(a)
+    real(8), intent(in) :: a
+    ld_r8 = a
+  end function ld_r8
+
+  elemental attributes(host, device) subroutine set_ff_r8(a, b)
+    type(fltflt), intent(out) :: a
+    real(8), intent(in)       :: b
+    a = fltflt_init(b)
+  end subroutine set_ff_r8
+
+  elemental attributes(host, device) subroutine set_r8_ff(a, b)
+    real(8), intent(out)     :: a
+    type(fltflt), intent(in) :: b
+    a = dble(b%hi) + dble(b%lo)
+  end subroutine set_r8_ff
+
+  subroutine upload3(a, b)
+    type(fltflt), device, intent(out) :: a(:,:,:)
+    real(8), intent(in)               :: b(:,:,:)
+    type(fltflt), allocatable :: t(:,:,:)
+    integer i, j, k
+    allocate(t(size(b,1), size(b,2), size(b,3)))
+    do k = 1, size(b,3); do j = 1, size(b,2); do i = 1, size(b,1)
+      t(i,j,k) = fltflt_init(b(i,j,k))
+    enddo; enddo; enddo
+    a = t
+  end subroutine upload3
+
+  subroutine download3(b, a)
+    real(8), intent(out)             :: b(:,:,:)
+    type(fltflt), device, intent(in) :: a(:,:,:)
+    type(fltflt), allocatable :: t(:,:,:)
+    allocate(t(size(a,1), size(a,2), size(a,3)))
+    t = a
+    b = dble(t%hi) + dble(t%lo)
+  end subroutine download3
+
+  subroutine copy3(a, b)
+    type(fltflt), device, intent(out) :: a(:,:,:)
+    type(fltflt), device, intent(in)  :: b(:,:,:)
+    call copy8(size(a), a, b)
+  end subroutine copy3
+
+  !> device-to-device copy as 8-byte words (CUF loops over fltflt arrays are not
+  !> reliable in nvfortran 26.5: they silently restored stale values)
+  subroutine copy8(n, a, b)
+    integer, intent(in)              :: n
+    real(8), device, intent(out)     :: a(n)
+    real(8), device, intent(in)      :: b(n)
+    !DIR$ IGNORE_TKR (tkr) a, b
+    a = b
+  end subroutine copy8
+
+  subroutine fill3(a, b)
+    type(fltflt), device, intent(out) :: a(:,:,:)
+    real(8), intent(in)               :: b
+    a = fltflt_init(b)
+  end subroutine fill3
+
+  subroutine fill4(a, b)
+    type(fltflt), device, intent(out) :: a(:,:,:,:)
+    real(8), intent(in)               :: b
+    a = fltflt_init(b)
+  end subroutine fill4
+  #:if getvar('DIM', 3) == 2
+
+  !> rank-2 state arrays of 2D_solver
+  subroutine upload2(a, b)
+    type(fltflt), device, intent(out) :: a(:,:)
+    real(8), intent(in)               :: b(:,:)
+    type(fltflt), allocatable :: t(:,:)
+    integer i, j
+    allocate(t(size(b,1), size(b,2)))
+    do j = 1, size(b,2); do i = 1, size(b,1)
+      t(i,j) = fltflt_init(b(i,j))
+    enddo; enddo
+    a = t
+  end subroutine upload2
+
+  subroutine download2(b, a)
+    real(8), intent(out)             :: b(:,:)
+    type(fltflt), device, intent(in) :: a(:,:)
+    type(fltflt), allocatable :: t(:,:)
+    allocate(t(size(a,1), size(a,2)))
+    t = a
+    b = dble(t%hi) + dble(t%lo)
+  end subroutine download2
+
+  subroutine copy2(a, b)
+    type(fltflt), device, intent(out) :: a(:,:)
+    type(fltflt), device, intent(in)  :: b(:,:)
+    call copy8(size(a), a, b)
+  end subroutine copy2
+  #:endif
+
+  ! ---- fltw: the FmaX real(8) overload with init_from_r8(b) replaced by the pre-split w%v
+  attributes(device) type(fltflt) function add_wf(a, b)  ! add_r8_ff: add_ff_ff(b, init(a))
+    type(fltw), intent(in)   :: a
+    type(fltflt), intent(in) :: b
+    add_wf = b + a%v
+  end function add_wf
+
+  attributes(device) type(fltflt) function add_fw(a, b)  ! add_ff_r8: add_ff_ff(a, init(b))
+    type(fltflt), intent(in) :: a
+    type(fltw), intent(in)   :: b
+    add_fw = a + b%v
+  end function add_fw
+
+  attributes(device) type(fltflt) function sub_wf(a, b)  ! sub_r8_ff: add_ff_ff(-b, init(a))
+    type(fltw), intent(in)   :: a
+    type(fltflt), intent(in) :: b
+    sub_wf = (-b) + a%v
+  end function sub_wf
+
+  attributes(device) type(fltflt) function sub_fw(a, b)  ! sub_ff_r8: add_ff_ff(a, init(-b)), init(-b) = -init(b)
+    type(fltflt), intent(in) :: a
+    type(fltw), intent(in)   :: b
+    sub_fw = a + (-b%v)
+  end function sub_fw
+
+  attributes(device) type(fltw) function neg_w(a)  ! init(-a) = -init(a)
+    type(fltw), intent(in) :: a
+    neg_w%v = -a%v
+  end function neg_w
+
+  attributes(device) type(fltflt) function mul_wf(a, b)  ! mul_r8_ff: mul_ff_ff(b, init(a))
+    type(fltw), intent(in)   :: a
+    type(fltflt), intent(in) :: b
+    mul_wf = b * a%v
+  end function mul_wf
+
+  attributes(device) type(fltflt) function mul_fw(a, b)  ! mul_ff_r8: mul_ff_ff(a, init(b))
+    type(fltflt), intent(in) :: a
+    type(fltw), intent(in)   :: b
+    mul_fw = a * b%v
+  end function mul_fw
+
+  attributes(device) type(fltflt) function div_wf(a, b)  ! div_r8_ff: div_ff_ff(init(a), b)
+    type(fltw), intent(in)   :: a
+    type(fltflt), intent(in) :: b
+    div_wf = a%v / b
+  end function div_wf
+
+  attributes(device) type(fltflt) function div_fw(a, b)  ! div_ff_r8: div_ff_ff(a, init(b))
+    type(fltflt), intent(in) :: a
+    type(fltw), intent(in)   :: b
+    div_fw = a / b%v
+  end function div_fw
+
+  attributes(device) type(fltflt) function fma_wff(a, b, c)  ! fma_rff: a * b + c
+    type(fltw), intent(in)   :: a
+    type(fltflt), intent(in) :: b, c
+    fma_wff = mul_wf(a, b) + c
+  end function fma_wff
+
+  attributes(device) type(fltflt) function fma_ffw(a, b, c)  ! fma_ffr: a * b + c
+    type(fltflt), intent(in) :: a, b
+    type(fltw), intent(in)   :: c
+    fma_ffw = add_fw(a * b, c)
+  end function fma_ffw
+
+  elemental attributes(host, device) subroutine set_ff_w(a, b)
+    type(fltflt), intent(out) :: a
+    type(fltw), intent(in)    :: b
+    a = b%v
+  end subroutine set_ff_w
+
+  !> host split of real(8) values (the device arrays are set with the assignments below)
+  elemental type(fltw) function wsplit_s(b)
+    real(8), intent(in) :: b
+    wsplit_s%v = fltflt_init(b)
+  end function wsplit_s
+
+  !> FP32 parts of the split of a real(8) host value (DF kernel arguments, prec.fypp KACT)
+  real(4) function whi(b)
+    real(8), intent(in) :: b
+    type(fltflt) :: t
+    t = fltflt_init(b)
+    whi = t%hi
+  end function whi
+
+  real(4) function wlo(b)
+    real(8), intent(in) :: b
+    type(fltflt) :: t
+    t = fltflt_init(b)
+    wlo = t%lo
+  end function wlo
+
+  subroutine upload_w1(a, b)
+    type(fltw), device, intent(out) :: a(:)
+    real(8), intent(in)             :: b(:)
+    type(fltw), allocatable :: t(:)
+    allocate(t(size(b)))
+    t = wsplit_s(b)
+    a = t
+  end subroutine upload_w1
+
+  subroutine upload_w2(a, b)
+    type(fltw), device, intent(out) :: a(:,:)
+    real(8), intent(in)             :: b(:,:)
+    type(fltw), allocatable :: t(:,:)
+    allocate(t(size(b,1), size(b,2)))
+    t = wsplit_s(b)
+    a = t
+  end subroutine upload_w2
+#:endif
+#:if KEEP_PREC != 'FP64'
+  pure attributes(device) type(dev) function add_vv(x, y)
+    type(dev), intent(in) :: x, y
+    add_vv = dev(x%b + y%b, x%d + y%d)
+  end function add_vv
+
+  pure attributes(device) type(dev) function sub_vv(x, y)
+    type(dev), intent(in) :: x, y
+    sub_vv = dev(x%b - y%b, x%d - y%d)
+  end function sub_vv
+
+  pure attributes(device) type(dev) function neg_v(x)
+    type(dev), intent(in) :: x
+    neg_v = dev(-x%b, -x%d)
+  end function neg_v
+
+  pure attributes(device) type(dev) function mul_vv(x, y)
+    type(dev), intent(in) :: x, y
+    mul_vv = dev(x%b * y%b, x%b * y%d + x%d * (y%b + y%d))
+  end function mul_vv
+
+  pure attributes(device) type(dev) function mul_rv(c, x)
+    real(8), intent(in)   :: c
+    type(dev), intent(in) :: x
+    mul_rv = dev(real(c, 4) * x%b, real(c, 4) * x%d)
+  end function mul_rv
+
+  pure attributes(device) type(dev) function mul_vr(x, c)
+    type(dev), intent(in) :: x
+    real(8), intent(in)   :: c
+    mul_vr = mul_rv(c, x)
+  end function mul_vr
+
+  pure attributes(device) type(dev) function fma_vvv(x, y, z)
+    type(dev), intent(in) :: x, y, z
+    fma_vvv = mul_vv(x, y) + z
+  end function fma_vvv
+
+  pure attributes(device) type(dev) function fma_rvv(c, y, z)
+    real(8), intent(in)   :: c
+    type(dev), intent(in) :: y, z
+    fma_rvv = mul_rv(c, y) + z
+  end function fma_rvv
+#:endif
+end module mod_prec

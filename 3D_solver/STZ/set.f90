@@ -69,7 +69,7 @@ contains
     use mod_constant, only : id_accuracy
     integer, intent(in), value               :: myrank, nx, ny, nz
     real(8), intent(in), device              :: Jacobian(nx,ny)
-    real(8), intent(inout), device           :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    REAL_T, intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
     real(8), intent(in), device, optional    :: Qre_1(ny*(nz-6)), Qre_2(ny*(nz-6)), Qre_3(ny*(nz-6)), Qre_4(ny*(nz-6)), Qre_5(ny*(nz-6))
     integer nranks, ierr, i, j, k, m, ovlp
     ovlp = kind(id_accuracy)/3 + 1
@@ -80,12 +80,12 @@ contains
       do j = 1, ny
         do m = 0, ovlp-1
           QJ_1(ovlp-m,      j,k) =  QJ_1(ovlp+1+m,  j,k)
-          QJ_2(ovlp-m,      j,k) = -QJ_2(ovlp+1+m,  j,k)
+          QJ_2(ovlp-m,      j,k) = -dble(QJ_2(ovlp+1+m,  j,k))
           QJ_3(ovlp-m,      j,k) =  QJ_3(ovlp+1+m,  j,k)
           QJ_4(ovlp-m,      j,k) =  QJ_4(ovlp+1+m,  j,k)
           QJ_5(ovlp-m,      j,k) =  QJ_5(ovlp+1+m,  j,k)
           QJ_1(nx-ovlp+1+m, j,k) =  QJ_1(nx-ovlp-m, j,k)
-          QJ_2(nx-ovlp+1+m, j,k) = -QJ_2(nx-ovlp-m, j,k)
+          QJ_2(nx-ovlp+1+m, j,k) = -dble(QJ_2(nx-ovlp-m, j,k))
           QJ_3(nx-ovlp+1+m, j,k) =  QJ_3(nx-ovlp-m, j,k)
           QJ_4(nx-ovlp+1+m, j,k) =  QJ_4(nx-ovlp-m, j,k)
           QJ_5(nx-ovlp+1+m, j,k) =  QJ_5(nx-ovlp-m, j,k)
@@ -99,12 +99,12 @@ contains
         do m = 0, ovlp-1
           QJ_1(i,ovlp-m,     k) =  QJ_1(i,ovlp+1+m,  k)
           QJ_2(i,ovlp-m,     k) =  QJ_2(i,ovlp+1+m,  k)
-          QJ_3(i,ovlp-m,     k) = -QJ_3(i,ovlp+1+m,  k)
+          QJ_3(i,ovlp-m,     k) = -dble(QJ_3(i,ovlp+1+m,  k))
           QJ_4(i,ovlp-m,     k) =  QJ_4(i,ovlp+1+m,  k)
           QJ_5(i,ovlp-m,     k) =  QJ_5(i,ovlp+1+m,  k)
           QJ_1(i,ny-ovlp+1+m,k) =  QJ_1(i,ny-ovlp-m, k)
           QJ_2(i,ny-ovlp+1+m,k) =  QJ_2(i,ny-ovlp-m, k)
-          QJ_3(i,ny-ovlp+1+m,k) = -QJ_3(i,ny-ovlp-m, k)
+          QJ_3(i,ny-ovlp+1+m,k) = -dble(QJ_3(i,ny-ovlp-m, k))
           QJ_4(i,ny-ovlp+1+m,k) =  QJ_4(i,ny-ovlp-m, k)
           QJ_5(i,ny-ovlp+1+m,k) =  QJ_5(i,ny-ovlp-m, k)
         enddo
@@ -145,7 +145,7 @@ contains
 
   subroutine set_bc_mut(nx, ny, nz, mut, qc2)
     integer, intent(in), value     :: nx, ny, nz
-    real(8), intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
+    REAL_T, intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
     call set_bc_mut_common(nx, ny, nz, mut, qc2)
   end subroutine set_bc_mut
 end module set

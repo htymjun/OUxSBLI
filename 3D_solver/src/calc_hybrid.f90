@@ -1,6 +1,10 @@
+#ifndef REAL_T
+#define REAL_T real(8)
+#endif
 !> Module for shock detection and hybrid scheme support
 !> Computes Ducros sensor for automatic scheme switching between KEEP and SLAU
 module calc_hybrid
+  use mod_prec
   use cudafor
   use mod_globals, only : gamma, sp
   implicit none
@@ -13,10 +17,10 @@ contains
     real(8), intent(in), dimension(nx-1), device       :: dx ! 1 / dx
     real(8), intent(in), dimension(ny-1), device       :: dy ! 1 / dy
     real(8), intent(in), dimension(nz-1), device       :: dz ! 1 / dz
-    real(8), intent(in), dimension(nx,ny,nz), device   :: Q_2, Q_3, Q_4
+    REAL_T, intent(in), dimension(nx,ny,nz), device :: Q_2, Q_3, Q_4
     real(sp), intent(out), device                      :: fd(nx,ny,nz)
     integer i, j, k
-    real(8) dudx, dudy, dudz, dvdx, dvdy, dvdz, dwdx, dwdy, dwdz
+    REAL_T dudx, dudy, dudz, dvdx, dvdy, dvdz, dwdx, dwdy, dwdz
     real(8) dx_tmp, dy_tmp, dz_tmp
     real(sp) div, rot(3)
     real(sp), parameter :: eps = 1.0e-12_sp
@@ -73,8 +77,8 @@ contains
 
 
   pure attributes(device) function wiggle_detector(phi) result(ans)
-    real(8), intent(in) :: phi(4)
-    real(8) ans, phi1, phi2
+    REAL_T, intent(in) :: phi(4)
+    REAL_T ans, phi1, phi2
     phi1 = (-phi(1) + phi(2)) * (-phi(2) + phi(3))
     phi2 = (-phi(3) + phi(4)) * (-phi(2) + phi(3))
     ans  = 0.5d0 * (1.d0 - sign(1.d0, min(phi1, phi2)))

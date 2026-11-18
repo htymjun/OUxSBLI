@@ -1,0 +1,67 @@
+#:include 'prec.fypp'
+!> Module for du/dx, dv/dy at cell-center
+!> Precomputed once per RK stage (VISC_ORDER>2) and reused by calc_Ev4/calc_Fv4
+!> instead of each direction independently recomputing the other's gradient in
+!> shared memory -- mirrors 3D_solver/src/calc_div.f90's ux/vy/wz split.
+#:block fp
+module calc_div
+#:if PREC == 'DF'
+  use mod_prec
+#:endif
+  use mod_constant, only : one_third
+  implicit none
+  ${WT}$, parameter :: one_24 = 1.d0 / 24.d0
+contains
+  ! 4th-order cell-centre difference times the summed inverse spacings s. Called from the
+  ! CUF loops below: a CUF loop cannot evaluate fltflt expressions itself (PREC = 'DF'),
+  ! a device subroutine can (same form as div4 in 3D_solver/src/calc_div.f90).
+#:if PREC == 'DF'
+  ! DF: the two split inverse spacings are summed in DF (FP64: real(8) sum, split per use)
+  attributes(device) subroutine div4(m2, m1, p1, p2, sa, sb, r)
+    ${RT}$, intent(in)  :: m2, m1, p1, p2
+    ${MT}$, intent(in)  :: sa, sb
+    ${RT}$, intent(out) :: r
+    r = (one_third * (-m1 + p1) - one_24 * (-m2 + p2)) * (sa%v + sb%v)
+  end subroutine div4
+#:else
+  attributes(device) subroutine div4(m2, m1, p1, p2, s, r)
+    ${RT}$, intent(in)  :: m2, m1, p1, p2
+    ${WT}$, intent(in), value :: s
+    ${RT}$, intent(out) :: r
+    r = (one_third * (-m1 + p1) - one_24 * (-m2 + p2)) * s
+  end subroutine div4
+#:endif
+
+  !> du/dx at cell-center (4th-order, interior stencil)
+  subroutine calc_div_ux_4_in(nx, ny, xix, Q_2, ux)
+    integer, intent(in), value                     :: nx, ny
+    ${MT}$, intent(in), dimension(nx-1), device   :: xix ! 1 / dx
+    ${RT}$, intent(in), dimension(nx,ny), device  :: Q_2
+    ${RT}$, intent(out), dimension(nx,ny), device :: ux
+    integer, parameter :: io_v = 1
+    integer i, j
+    !$cuf kernel do(2) <<<*,(32,4)>>>
+    do j = 1, ny
+      do i = io_v+2, nx-io_v-1
+        call div4(Q_2(i-2,j), Q_2(i-1,j), Q_2(i+1,j), Q_2(i+2,j), ${'xix(i-1), xix(i)' if PREC == 'DF' else 'xix(i-1) + xix(i)'}$, ux(i,j))
+      enddo
+    enddo
+  end subroutine calc_div_ux_4_in
+
+  !> dv/dy at cell-center (4th-order, interior stencil)
+  subroutine calc_div_vy_4_in(nx, ny, etay, Q_3, vy)
+    integer, intent(in), value                     :: nx, ny
+    ${MT}$, intent(in), dimension(ny-1), device   :: etay ! 1 / dy
+    ${RT}$, intent(in), dimension(nx,ny), device  :: Q_3
+    ${RT}$, intent(out), dimension(nx,ny), device :: vy
+    integer, parameter :: io_v = 1
+    integer i, j
+    !$cuf kernel do(2) <<<*,(32,4)>>>
+    do j = io_v+2, ny-io_v-1
+      do i = 1, nx
+        call div4(Q_3(i,j-2), Q_3(i,j-1), Q_3(i,j+1), Q_3(i,j+2), ${'etay(j-1), etay(j)' if PREC == 'DF' else 'etay(j-1) + etay(j)'}$, vy(i,j))
+      enddo
+    enddo
+  end subroutine calc_div_vy_4_in
+end module calc_div
+#:endblock fp

@@ -7,7 +7,7 @@
 | OS | Linux (tested on Ubuntu 22.04) |
 | GPU | NVIDIA GPU (Ampere or newer recommended) |
 | CUDA | 12.x |
-| Compiler | NVIDIA HPC SDK 24.x or 25.x (`mpif90`) |
+| Compiler | NVIDIA HPC SDK 25.5 or newer (`mpif90`) |
 | MPI | OpenMPI bundled with HPC SDK |
 | CMake | 3.18 or newer |
 | fypp | any version (`pip install fypp`) |
@@ -84,6 +84,11 @@ This installs:
 - `scipy` — analytical reference solutions (Blasius, oblique-shock, Sod)
 - `vtk` — VTK file reading
 - `pytest` — for running the test suite
+
+The install is editable on purpose: the solver sources stay in the checkout and are found through the
+package location, so `import ouxsbli` and the `ouxsbli` command work from any directory. To use another
+checkout without reinstalling, set `OUXSBLI_ROOT=<checkout>`. If an older, non-editable `ouxsbli` is
+already in the environment, remove it first (`pip uninstall ouxsbli`).
 
 > **Tip:** Use a virtual environment to keep dependencies isolated:
 > ```bash

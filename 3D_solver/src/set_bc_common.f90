@@ -1,5 +1,6 @@
 module set_bc_common
   use mod_globals, only : nx, ny, nz
+  use mod_prec
   implicit none
   interface set_bc_cyclic
     module procedure set_bc_cyclic2_init, set_bc_cyclic2, set_bc_cyclic4, &
@@ -102,6 +103,7 @@ contains
     integer(kind=2), intent(in), value :: id_accuracy
     integer, intent(in), value         :: nx, ny, nz
     real(8), intent(inout), device     :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    !DIR$ IGNORE_TKR (tk) Q_1, Q_2, Q_3, Q_4, Q_5   ! PREC = 'DF' passes fltflt state: copies only
     integer i, j, k
     !$cuf kernel do(2)<<<*,*>>>
     do k = 2, nz-1
@@ -151,6 +153,7 @@ contains
     integer(kind=4), intent(in), value :: id_accuracy
     integer, intent(in), value         :: nx, ny, nz
     real(8), intent(inout), device     :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    !DIR$ IGNORE_TKR (tk) Q_1, Q_2, Q_3, Q_4, Q_5   ! PREC = 'DF' passes fltflt state: copies only
     integer i, j, k
     !$cuf kernel do(2) <<<*,*>>>
     do k = 3, nz-2
@@ -214,6 +217,7 @@ contains
     integer(kind=8), intent(in), value :: id_accuracy
     integer, intent(in), value         :: nx, ny, nz
     real(8), intent(inout), device     :: Q_1(nx,ny,nz), Q_2(nx,ny,nz), Q_3(nx,ny,nz), Q_4(nx,ny,nz), Q_5(nx,ny,nz)
+    !DIR$ IGNORE_TKR (tk) Q_1, Q_2, Q_3, Q_4, Q_5   ! PREC = 'DF' passes fltflt state: copies only
     integer i, j, k
     !$cuf kernel do(2)<<<*,*>>>
     do k = 4, nz-3
@@ -331,6 +335,7 @@ contains
   subroutine set_bc_cyclic_z(nx, ny, nz, QJ_1, QJ_2, QJ_3, QJ_4, QJ_5)
     integer, intent(in), value     :: nx, ny, nz
     real(8), intent(inout), device :: QJ_1(nx,ny,nz), QJ_2(nx,ny,nz), QJ_3(nx,ny,nz), QJ_4(nx,ny,nz), QJ_5(nx,ny,nz)
+    !DIR$ IGNORE_TKR (tk) QJ_1, QJ_2, QJ_3, QJ_4, QJ_5   ! PREC = 'DF' passes fltflt state: copies only
     integer i, j
     !$cuf kernel do(2)<<<*,*>>>
     do j = 1, ny
@@ -353,6 +358,7 @@ contains
   subroutine set_bc_mut_common(nx, ny, nz, mut, qc2)
     integer, intent(in), value     :: nx, ny, nz
     real(8), intent(inout), device :: mut(nx,ny,nz), qc2(nx,ny,nz)
+    !DIR$ IGNORE_TKR (tk) mut, qc2   ! PREC = 'DF' passes fltflt arrays: copies only
     integer i, j, k
     !$cuf kernel do(2) <<<*,*>>>
     do k = 2, nz-1

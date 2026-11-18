@@ -30,8 +30,7 @@ import pathlib
 
 import numpy as np
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tests" / "utils"))
-from vtk_reader import getGrid, getQ, extract_number  # noqa: E402
+from ouxsbli.tests.utils.vtk_reader import getGrid, getQ, extract_number
 
 # ---------------------------------------------------------------------------
 # ref.tex target constants (independent re-derivation, see mod_globals.f90)

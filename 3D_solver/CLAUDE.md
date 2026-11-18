@@ -197,6 +197,53 @@ orders over 64/128/256:
 The reconstruction alone is 5th order: see `ouxsbli/tests/test_weno.py`, which gates that
 together with FP64 WENO + LF on EVC and the OS shock.
 
+### Precision modes (`PREC`, `KEEP_PREC`, `WENO_PREC='MIXED'`)
+
+Ports of the diffFP32 study (`~/diffFP32`); measurements in `docs/precision_modes.md`.
+
+* **`KEEP_PREC='MIXED'`** (FP64 state). The unchanged KEEP2/4/6 run on `type(dev)`
+  (`src/mod_prec.f90.fypp`): an FP32 base value and the deviation from it, an FP64 difference
+  narrowed to FP32. Its sums and products are exact identities, so KEEP returns
+  `F(q) - F(base)` without cancellation; the FP64 point flux of the left cell is added
+  (`KEEPm*`, picked by `interface KEEP` from the real(8) arguments). Every KEEP kernel uses it
+  and the scheme stays conservative. diffFP32's cell form (FP32 `F(i+1/2) - F(i-1/2)`) was
+  implemented, measured and removed: same density floor, 5x larger velocity error, not
+  conservative (docs/precision_modes.md).
+* **`PREC='DF'`** (every configuration): state, RK stages, primitives, fluxes and all
+  convective/viscous/LES arithmetic in `type(fltflt)` (FmaX, `extern/FmaX`). Declarations are
+  `${RT}$` (templates, `src/prec.fypp`) or `REAL_T` (plain sources, cpp from CMake); `mod_prec`
+  extends the intrinsics, operators with real(8) and the assignments. Metrics, normals, the
+  Ducros sensor, rescaling statistics (`Qm`, `Qre`) and MPI buffers stay real(8). FP64 <-> DF
+  conversion only at upload/output.
+* **How DF state meets CUF loops**: nvfortran 26.5 miscompiles fltflt *function results*
+  called directly in a CUF (or OpenACC) loop, silently. So:
+  - pure copies (periodic BC, `set_bc_mut_common`, COMMZ/two-domain packing in `calc_para`,
+    `copy3`) take real(8) dummies with `!DIR$ IGNORE_TKR` and move 8-byte words;
+  - case BCs and rescaling read the state with `dble(...)` inside the loop and store through
+    the defined assignment (FP64 arithmetic on boundary cells, DF state);
+  - stencils whose precision matters run in device routines: `div2/4/6` (`calc_div`),
+    `prim_df` (`calc_physical_quantities`, also DHIT's copy).
+  New CUF loops that touch DF state must follow one of these patterns.
+* **Other nvfortran traps** (each gave a wrong result, not a compile error):
+  - At -O2 updates of fltflt array elements are dropped (`R(l) = fma(.., R(l))` lost the z term
+    of `calc_R`); `-fast -O1` still runs -O2, so DF builds replace `-fast` by `-O1 -Mflushz`
+    (3D_solver/CMakeLists.txt; same kernel speed).
+  - A derived-type result that is also an argument (`ruu = fma(.., ruu)`) was corrupted in the
+    mixed build → `mom` accumulates in a local.
+  - `associate(uu => u)` on fltflt shared tiles is an ICE → the kernels pass `u` directly.
+  - FmaX operators are not elemental: whole-array expressions (LES `H(:) = ...`) are unrolled.
+  - Cache-hint intrinsics take intrinsic types only: `${STCG}$/${LDCS}$/${LDLU}$`.
+* **HR-SLAU2 under DF**: the wiggle detector is a 0/1 switch on `sign(min(phi1, phi2))` of
+  pressure differences. Where those are exactly 0 in FP64 (symmetry planes, uniform regions)
+  DF rounding makes them +-1e-30 and the switch flips, so DF and FP64 runs part at 1e-9..1e-3
+  (NSTGV, BL, OS, SWTBLI). With `SLAU_VARIANT='SLAU'` they agree to 1e-14.
+* **Findings** (RTX PRO 6000): DF matches FP64 to 1e-13..1e-15 in every case (with plain
+  SLAU) and keeps FP64 accuracy (EVC KEEP2/4/6 errors equal to FP64); its KEEP6 kernels take
+  0.73x the FP64 time. The mixed forms reach FP64 accuracy at KEEP2 but floor at L2(rho) ~
+  3e-10 on EVC KEEP4/6 (accumulated FP32 rounding of the deviations) and save no FP64-pipe
+  work for KEEP6. Gates: `test_prec_difffp32.py`
+  (slow), cost: `python -m ouxsbli.analysis.bench_prec`.
+
 ## Cell-Center Velocity Gradients (`ux`, `vy`, `wz`)
 
 For `VISC_ORDER > 2` (NS/LES), `calc_div.f90` precomputes the three diagonal velocity

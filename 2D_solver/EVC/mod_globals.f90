@@ -2,7 +2,11 @@ module mod_globals
   use cudafor
   implicit none
   integer, parameter         :: dimension   = 2
+#ifdef PREC_FP32
+  integer, parameter         :: sp          = kind(1.e0) ! PREC = 'FP32' (config.fypp)
+#else
   integer, parameter         :: sp          = kind(1.d0) ! single or double
+#endif
   real(sp), parameter        :: threshold   = 0.4_sp
   real(8), parameter         :: blt         = 1.d-3
   

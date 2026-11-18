@@ -1,5 +1,9 @@
-#:include 'config.fypp'
+#:include 'prec.fypp'
+#:block fp
 module calc_visc2
+#:if PREC == 'DF'
+  use mod_prec
+#:endif
   use mod_globals, only : gamma, R, Pr, Prt, dt, threadsEv, threadsFv
   use mod_constant, only : Cp, gamma_1, Cp_over_Pr, one_third, two_third
   use libm
@@ -11,19 +15,19 @@ contains
   attributes(global) subroutine calc_Ev2(nx, ny, dx, dy, Q_2, Q_3, T, mu, E)
     integer, intent(in), value                 :: nx
     integer, intent(in), value                 :: ny
-    real(8), intent(in), device, contiguous    :: dx(nx-1)
-    real(8), intent(in), device, contiguous    :: dy(ny-1)
-    real(8), intent(in), device, contiguous    :: Q_2(nx,ny)
-    real(8), intent(in), device, contiguous    :: Q_3(nx,ny)
-    real(8), intent(in), device, contiguous    :: T(nx,ny)
-    real(8), intent(in), device, contiguous    :: mu(nx,ny)
-    real(8), intent(inout), device, contiguous :: E(nx-1,ny-2,4)
+    ${MT}$, intent(in), device, contiguous    :: dx(nx-1)
+    ${MT}$, intent(in), device, contiguous    :: dy(ny-1)
+    ${RT}$, intent(in), device, contiguous    :: Q_2(nx,ny)
+    ${RT}$, intent(in), device, contiguous    :: Q_3(nx,ny)
+    ${RT}$, intent(in), device, contiguous    :: T(nx,ny)
+    ${RT}$, intent(in), device, contiguous    :: mu(nx,ny)
+    ${RT}$, intent(inout), device, contiguous :: E(nx-1,ny-2,4)
     integer, parameter :: sx = threadsEv%x + 1
     integer, parameter :: sy = threadsEv%y
-    real(8), dimension(0:sx*sy-1), shared :: u, v
+    ${RT}$, dimension(0:sx*sy-1), shared :: u, v
     integer i, j, it, jt, idx
-    real(8) viscous_work, txx, txy
-    real(8) mux, mvx, muy, mvy
+    ${RT}$ viscous_work, txx, txy
+    ${RT}$ mux, mvx, muy, mvy
     it = threadIdx%x
     jt = threadIdx%y
     i  = (blockIdx%x-1)*blockDim%x + it
@@ -32,52 +36,52 @@ contains
     call load_smem_visc2_x(it, jt, j, idx, nx, ny, Q_2, Q_3, u, v)
     if (nx-1 < i .or. ny-1 < j) return
     block
-      real(8) mudx
+      ${RT}$ mudx
       mudx         = 0.5d0 * (mu(i,j) + mu(i+1,j)) * dx(i)
       viscous_work = Cp_over_Pr * mudx * (-T(i,j) + T(i+1,j))
       mux          = mudx * (-u(idx) + u(idx+1))
       mvx          = mudx * (-v(idx) + v(idx+1))
     end block
     block
-      real(8) my1, my2, tmp
-      real(8) mui, muip1, mu_i_jm1, mu_ip1_jm1, mu_i_jp1, mu_ip1_jp1
-      real(8) au, bu
+      ${RT}$ my1, my2, tmp
+      ${RT}$ mui, muip1, mu_i_jm1, mu_ip1_jm1, mu_i_jp1, mu_ip1_jp1
+      ${RT}$ au, bu
       mui        = mu(i,j)
       muip1      = mu(i+1,j)
       ! corner neighbours below are each read exactly once by this thread: __ldcs
-      mu_i_jm1   = __ldcs(mu(i,j-1))
-      mu_ip1_jm1 = __ldcs(mu(i+1,j-1))
-      mu_i_jp1   = __ldcs(mu(i,j+1))
-      mu_ip1_jp1 = __ldcs(mu(i+1,j+1))
+      mu_i_jm1   = ${LDCS}$(mu(i,j-1))
+      mu_ip1_jm1 = ${LDCS}$(mu(i+1,j-1))
+      mu_i_jp1   = ${LDCS}$(mu(i,j+1))
+      mu_ip1_jp1 = ${LDCS}$(mu(i+1,j+1))
       my1 = 0.0625d0 * (mu_i_jm1 + mui + mu_ip1_jm1 + muip1) ! my / 4
       my2 = 0.0625d0 * (mui + mu_i_jp1 + muip1 + mu_ip1_jp1) ! my / 4
       ! each Q neighbour below is read exactly once by this thread: __ldcs
-      au  = -__ldcs(Q_2(i,j-1)) - __ldcs(Q_2(i+1,j-1))
-      bu  =  __ldcs(Q_2(i,j+1)) + __ldcs(Q_2(i+1,j+1))
+      au  = -${LDCS}$(Q_2(i,j-1)) - ${LDCS}$(Q_2(i+1,j-1))
+      bu  =  ${LDCS}$(Q_2(i,j+1)) + ${LDCS}$(Q_2(i+1,j+1))
       tmp = fma(my1, au, (my1 - my2) * (u(idx) + u(idx+1)))
       muy = fma(my2, bu, tmp) * dy(j)
-      au  = -__ldcs(Q_3(i,j-1)) - __ldcs(Q_3(i+1,j-1))
-      bu  =  __ldcs(Q_3(i,j+1)) + __ldcs(Q_3(i+1,j+1))
+      au  = -${LDCS}$(Q_3(i,j-1)) - ${LDCS}$(Q_3(i+1,j-1))
+      bu  =  ${LDCS}$(Q_3(i,j+1)) + ${LDCS}$(Q_3(i+1,j+1))
       tmp = fma(my1, au, (my1 - my2) * (v(idx) + v(idx+1)))
       mvy = fma(my2, bu, tmp) * dy(j)
     end block
     txx = two_third * fma(2.d0, mux, -mvy)
     txy = muy + mvx
     block
-      real(8) au, av
+      ${RT}$ au, av
       au = u(idx) + u(idx+1)
       av = v(idx) + v(idx+1)
       viscous_work = viscous_work + 0.5d0 * fma(au, txx, av * txy)
     end block
     block
-      real(8) Eold
+      ${RT}$ Eold
       ! no other thread reads this address before the paired store below overwrites it: __ldlu
-      Eold = __ldlu(E(i,j-1,2))
-      call __stcg(E(i,j-1,2), Eold - txx)
-      Eold = __ldlu(E(i,j-1,3))
-      call __stcg(E(i,j-1,3), Eold - txy)
-      Eold = __ldlu(E(i,j-1,4))
-      call __stcg(E(i,j-1,4), Eold - viscous_work)
+      Eold = ${LDLU}$(E(i,j-1,2))
+      call ${STCG}$(E(i,j-1,2), Eold - txx)
+      Eold = ${LDLU}$(E(i,j-1,3))
+      call ${STCG}$(E(i,j-1,3), Eold - txy)
+      Eold = ${LDLU}$(E(i,j-1,4))
+      call ${STCG}$(E(i,j-1,4), Eold - viscous_work)
     end block
   end subroutine calc_Ev2
 
@@ -85,19 +89,19 @@ contains
   attributes(global) subroutine calc_Fv2(nx, ny, dy, dx, Q_2, Q_3, T, mu, F)
     integer, intent(in), value                 :: nx
     integer, intent(in), value                 :: ny
-    real(8), intent(in), device, contiguous    :: dy(ny-1)
-    real(8), intent(in), device, contiguous    :: dx(nx-1)
-    real(8), intent(in), device, contiguous    :: Q_2(nx,ny)
-    real(8), intent(in), device, contiguous    :: Q_3(nx,ny)
-    real(8), intent(in), device, contiguous    :: T(nx,ny)
-    real(8), intent(in), device, contiguous    :: mu(nx,ny)
-    real(8), intent(inout), device, contiguous :: F(nx-2,ny-1,4)
+    ${MT}$, intent(in), device, contiguous    :: dy(ny-1)
+    ${MT}$, intent(in), device, contiguous    :: dx(nx-1)
+    ${RT}$, intent(in), device, contiguous    :: Q_2(nx,ny)
+    ${RT}$, intent(in), device, contiguous    :: Q_3(nx,ny)
+    ${RT}$, intent(in), device, contiguous    :: T(nx,ny)
+    ${RT}$, intent(in), device, contiguous    :: mu(nx,ny)
+    ${RT}$, intent(inout), device, contiguous :: F(nx-2,ny-1,4)
     integer, parameter :: sx = threadsFv%x
     integer, parameter :: sy = threadsFv%y + 1
-    real(8), dimension(0:sx*sy-1), shared :: u, v
+    ${RT}$, dimension(0:sx*sy-1), shared :: u, v
     integer i, j, it, jt, idx
-    real(8) viscous_work, tyx, tyy
-    real(8) muy, mvy, mux, mvx
+    ${RT}$ viscous_work, tyx, tyy
+    ${RT}$ muy, mvy, mux, mvx
     it = threadIdx%x
     jt = threadIdx%y
     i  = (blockIdx%x-1)*blockDim%x + it + 1
@@ -106,7 +110,7 @@ contains
     call load_smem_visc2_y(it, jt, i, idx, nx, ny, Q_2, Q_3, u, v)
     if (nx-1 < i .or. ny-1 < j) return
     block
-      real(8) mudy, muij, muijp1, Tij, Tijp1
+      ${RT}$ mudy, muij, muijp1, Tij, Tijp1
       muij   = mu(i,j)
       muijp1 = mu(i,j+1)
       Tij    = T(i,j)
@@ -117,45 +121,46 @@ contains
       mvy          = mudy * (-v(idx) + v(idx+1))
     end block
     block
-      real(8) mx1, mx2, tmp
-      real(8) muij, muip1j, mu_im1_j, mu_im1_jp1, mu_ip1_jp1, mu_i_jp1
-      real(8) au, bu
+      ${RT}$ mx1, mx2, tmp
+      ${RT}$ muij, muip1j, mu_im1_j, mu_im1_jp1, mu_ip1_jp1, mu_i_jp1
+      ${RT}$ au, bu
       muij       = mu(i,j)
       mu_i_jp1   = mu(i,j+1)
       ! corner neighbours below are each read exactly once by this thread: __ldcs
-      muip1j     = __ldcs(mu(i+1,j))
-      mu_im1_j   = __ldcs(mu(i-1,j))
-      mu_im1_jp1 = __ldcs(mu(i-1,j+1))
-      mu_ip1_jp1 = __ldcs(mu(i+1,j+1))
+      muip1j     = ${LDCS}$(mu(i+1,j))
+      mu_im1_j   = ${LDCS}$(mu(i-1,j))
+      mu_im1_jp1 = ${LDCS}$(mu(i-1,j+1))
+      mu_ip1_jp1 = ${LDCS}$(mu(i+1,j+1))
       mx1 = 0.0625d0 * (mu_im1_j + muij + mu_im1_jp1 + mu_i_jp1) ! mx / 4
       mx2 = 0.0625d0 * (muij + muip1j + mu_i_jp1 + mu_ip1_jp1)   ! mx / 4
       ! each Q neighbour below is read exactly once by this thread: __ldcs
-      au  = -__ldcs(Q_2(i-1,j)) - __ldcs(Q_2(i-1,j+1))
-      bu  =  __ldcs(Q_2(i+1,j)) + __ldcs(Q_2(i+1,j+1))
+      au  = -${LDCS}$(Q_2(i-1,j)) - ${LDCS}$(Q_2(i-1,j+1))
+      bu  =  ${LDCS}$(Q_2(i+1,j)) + ${LDCS}$(Q_2(i+1,j+1))
       tmp = fma(mx1, au, (mx1 - mx2) * (u(idx) + u(idx+1)))
       mux = fma(mx2, bu, tmp) * dx(i)
-      au  = -__ldcs(Q_3(i-1,j)) - __ldcs(Q_3(i-1,j+1))
-      bu  =  __ldcs(Q_3(i+1,j)) + __ldcs(Q_3(i+1,j+1))
+      au  = -${LDCS}$(Q_3(i-1,j)) - ${LDCS}$(Q_3(i-1,j+1))
+      bu  =  ${LDCS}$(Q_3(i+1,j)) + ${LDCS}$(Q_3(i+1,j+1))
       tmp = fma(mx1, au, (mx1 - mx2) * (v(idx) + v(idx+1)))
       mvx = fma(mx2, bu, tmp) * dx(i)
     end block
     tyx = muy + mvx
     tyy = two_third * fma(2.d0, mvy, -mux)
     block
-      real(8) au, av
+      ${RT}$ au, av
       au = u(idx) + u(idx+1)
       av = v(idx) + v(idx+1)
       viscous_work = viscous_work + 0.5d0 * fma(au, tyx, av * tyy)
     end block
     block
-      real(8) Fold
+      ${RT}$ Fold
       ! no other thread reads this address before the paired store below overwrites it: __ldlu
-      Fold = __ldlu(F(i-1,j,2))
-      call __stcg(F(i-1,j,2), Fold - tyx)
-      Fold = __ldlu(F(i-1,j,3))
-      call __stcg(F(i-1,j,3), Fold - tyy)
-      Fold = __ldlu(F(i-1,j,4))
-      call __stcg(F(i-1,j,4), Fold - viscous_work)
+      Fold = ${LDLU}$(F(i-1,j,2))
+      call ${STCG}$(F(i-1,j,2), Fold - tyx)
+      Fold = ${LDLU}$(F(i-1,j,3))
+      call ${STCG}$(F(i-1,j,3), Fold - tyy)
+      Fold = ${LDLU}$(F(i-1,j,4))
+      call ${STCG}$(F(i-1,j,4), Fold - viscous_work)
     end block
   end subroutine calc_Fv2
 end module calc_visc2
+#:endblock fp

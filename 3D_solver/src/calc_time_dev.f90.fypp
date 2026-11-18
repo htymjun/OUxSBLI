@@ -1,6 +1,6 @@
 !> Module for time-stepping orchestration and time integration schemes
 !> Implements 3rd-order and 4th-order Runge-Kutta time stepping with MPI/GPU support
-#:include 'config.fypp'
+#:include 'prec.fypp'
 #:if not defined('MPI')
   #:set MPI = 'CPU'
 #:endif
@@ -24,6 +24,7 @@ module calc_time_dev
   use mod_constant, only : one_third
   use calc_flux_base
   use calc_steps
+  use mod_prec
   use calc_rescale
   use calc_para
   use set
@@ -58,12 +59,12 @@ contains
     integer i, j, k, l, t1, t2, ierr, nranks, ndevices, stat, ireq, ireq2(2)
     integer istat(MPI_STATUS_SIZE), istat2(MPI_STATUS_SIZE,2)
     ! GPU !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    real(8), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
-    real(8), allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
-    real(8), allocatable, device :: QJ2_1(:,:,:), QJ2_2(:,:,:), QJ2_3(:,:,:), QJ2_4(:,:,:), QJ2_5(:,:,:)
-    real(8), allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
-    real(8), allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
-    real(8), allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
+    ${RT}$, allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
+    ${RT}$, allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
+    ${RT}$, allocatable, device :: QJ2_1(:,:,:), QJ2_2(:,:,:), QJ2_3(:,:,:), QJ2_4(:,:,:), QJ2_5(:,:,:)
+    ${RT}$, allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
+    ${RT}$, allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
+    ${RT}$, allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
     real(8), allocatable, device :: xix(:), etay(:), zetaz(:), Jacobian(:,:), dtdxdy(:,:), dtdydz(:,:), dtdzdx(:,:)
     ! for plot
     real(4) :: ke0 = 1.d0, entropy0 = 1.d0
@@ -177,12 +178,12 @@ contains
     real(8), allocatable, device :: Qm_1(:), Qm_2(:), Qm_3(:), Qm_4(:), Qm_5(:)
     real(8), allocatable, pinned :: Qm_cpu_1(:), Qm_cpu_2(:), Qm_cpu_3(:), Qm_cpu_4(:), Qm_cpu_5(:)
     ! GPU !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    real(8), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
-    real(8), allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
-    real(8), allocatable, device :: QJ2_1(:,:,:), QJ2_2(:,:,:), QJ2_3(:,:,:), QJ2_4(:,:,:), QJ2_5(:,:,:)
-    real(8), allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
-    real(8), allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
-    real(8), allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
+    ${RT}$, allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
+    ${RT}$, allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
+    ${RT}$, allocatable, device :: QJ2_1(:,:,:), QJ2_2(:,:,:), QJ2_3(:,:,:), QJ2_4(:,:,:), QJ2_5(:,:,:)
+    ${RT}$, allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
+    ${RT}$, allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
+    ${RT}$, allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
     real(8), allocatable, device :: xix(:), etay(:), zetaz(:), Jacobian(:,:), dtdxdy(:,:), dtdydz(:,:), dtdzdx(:,:)
     ! for plot
     real(4) :: ke0 = 1.d0, entropy0 = 1.d0
@@ -285,13 +286,13 @@ contains
     integer i, j, k, l, t1, t2, ierr, nranks, ndevices, stat, ireq, ireq2(2)
     integer istat(MPI_STATUS_SIZE), istat2(MPI_STATUS_SIZE,2)
     ! GPU !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    real(8), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
-    real(8), allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
-    real(8), allocatable, device :: QJs_1(:,:,:), QJs_2(:,:,:), QJs_3(:,:,:), QJs_4(:,:,:), QJs_5(:,:,:)
-    real(8), allocatable, device :: Rs(:,:,:,:)
-    real(8), allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
-    real(8), allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
-    real(8), allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
+    ${RT}$, allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
+    ${RT}$, allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
+    ${RT}$, allocatable, device :: QJs_1(:,:,:), QJs_2(:,:,:), QJs_3(:,:,:), QJs_4(:,:,:), QJs_5(:,:,:)
+    ${RT}$, allocatable, device :: Rs(:,:,:,:)
+    ${RT}$, allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
+    ${RT}$, allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
+    ${RT}$, allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
     real(8), allocatable, device :: xix(:), etay(:), zetaz(:), Jacobian(:,:), dtdxdy(:,:), dtdydz(:,:), dtdzdx(:,:)
     ! for plot
     real(4) :: ke0 = 1.d0, entropy0 = 1.d0
@@ -404,13 +405,13 @@ contains
     real(8), allocatable, device :: Qm_1(:), Qm_2(:), Qm_3(:), Qm_4(:), Qm_5(:)
     real(8), allocatable, pinned :: Qm_cpu_1(:), Qm_cpu_2(:), Qm_cpu_3(:), Qm_cpu_4(:), Qm_cpu_5(:)
     ! GPU !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    real(8), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
-    real(8), allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
-    real(8), allocatable, device :: QJs_1(:,:,:), QJs_2(:,:,:), QJs_3(:,:,:), QJs_4(:,:,:), QJs_5(:,:,:)
-    real(8), allocatable, device :: Rs(:,:,:,:)
-    real(8), allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
-    real(8), allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
-    real(8), allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
+    ${RT}$, allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
+    ${RT}$, allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
+    ${RT}$, allocatable, device :: QJs_1(:,:,:), QJs_2(:,:,:), QJs_3(:,:,:), QJs_4(:,:,:), QJs_5(:,:,:)
+    ${RT}$, allocatable, device :: Rs(:,:,:,:)
+    ${RT}$, allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
+    ${RT}$, allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
+    ${RT}$, allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
     real(8), allocatable, device :: xix(:), etay(:), zetaz(:), Jacobian(:,:), dtdxdy(:,:), dtdydz(:,:), dtdzdx(:,:)
     ! for plot
     real(4) :: ke0 = 1.d0, entropy0 = 1.d0
@@ -525,12 +526,12 @@ contains
     integer req_z(4)
     integer istat(MPI_STATUS_SIZE)
     ! GPU arrays (compute ranks only)
-    real(8), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
-    real(8), allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
-    real(8), allocatable, device :: QJ2_1(:,:,:), QJ2_2(:,:,:), QJ2_3(:,:,:), QJ2_4(:,:,:), QJ2_5(:,:,:)
-    real(8), allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
-    real(8), allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
-    real(8), allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
+    ${RT}$, allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
+    ${RT}$, allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
+    ${RT}$, allocatable, device :: QJ2_1(:,:,:), QJ2_2(:,:,:), QJ2_3(:,:,:), QJ2_4(:,:,:), QJ2_5(:,:,:)
+    ${RT}$, allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
+    ${RT}$, allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
+    ${RT}$, allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
     real(8), allocatable, device :: xix(:), etay(:), zetaz(:), Jacobian(:,:)
     real(8), allocatable, device :: dtdxdy(:,:), dtdydz(:,:), dtdzdx(:,:)
     real(8), allocatable, device :: Qs1d_lo(:), Qs1d_hi(:), Qr1d_lo(:), Qr1d_hi(:)
@@ -682,13 +683,13 @@ contains
     integer req_z(4)
     integer istat(MPI_STATUS_SIZE)
     ! GPU arrays (compute ranks only)
-    real(8), allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
-    real(8), allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
-    real(8), allocatable, device :: QJs_1(:,:,:), QJs_2(:,:,:), QJs_3(:,:,:), QJs_4(:,:,:), QJs_5(:,:,:)
-    real(8), allocatable, device :: Rs(:,:,:,:)
-    real(8), allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
-    real(8), allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
-    real(8), allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
+    ${RT}$, allocatable, device :: Q_1(:,:,:), Q_2(:,:,:), Q_3(:,:,:), Q_4(:,:,:), Q_5(:,:,:)
+    ${RT}$, allocatable, device :: QJ_1(:,:,:), QJ_2(:,:,:), QJ_3(:,:,:), QJ_4(:,:,:), QJ_5(:,:,:)
+    ${RT}$, allocatable, device :: QJs_1(:,:,:), QJs_2(:,:,:), QJs_3(:,:,:), QJs_4(:,:,:), QJs_5(:,:,:)
+    ${RT}$, allocatable, device :: Rs(:,:,:,:)
+    ${RT}$, allocatable, device :: E(:,:,:,:), F(:,:,:,:), G(:,:,:,:)
+    ${RT}$, allocatable, device :: T(:,:,:), mu(:,:,:), mut(:,:,:), qc2(:,:,:)
+    ${RT}$, allocatable, device :: ux(:,:,:), vy(:,:,:), wz(:,:,:)
     real(8), allocatable, device :: xix(:), etay(:), zetaz(:), Jacobian(:,:)
     real(8), allocatable, device :: dtdxdy(:,:), dtdydz(:,:), dtdzdx(:,:)
     real(8), allocatable, device :: Qs1d_lo(:), Qs1d_hi(:), Qr1d_lo(:), Qr1d_hi(:)

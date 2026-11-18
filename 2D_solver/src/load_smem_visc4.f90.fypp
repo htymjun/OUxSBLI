@@ -1,4 +1,9 @@
+#:include 'prec.fypp'
+#:block fp
 module load_smem_visc4
+#:if PREC == 'DF'
+  use mod_prec
+#:endif
   use mod_globals, only : threadsEv, threadsFv
   use mod_constant, only : two_third, one_twelfth
   implicit none
@@ -15,15 +20,15 @@ contains
     integer, intent(in), value              :: j            !< global idx for y direction
     integer, intent(in), value              :: nx           !< number of grid points in x direction
     integer, intent(in), value              :: ny           !< number of grid points in y direction
-    real(8), intent(in), device, contiguous :: inv_dy(ny-1) !< inverse grid spacing in y (1/dy)
-    real(8), intent(in), device, contiguous :: Q_2(nx,ny)   !< rho*u
-    real(8), intent(in), device, contiguous :: Q_3(nx,ny)   !< rho*v
+    ${MT}$, intent(in), device, contiguous :: inv_dy(ny-1) !< inverse grid spacing in y (1/dy)
+    ${RT}$, intent(in), device, contiguous :: Q_2(nx,ny)   !< rho*u
+    ${RT}$, intent(in), device, contiguous :: Q_3(nx,ny)   !< rho*v
     integer, parameter :: io_v = 2
     integer, parameter :: sx = threadsEv%x + 2*io_v + 1
     integer, parameter :: sy = threadsEv%y
-    real(8), intent(inout) ::  u(-(io_v-1):sx*sy-io_v) !< attribute(shared)
-    real(8), intent(inout) ::  v(-(io_v-1):sx*sy-io_v) !< attribute(shared)
-    real(8), intent(inout) :: uy(-(io_v-1):sx*sy-io_v) !< attribute(shared) gradient 4th-order accuracy
+    ${RT}$, intent(inout) ::  u(-(io_v-1):sx*sy-io_v) !< attribute(shared)
+    ${RT}$, intent(inout) ::  v(-(io_v-1):sx*sy-io_v) !< attribute(shared)
+    ${RT}$, intent(inout) :: uy(-(io_v-1):sx*sy-io_v) !< attribute(shared) gradient 4th-order accuracy
     integer i_base, ii, i, idx, offset_y
     i_base = (blockIdx%x-1)*blockDim%x
     offset_y = (jt-1)*sx
@@ -54,15 +59,15 @@ contains
     integer, intent(in), value              :: i            !< global idx for x direction
     integer, intent(in), value              :: nx           !< number of grid points in x direction
     integer, intent(in), value              :: ny           !< number of grid points in y direction
-    real(8), intent(in), device, contiguous :: inv_dx(nx-1) !< inverse grid spacing in x (1/dx)
-    real(8), intent(in), device, contiguous :: Q_2(nx,ny)   !< rho*u
-    real(8), intent(in), device, contiguous :: Q_3(nx,ny)   !< rho*v
+    ${MT}$, intent(in), device, contiguous :: inv_dx(nx-1) !< inverse grid spacing in x (1/dx)
+    ${RT}$, intent(in), device, contiguous :: Q_2(nx,ny)   !< rho*u
+    ${RT}$, intent(in), device, contiguous :: Q_3(nx,ny)   !< rho*v
     integer, parameter :: io_v = 2
     integer, parameter :: sx = threadsFv%x
     integer, parameter :: sy = threadsFv%y + 2*io_v + 1
-    real(8), intent(inout) ::  u(-(io_v-1):sx*sy-io_v) !< attribute(shared)
-    real(8), intent(inout) ::  v(-(io_v-1):sx*sy-io_v) !< attribute(shared)
-    real(8), intent(inout) :: vx(-(io_v-1):sx*sy-io_v) !< attribute(shared) gradient 4th-order accuracy
+    ${RT}$, intent(inout) ::  u(-(io_v-1):sx*sy-io_v) !< attribute(shared)
+    ${RT}$, intent(inout) ::  v(-(io_v-1):sx*sy-io_v) !< attribute(shared)
+    ${RT}$, intent(inout) :: vx(-(io_v-1):sx*sy-io_v) !< attribute(shared) gradient 4th-order accuracy
     integer j_base, jj, j, idx, offset_x
     j_base = (blockIdx%y-1)*blockDim%y
     offset_x = (it-1)*sy
@@ -82,3 +87,4 @@ contains
     call syncthreads()
   end subroutine load_smem_visc4_y
 end module load_smem_visc4
+#:endblock fp
