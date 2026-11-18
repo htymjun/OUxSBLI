@@ -1,6 +1,9 @@
 #:include 'prec.fypp'
 #:block fp
 module load_smem_visc2
+#:if PREC == 'DF'
+  use mod_prec
+#:endif
   use mod_globals, only : threadsEv, threadsFv
   implicit none
   private

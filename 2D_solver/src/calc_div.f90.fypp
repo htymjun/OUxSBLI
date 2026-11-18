@@ -5,10 +5,23 @@
 !> shared memory -- mirrors 3D_solver/src/calc_div.f90's ux/vy/wz split.
 #:block fp
 module calc_div
+#:if PREC == 'DF'
+  use mod_prec
+#:endif
   use mod_constant, only : one_third
   implicit none
   ${WT}$, parameter :: one_24 = 1.d0 / 24.d0
 contains
+  ! 4th-order cell-centre difference times the summed inverse spacings s. Called from the
+  ! CUF loops below: a CUF loop cannot evaluate fltflt expressions itself (PREC = 'DF'),
+  ! a device subroutine can (same form as div4 in 3D_solver/src/calc_div.f90).
+  attributes(device) subroutine div4(m2, m1, p1, p2, s, r)
+    ${RT}$, intent(in)  :: m2, m1, p1, p2
+    ${WT}$, intent(in), value :: s
+    ${RT}$, intent(out) :: r
+    r = (one_third * (-m1 + p1) - one_24 * (-m2 + p2)) * s
+  end subroutine div4
+
   !> du/dx at cell-center (4th-order, interior stencil)
   subroutine calc_div_ux_4_in(nx, ny, xix, Q_2, ux)
     integer, intent(in), value                     :: nx, ny
@@ -20,8 +33,7 @@ contains
     !$cuf kernel do(2) <<<*,(32,4)>>>
     do j = 1, ny
       do i = io_v+2, nx-io_v-1
-        ux(i,j) = (one_third * (-Q_2(i-1,j) + Q_2(i+1,j)) &
-                    - one_24 * (-Q_2(i-2,j) + Q_2(i+2,j))) * (xix(i-1) + xix(i))
+        call div4(Q_2(i-2,j), Q_2(i-1,j), Q_2(i+1,j), Q_2(i+2,j), xix(i-1) + xix(i), ux(i,j))
       enddo
     enddo
   end subroutine calc_div_ux_4_in
@@ -37,8 +49,7 @@ contains
     !$cuf kernel do(2) <<<*,(32,4)>>>
     do j = io_v+2, ny-io_v-1
       do i = 1, nx
-        vy(i,j) = (one_third * (-Q_3(i,j-1) + Q_3(i,j+1)) &
-                    - one_24 * (-Q_3(i,j-2) + Q_3(i,j+2))) * (etay(j-1) + etay(j))
+        call div4(Q_3(i,j-2), Q_3(i,j-1), Q_3(i,j+1), Q_3(i,j+2), etay(j-1) + etay(j), vy(i,j))
       enddo
     enddo
   end subroutine calc_div_vy_4_in

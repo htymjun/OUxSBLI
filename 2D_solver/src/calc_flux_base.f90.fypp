@@ -6,6 +6,9 @@
 !> Dispatches to different numerical schemes (KEEP, SLAU, Hybrid)
 !> Groups all GPU kernel calls for computing E, F flux components
 module calc_flux_base
+#:if PREC == 'DF'
+  use mod_prec
+#:endif
   use mod_globals, only : sp, &
   & blocks, threads, blocksE, blocksF, threadsE, threadsF, &
   & blocksEv, blocksFv, threadsEv, threadsFv

@@ -5,6 +5,9 @@
   #:set VISC_ORDER = 4 if ORDER >= 4 else 2
 #:endif
 module preprocess
+#:if PREC == 'DF'
+  use mod_prec
+#:endif
   use cudafor
   use mpi
   use print

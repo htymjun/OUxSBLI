@@ -6,6 +6,9 @@
 #:endif
 #:block fp
 module calc_time_dev
+#:if PREC == 'DF'
+  use mod_prec
+#:endif
   use cudafor
   use mpi
   use nvtx

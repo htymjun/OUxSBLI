@@ -1,6 +1,9 @@
 #:include 'prec.fypp'
 #:block fp
 module calc_steps
+#:if PREC == 'DF'
+  use mod_prec
+#:endif
   use cudafor
   use mod_globals, only : dt
   use mod_constant, only : one_sixth

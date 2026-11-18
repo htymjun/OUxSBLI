@@ -1,4 +1,8 @@
 module set
+#ifdef PREC_DF
+  use mod_prec
+#endif
+  use cudafor
   use mod_globals, only : nx, ny, gamma, R, rho0, p0, rho1, p1
   use mod_constant, only : id_accuracy, gamma_1, over_gamma_1
   use set_bc_common
@@ -50,32 +54,44 @@ contains
 
   subroutine set_bc(myrank, nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4)
     integer, intent(in), value     :: myrank, nx, ny
-    real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
-    real(8) p_wall
-    integer i, j
-    ! inlet outlet
-    !$cuf kernel do<<<*,*>>>
-    do j = 2, ny-1
-      QJ_1(1,j)  = QJ_1(2,j);    QJ_2(1,j)  = QJ_2(2,j);    QJ_3(1,j)  = QJ_3(2,j);    QJ_4(1,j)  = QJ_4(2,j)
-      QJ_1(nx,j) = QJ_1(nx-1,j); QJ_2(nx,j) = QJ_2(nx-1,j); QJ_3(nx,j) = QJ_3(nx-1,j); QJ_4(nx,j) = QJ_4(nx-1,j)
-    enddo
-
-    ! no-slip wall & symetric boundary condition
-    !$cuf kernel do<<<*,*>>>
-    do i = 1, nx
-      ! no-slip wall
-      p_wall = gamma_1 * (QJ_4(i,2) - 0.5d0 * (QJ_2(i,2)**2 + QJ_3(i,2)**2) / QJ_1(i,2))
-      QJ_1(i,1) = QJ_1(i,2)
-      QJ_2(i,1) = 0.d0
-      QJ_3(i,1) = 0.d0
-      QJ_4(i,1) = p_wall * over_gamma_1
-      ! symetric boundary condition
-      QJ_1(i,ny) =  QJ_1(i,ny-1)
-      QJ_2(i,ny) =  QJ_2(i,ny-1)
-      QJ_3(i,ny) = -QJ_3(i,ny-1)
-      QJ_4(i,ny) =  QJ_4(i,ny-1)
-    enddo
+    REAL_W, intent(in), device     :: Jacobian(nx,ny)
+    REAL_T, intent(inout), device  :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
+    call bc_inout<<<(ny+127)/128, 128>>>(nx, ny, QJ_1, QJ_2, QJ_3, QJ_4)
+    call bc_wall_sym<<<(nx+127)/128, 128>>>(nx, ny, QJ_1, QJ_2, QJ_3, QJ_4)
   end subroutine set_bc
-end module set
 
+
+  !> inlet / outlet: zero gradient in x (j = 2 .. ny-1)
+  attributes(global) subroutine bc_inout(nx, ny, QJ_1, QJ_2, QJ_3, QJ_4)
+    integer, intent(in), value     :: nx, ny
+    REAL_T, intent(inout), device  :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
+    integer j
+    j = (blockIdx%x - 1) * blockDim%x + threadIdx%x + 1
+    if (j > ny-1) return
+    QJ_1(1,j)  = QJ_1(2,j);    QJ_2(1,j)  = QJ_2(2,j);    QJ_3(1,j)  = QJ_3(2,j);    QJ_4(1,j)  = QJ_4(2,j)
+    QJ_1(nx,j) = QJ_1(nx-1,j); QJ_2(nx,j) = QJ_2(nx-1,j); QJ_3(nx,j) = QJ_3(nx-1,j); QJ_4(nx,j) = QJ_4(nx-1,j)
+  end subroutine bc_inout
+
+
+  !> no-slip wall at j = 1, symmetric boundary at j = ny (i = 1 .. nx)
+  attributes(global) subroutine bc_wall_sym(nx, ny, QJ_1, QJ_2, QJ_3, QJ_4)
+    integer, intent(in), value     :: nx, ny
+    REAL_T, intent(inout), device  :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
+    REAL_W, parameter :: zero = 0.d0, half = 0.5d0
+    REAL_T p_wall
+    integer i
+    i = (blockIdx%x - 1) * blockDim%x + threadIdx%x
+    if (i > nx) return
+    ! no-slip wall
+    p_wall = gamma_1 * (QJ_4(i,2) - half * (QJ_2(i,2)**2 + QJ_3(i,2)**2) / QJ_1(i,2))
+    QJ_1(i,1) = QJ_1(i,2)
+    QJ_2(i,1) = zero
+    QJ_3(i,1) = zero
+    QJ_4(i,1) = p_wall * over_gamma_1
+    ! symetric boundary condition
+    QJ_1(i,ny) =  QJ_1(i,ny-1)
+    QJ_2(i,ny) =  QJ_2(i,ny-1)
+    QJ_3(i,ny) = -QJ_3(i,ny-1)
+    QJ_4(i,ny) =  QJ_4(i,ny-1)
+  end subroutine bc_wall_sym
+end module set

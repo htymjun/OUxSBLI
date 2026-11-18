@@ -1,5 +1,8 @@
 #:include 'prec.fypp'
 module set_bc_common
+#:if PREC == 'DF'
+  use mod_prec
+#:endif
   use mod_globals, only : nx, ny
   implicit none
   interface set_bc_cyclic

@@ -1,4 +1,7 @@
 module set
+#ifdef PREC_DF
+  use mod_prec
+#endif
   use cudafor
   use mod_globals, only : gamma, rho0, u0, p0, rho2, p2, ux, uy, beta,Lx, Ly, x_in, Xsh, i_LE, nx
   use mod_constant, only : gamma_1, over_gamma_1
@@ -72,89 +75,133 @@ contains
 
   subroutine set_bc(myrank, nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4)
     integer, intent(in), value     :: myrank, nx, ny
-    real(8), intent(in), device    :: Jacobian(nx,ny)
-    real(8), intent(inout), device :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
-    real(8) Jacobian_tmp
-    integer i, j
-    real(8) :: p_wall
-    real(8) :: rhoin, uin, vin, pin, cin
-    real(8) :: Rp, Rm, vb, cb, sb, ub, rhob, pb
-    ! exterior (post-shock) sound speed for the top Riemann state
-    real(8), parameter :: c_ext = sqrt(gamma * p2 / rho2)
-    real(8), parameter :: c0    = sqrt(gamma * p0 / rho0)
-
-    !$cuf kernel do(1)<<<*,*>>>
-    do j = 2, ny-1
-      ! outlet
-      QJ_1(nx,j) = QJ_1(nx-1,j); QJ_2(nx,j) = QJ_2(nx-1,j); QJ_3(nx,j) = QJ_3(nx-1,j); QJ_4(nx,j) = QJ_4(nx-1,j)
-    enddo
-
-    !$cuf kernel do(1)<<<*,*>>>
-    do i = 1, nx
-      if (Ly / dtan(beta) + Lx / dble(nx-1) * dble(i-1) + x_in < Xsh) then 
-        ! ---- interior state (j = ny-1) ----
-        rhoin = QJ_1(i,ny-1) * Jacobian(i,ny-1)
-        uin   = QJ_2(i,ny-1) / QJ_1(i,ny-1)
-        vin   = QJ_3(i,ny-1) / QJ_1(i,ny-1)
-        pin   = gamma_1 * ( QJ_4(i,ny-1) * Jacobian(i,ny-1) &
-              - 0.5d0 * rhoin * (uin**2 + vin**2) )
-        cin   = sqrt(gamma * pin / rhoin)
-
-        ! ---- Riemann invariant (normal = y direction) ----
-        Rp = vin + 2.d0 * cin * over_gamma_1
-        Rm = -2.d0 * c0 * over_gamma_1 !uy - 2.d0 * c_ext * over_gamma_1
-        vb = 0.5d0 * (Rp + Rm)
-        cb = 0.25d0 * gamma_1 * (Rp - Rm)
-
-        if (vb >= 0.d0) then
-          sb = pin / rhoin**gamma
-          ub = uin
-        else
-          sb = p0 / rho0**gamma !p2 / rho2**gamma
-          ub = u0 !ub = ux
-        endif
-
-        rhob = (cb**2 / (gamma * sb)) ** over_gamma_1
-        pb   = sb * rhob**gamma
-
-        Jacobian_tmp = 1.d0 / Jacobian(i,ny)
-        QJ_1(i,ny) = rhob * Jacobian_tmp
-        QJ_2(i,ny) = rhob * ub * Jacobian_tmp
-        QJ_3(i,ny) = rhob * vb * Jacobian_tmp
-        QJ_4(i,ny) = (pb * over_gamma_1 + 0.5d0 * rhob * (ub**2 + vb**2)) * Jacobian_tmp
-      
-      else if (Ly / dtan(beta) + Lx / dble(nx-1) * dble(i-1) + x_in >= Xsh .and. Lx / dble(nx-1) * dble(i-1) + x_in < 0.09d0) then
-      ! if (Lx / dble(nx-1) * dble(i-1) + x_in < 0.09d0) then
-        ! ---- post-shock state (j = ny) ----
-        Jacobian_tmp = 1.d0 / Jacobian(i,ny)
-        QJ_1(i,ny) = rho2 * Jacobian_tmp
-        QJ_2(i,ny) = rho2 * ux * Jacobian_tmp
-        QJ_3(i,ny) = rho2 * uy * Jacobian_tmp
-        QJ_4(i,ny) = (p2 * over_gamma_1 + 0.5d0 * rho2 * (ux**2 + uy**2)) * Jacobian_tmp
-        
-      else
-        ! ---- Neumann ----
-        QJ_1(i,ny) = QJ_1(i,ny-1); QJ_2(i,ny) = QJ_2(i,ny-1); QJ_3(i,ny) = QJ_3(i,ny-1)
-        QJ_4(i,ny) = QJ_4(i,ny-1)
-      endif
-    enddo
-
-    !$cuf kernel do(1)<<<*,*>>>
-    do i = 1, nx
-      if(i < i_LE) then
-        !Neumann
-        QJ_1(i,1) = QJ_1(i,2)
-        QJ_2(i,1) = QJ_2(i,2)
-        QJ_3(i,1) = 0.d0
-        QJ_4(i,1) = QJ_4(i,2) - 0.5d0 * QJ_3(i,2)**2 / QJ_1(i,2)
-      else
-        !NoSlip
-        QJ_1(i,1) = QJ_1(i,2)
-        QJ_2(i,1) = 0.d0
-        QJ_3(i,1) = 0.d0
-        p_wall = gamma_1 * (QJ_4(i,2) - 0.5d0 * (QJ_2(i,2)**2 + QJ_3(i,2)**2) / QJ_1(i,2))
-        QJ_4(i,1) = p_wall * over_gamma_1
-      endif
-    enddo
+    REAL_W, intent(in), device     :: Jacobian(nx,ny)
+    REAL_T, intent(inout), device  :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
+    ! top-boundary zones as index bounds, evaluated once on the host in FP64 so that the
+    ! kernel needs no FP64 geometry (PREC = 'FP32'): Riemann far field for i < i_sh,
+    ! post-shock state for i_sh <= i < i_09, Neumann beyond
+    integer, save :: i_sh = -1, i_09 = -1
+    integer i
+    if (i_sh < 0) then
+      i_sh = nx + 1; i_09 = nx + 1
+      do i = nx, 1, -1
+        if (Ly / dtan(beta) + Lx / dble(nx-1) * dble(i-1) + x_in < Xsh) exit
+        i_sh = i
+      enddo
+      do i = nx, 1, -1
+        if (Lx / dble(nx-1) * dble(i-1) + x_in < 0.09d0) exit
+        i_09 = i
+      enddo
+    endif
+    call bc_1<<<(ny+127)/128, 128>>>(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4)
+    call bc_2<<<(nx+127)/128, 128>>>(nx, ny, i_sh, i_09, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4)
+    call bc_3<<<(nx+127)/128, 128>>>(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4)
   end subroutine set_bc
+
+
+  !> loop j = 2 .. ny-1 of the former CUF kernel 1
+  attributes(global) subroutine bc_1(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4)
+    integer, intent(in), value     :: nx, ny
+    REAL_W, intent(in), device     :: Jacobian(nx,ny)
+    REAL_T, intent(inout), device  :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
+    integer j
+    j = (blockIdx%x - 1) * blockDim%x + threadIdx%x + 1
+    if (j > ny-1) return
+    ! outlet
+    QJ_1(nx,j) = QJ_1(nx-1,j); QJ_2(nx,j) = QJ_2(nx-1,j); QJ_3(nx,j) = QJ_3(nx-1,j); QJ_4(nx,j) = QJ_4(nx-1,j)
+  end subroutine bc_1
+
+
+  !> loop i = 1 .. nx of the former CUF kernel 2
+  attributes(global) subroutine bc_2(nx, ny, i_sh, i_09, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4)
+    use mod_globals, only : g_gamma => gamma, g_rho0 => rho0, g_u0 => u0, g_p0 => p0, &
+                            g_rho2 => rho2, g_p2 => p2, g_ux => ux, g_uy => uy
+    integer, intent(in), value     :: nx, ny, i_sh, i_09
+    REAL_W, intent(in), device     :: Jacobian(nx,ny)
+    REAL_T, intent(inout), device  :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
+    ! constants in the working kind (no FP64 arithmetic when PREC = 'FP32')
+    REAL_W, parameter :: gamma = g_gamma, rho0 = g_rho0, u0 = g_u0, p0 = g_p0, rho2 = g_rho2, p2 = g_p2, ux = g_ux, uy = g_uy
+    REAL_W, parameter :: half = 0.5d0, quarter = 0.25d0, two = 2.d0, one = 1.d0, zero = 0.d0
+    REAL_W, parameter :: c_ext = sqrt(gamma * p2 / rho2)
+    REAL_W, parameter :: c0 = sqrt(gamma * p0 / rho0)
+    REAL_W Jacobian_tmp
+    REAL_T rhoin, uin, vin, pin, cin, Rp, Rm, vb, cb, sb, ub, rhob, pb
+    integer i
+    i = (blockIdx%x - 1) * blockDim%x + threadIdx%x
+    if (i > nx) return
+    if (i < i_sh) then  ! Ly / dtan(beta) + x(i) < Xsh
+      ! ---- interior state (j = ny-1) ----
+      rhoin = QJ_1(i,ny-1) * Jacobian(i,ny-1)
+      uin   = QJ_2(i,ny-1) / QJ_1(i,ny-1)
+      vin   = QJ_3(i,ny-1) / QJ_1(i,ny-1)
+      pin   = gamma_1 * ( QJ_4(i,ny-1) * Jacobian(i,ny-1) &
+            - half * rhoin * (uin**2 + vin**2) )
+      cin   = sqrt(gamma * pin / rhoin)
+
+      ! ---- Riemann invariant (normal = y direction) ----
+      Rp = vin + two * cin * over_gamma_1
+      Rm = -two * c0 * over_gamma_1 !uy - two * c_ext * over_gamma_1
+      vb = half * (Rp + Rm)
+      cb = quarter * gamma_1 * (Rp - Rm)
+
+      if (vb >= zero) then
+        sb = pin / rhoin**gamma
+        ub = uin
+      else
+        sb = p0 / rho0**gamma !p2 / rho2**gamma
+        ub = u0 !ub = ux
+      endif
+
+      rhob = (cb**2 / (gamma * sb)) ** over_gamma_1
+      pb   = sb * rhob**gamma
+
+      Jacobian_tmp = one / Jacobian(i,ny)
+      QJ_1(i,ny) = rhob * Jacobian_tmp
+      QJ_2(i,ny) = rhob * ub * Jacobian_tmp
+      QJ_3(i,ny) = rhob * vb * Jacobian_tmp
+      QJ_4(i,ny) = (pb * over_gamma_1 + half * rhob * (ub**2 + vb**2)) * Jacobian_tmp
+    
+    else if (i < i_09) then  ! and x(i) < 0.09 m
+    ! if (Lx / dble(nx-1) * dble(i-1) + x_in < 0.09d0) then
+      ! ---- post-shock state (j = ny) ----
+      Jacobian_tmp = one / Jacobian(i,ny)
+      QJ_1(i,ny) = rho2 * Jacobian_tmp
+      QJ_2(i,ny) = rho2 * ux * Jacobian_tmp
+      QJ_3(i,ny) = rho2 * uy * Jacobian_tmp
+      QJ_4(i,ny) = (p2 * over_gamma_1 + half * rho2 * (ux**2 + uy**2)) * Jacobian_tmp
+      
+    else
+      ! ---- Neumann ----
+      QJ_1(i,ny) = QJ_1(i,ny-1); QJ_2(i,ny) = QJ_2(i,ny-1); QJ_3(i,ny) = QJ_3(i,ny-1)
+      QJ_4(i,ny) = QJ_4(i,ny-1)
+    endif
+  end subroutine bc_2
+
+
+  !> loop i = 1 .. nx of the former CUF kernel 3
+  attributes(global) subroutine bc_3(nx, ny, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4)
+    integer, intent(in), value     :: nx, ny
+    REAL_W, intent(in), device     :: Jacobian(nx,ny)
+    REAL_T, intent(inout), device  :: QJ_1(nx,ny), QJ_2(nx,ny), QJ_3(nx,ny), QJ_4(nx,ny)
+    ! constants in the working kind (no FP64 arithmetic when PREC = 'FP32')
+    REAL_W, parameter :: half = 0.5d0, zero = 0.d0
+    REAL_T p_wall
+    integer i
+    i = (blockIdx%x - 1) * blockDim%x + threadIdx%x
+    if (i > nx) return
+    if(i < i_LE) then
+      !Neumann
+      QJ_1(i,1) = QJ_1(i,2)
+      QJ_2(i,1) = QJ_2(i,2)
+      QJ_3(i,1) = zero
+      QJ_4(i,1) = QJ_4(i,2) - half * QJ_3(i,2)**2 / QJ_1(i,2)
+    else
+      !NoSlip
+      QJ_1(i,1) = QJ_1(i,2)
+      QJ_2(i,1) = zero
+      QJ_3(i,1) = zero
+      p_wall = gamma_1 * (QJ_4(i,2) - half * (QJ_2(i,2)**2 + QJ_3(i,2)**2) / QJ_1(i,2))
+      QJ_4(i,1) = p_wall * over_gamma_1
+    endif
+  end subroutine bc_3
 end module set

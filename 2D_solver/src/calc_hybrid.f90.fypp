@@ -3,6 +3,9 @@
 !> Computes Ducros sensor for automatic scheme switching between KEEP and SLAU
 #:block fp
 module calc_hybrid
+#:if PREC == 'DF'
+  use mod_prec
+#:endif
   use cudafor
   use mod_globals, only : gamma, sp
   implicit none

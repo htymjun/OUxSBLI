@@ -3,6 +3,9 @@
 !> Used for periodic domains where all points are interior (no boundary stencil fallback needed).
 #:block fp
 module calc_hybrid_kernel_internal
+#:if PREC == 'DF'
+  use mod_prec
+#:endif
   use libm
   use mod_globals, only : gamma, threshold, threadsE, threadsF
   use mod_constant, only : over_gamma_1, R_over_gamma_1, one_third, one_sixth, one_twelfth, two_third, id_slau
@@ -28,7 +31,7 @@ module calc_hybrid_kernel_internal
 #:endif
 
   interface KEEP
-    module procedure KEEP2, KEEP4, KEEP6
+    module procedure ${KEEP_PROCS}$
   end interface KEEP
 
   interface SLAU

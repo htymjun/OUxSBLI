@@ -39,6 +39,39 @@ already in d911d5a); 2D_solver and 3D_solver_curv SASS identical.
 Mixed forms (FP64 state), ETGV 66^3 KEEP6, 200 steps: MIXED 1.1e-8 (rho), MIXED_CELL 1.5e-8.
 KEEP6 face flux alone (unit test, 6-point stencil with 1 % variations): MIXED 4e-10 relative.
 
+## 2D_solver: DF and FP32 (`PREC = 'DF' | 'FP32'`)
+
+Machine: RTX 4060 Laptop (sm_89), WSL2, NVIDIA HPC SDK 25.5, 2 MPI ranks. Each configuration
+runs 40 steps (`prec2d` runs; nx, ny of the case defaults); metric as above. `slau1` =
+`SLAU_VARIANT='SLAU'`. FP64 output of all 21 configurations is bit-identical to the output before the
+precision work (`recal/Q00001.dat` md5).
+
+| case | features | DF rho | DF p | DF velocity | FP32 rho | FP32 p | FP32 velocity |
+|---|---|---|---|---|---|---|---|
+| EVC | Euler KEEP2 / KEEP4 / KEEP6 (RK4) | 2.9e-14 / 3.3e-14 / 3.3e-14 | 2.0e-14 / 3.0e-14 / 3.3e-14 | 2.4e-13 / 1.0e-12 / 1.4e-12 | 8.7e-7 / 9.2e-7 / 8.8e-7 | 9.8e-7 / 8.4e-7 / 8.9e-7 | 1.7e-5 / 2.9e-5 / 2.8e-5 |
+| EVC | KEEP6, RK3 | 2.2e-13 | 7.6e-14 | 1.5e-12 | 2.0e-6 | 1.9e-6 | 2.6e-5 |
+| EVC | SLAU slau1 / Hybrid / WENO+LF | 2.3e-14 / 2.9e-14 / 2.6e-14 | 1.1e-14 / 3.3e-14 / 1.4e-14 | 1.8e-13 / 1.3e-12 / 1.7e-13 | 6.6e-7 / 8.0e-7 / 3.4e-7 | 2.3e-7 / 8.3e-7 / 3.0e-7 | 1.4e-5 / 2.8e-5 / 6.4e-6 |
+| DSL | Euler KEEP6, periodic | 5.2e-14 | 2.1e-14 | 1.0e-13 | 1.3e-6 | 1.3e-6 | 3.5e-6 |
+| ST | NS KEEP6, walls, `calc_div` | 6.8e-14 | 7.1e-14 | 2.2e-14 | 1.8e-6 | 2.5e-6 | 1.9e-6 |
+| ST | `VISC_ORDER=2` / RK4 | 6.9e-14 / 1.8e-14 | 8.3e-14 / 1.7e-14 | 2.2e-14 / 1.2e-14 | 1.4e-6 / 5.4e-7 | 2.2e-6 / 6.5e-7 | 9.7e-7 / 3.0e-7 |
+| OS | Euler SLAU slau1, shock, TVD hybrid | 4.8e-12 | 6.0e-12 | 1.7e-12 | 1.1e-5 | 1.4e-5 | 8.9e-6 |
+| SBLI | NS SLAU slau1, shock / BL | 3.2e-12 | 3.3e-12 | 1.7e-12 | 6.0e-6 | 8.5e-6 | 3.3e-6 |
+| SBLI | NS KEEP+SLAU (configured) | 2.3e-13 | 2.8e-13 | 2.0e-13 | 5.4e-6 | 7.7e-6 | 4.8e-6 |
+| BL | NS SLAU slau1, constant-p far field | 1.2e-13 | 6.7e-14 | 1.8e-13 | 2.2e-6 | 1.4e-6 | 4.9e-6 |
+| SWLBLI | NS SLAU slau1, 2700 x 480 | 1.4e-13 | 2.2e-13 | 1.1e-13 | 2.0e-6 | 4.1e-6 | 3.1e-6 |
+
+The two cases above 1e-12 under DF (OS, SBLI slau1) exceed it at 2-4 points (OS near the top
+boundary, SBLI at the leading edge); the median difference is 1e-15. With the configured HR-SLAU2,
+DF / FP32 differ by 1e-9..1e-6 (OS, BL) and 1e-3 (SWLBLI, after 40 steps from the analytic
+start), for the wiggle-detector reason given above; EVC with HR-SLAU2 5e-11 (velocity) under DF.
+
+FP32 SASS (`cuobjdump -sass`, `bench_prec.FP64_OP`): no FP64 instruction in any kernel of any
+of the configurations above. 3D_solver TBL (RESCALE, 65 x 49 x 22, 20 steps; `calc_rescale`'s
+`calc_mean` / `copy` and the TBL boundary conditions as hand-written kernels): FP64 output
+bit-identical to before; DF vs FP64 rho 5.7e-14, p 3.5e-13, velocity 1.1e-13. With HPC SDK 25.5,
+the 3D cases whose `set.f90` keeps state arithmetic in `!$cuf` loops (e.g. SWTBLI, BL, OS, STZ)
+still do not build with `PREC='DF'`; the table at the top was measured with HPC SDK 26.5.
+
 ## diffFP32's rules (`ouxsbli/tests/test_prec_difffp32.py`, slow)
 
 3D EVC (Euler vortex, density amplitude ~2e-7, one period), L2(rho) at n = 64/128/256:

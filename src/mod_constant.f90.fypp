@@ -124,7 +124,7 @@ module mod_constant
   ! PREC = 'FP32': the constants above are real(4), rounded once from the double expressions.
   ! The sensor kind sp (mod_globals) must be 4 as well; an invalid kind here means the case's
   ! mod_globals.f90 lacks the `#ifdef PREC_FP32` / `sp = 4` lines.
-  integer, parameter :: fp32_needs_sp_4 = int(1, kind=merge(4, -1, sp == 4))
+  integer(kind=4 + 100 * (sp - 4)), parameter :: fp32_needs_sp_4 = 1  ! kind 404 unless sp == 4
   #:endif
   ! Fypp-generated kind-dispatch parameters
   #:if VISC == 'Euler'
