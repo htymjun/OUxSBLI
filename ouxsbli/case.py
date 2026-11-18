@@ -16,14 +16,23 @@ Usage::
     )
     case.build()
     case.run(nranks=2)
+
+``source`` is a case directory of the source tree (``"2D_solver/EVC"``), an
+absolute path, or a path relative to the current directory; the source tree is
+found by :mod:`ouxsbli.paths` (``OUXSBLI_ROOT`` or the package location), so a
+script can run from any directory. An existing case directory is used in place
+with ``Case.from_dir(path)``.
 """
 import os
+import re
 import shutil
 import subprocess
 import pathlib
+import warnings
 from typing import Any
 from .patcher import patch, _is_macro_line
 from .ic import ic_to_params, bc_to_params
+from .paths import repo_root, resolve_case
 
 # ---------------------------------------------------------------------------
 # Alias table: friendly Case() kwarg → fypp macro name in config.fypp
@@ -67,6 +76,8 @@ _VALUE_NORMALIZE: dict[str, dict[str, str]] = {
     "RIEMANN":      {"slau": "SLAU", "lf": "LF"},
 }
 
+_CONFIG_KEYS = set(_ALIAS.values()) | set(_VALUE_NORMALIZE)
+
 # ---------------------------------------------------------------------------
 # RK stage-count normalisation  (human-friendly strings → int)
 # ---------------------------------------------------------------------------
@@ -76,28 +87,45 @@ _RK_NORMALIZE: dict[str, int] = {
 }
 
 
+# Oldest NVIDIA HPC SDK that builds OUxSBLI correctly (see docs/installation.md)
+MIN_HPCSDK = (25, 5)
+
+
+def _sdk_version(nvfortran) -> tuple:
+    """(major, minor) of the HPC SDK that owns *nvfortran*, from its install path
+    (.../<version>/compilers/bin/nvfortran); (0, 0) if the path has no version."""
+    m = re.search(r"/(\d+)\.(\d+)/compilers/bin/nvfortran$", str(pathlib.Path(nvfortran).resolve()))
+    return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+
+
 class Case:
     """Manage one simulation run (copy source -> patch config.fypp + mod_globals.f90 -> cmake/make -> run)."""
 
-    def __init__(self, source: str, workdir: str, **params: Any) -> None:
+    def __init__(self, source: str, workdir: str, verbose: bool = False, **params: Any) -> None:
         """
         Parameters
         ----------
         source:
-            Path to the original case directory (e.g. ``"3D_solver/NSTGV"``).
-            This directory is never modified.
+            The original case directory: relative to the source tree
+            (``"3D_solver/NSTGV"``), absolute, or relative to the current
+            directory. This directory is never modified.
         workdir:
-            Path for the new working directory that will be created.
+            Path for the new working directory that will be created
+            (relative paths are taken from the current directory).
+        verbose:
+            Show the output of cmake, make and mpirun instead of capturing it.
         **params:
             Parameter overrides.  Recognised aliases (e.g. ``scheme``,
             ``visc``, ``accuracy``) are expanded to the fypp macro names used
             in ``config.fypp``.  All other parameters (``nx``, ``ny``, ``Re``,
             etc.) are forwarded to ``mod_globals.f90``.
         """
-        self.repo_root = pathlib.Path(__file__).resolve().parent.parent
-        self.source  = (self.repo_root / source).resolve()
-        self.workdir = pathlib.Path(workdir).resolve()
+        self.repo_root = repo_root()
+        self.source  = resolve_case(source)
+        self.workdir = pathlib.Path(workdir).expanduser().resolve()
         self.build_dir = self.workdir / "build"
+        self.verbose = verbose
+        self._inplace = False
         # Expand friendly aliases; do NOT blanket-uppercase values —
         # config.fypp comparisons are case-sensitive (e.g. 'Euler' ≠ 'EULER').
         # Expand IC/BC specs into flat parameter dicts before alias expansion.
@@ -120,12 +148,29 @@ class Case:
         }
         self._built = False
 
+    @classmethod
+    def from_dir(cls, path: str = ".", verbose: bool = False) -> "Case":
+        """Use the existing case directory *path* in place (no copy, no patching)."""
+        case = cls.__new__(cls)
+        case.repo_root = repo_root()
+        case.source = case.workdir = resolve_case(pathlib.Path(path).expanduser().resolve())
+        case.build_dir = case.workdir / "build"
+        case.verbose = verbose
+        case._inplace = True
+        case.params = {}
+        case._built = (case.build_dir / "a.out").exists()
+        return case
+
     # ------------------------------------------------------------------
     # Setup (copy + patch)
     # ------------------------------------------------------------------
 
     def _setup(self) -> None:
         """Copy source directory to workdir, then patch config.fypp and mod_globals.f90."""
+        if self._inplace:
+            return
+        if self.workdir == self.source:
+            raise ValueError(f"workdir is the source case directory ({self.source}); use Case.from_dir()")
         if self.workdir.exists():
             shutil.rmtree(self.workdir)
 
@@ -160,7 +205,9 @@ class Case:
             if k == "RK" and isinstance(v, str):
                 v = _RK_NORMALIZE.get(v.lower(), v)
 
-            if k in _VALUE_NORMALIZE or any(_is_macro_line(line, k) for line in config_lines):
+            # A known fypp macro goes to config.fypp even when the case's file does not
+            # set it yet (e.g. VISC_ORDER, PREC): patch() appends the missing #:set line.
+            if k in _CONFIG_KEYS or any(_is_macro_line(line, k) for line in config_lines):
                 # param lives in config.fypp — apply fypp-correct casing for strings
                 if isinstance(v, str) and k in _VALUE_NORMALIZE:
                     v = _VALUE_NORMALIZE[k].get(v.lower(), v)
@@ -181,12 +228,13 @@ class Case:
         self._setup()
 
         self.build_dir.mkdir(exist_ok=True)
-        # Set the CMake src dir to "original case dir".
-        # This ensures that relative paths to ../CMakeLists.txt and src/ work correctly.
+        # The working directory is a complete case (its own CMakeLists.txt, config.fypp,
+        # mod_globals.f90, set.f90); the shared sources come from OUXSBLI_ROOT.
         cmake_cmd = [
             "cmake",
-            str(self.source),  # This line is important
-            f"-DCASE_DIR={self.workdir}"
+            "-S", str(self.workdir),
+            "-B", str(self.build_dir),
+            f"-DOUXSBLI_ROOT={self.repo_root}",
         ]
 
         self._run_cmd(cmake_cmd, cwd=self.build_dir)
@@ -226,21 +274,36 @@ class Case:
     # ------------------------------------------------------------------
 
     def _build_env(self) -> dict:
-        """Return os.environ copy with NVIDIA HPC SDK paths prepended."""
+        """Return os.environ copy with NVIDIA HPC SDK paths prepended.
+
+        OUxSBLI needs HPC SDK 25.5 or newer. If the nvfortran on PATH is older
+        (or absent), the newest installed SDK under the same root (or
+        /opt/nvidia/hpc_sdk) is used instead; without one, this raises.
+        """
         env = os.environ.copy()
-        nvfortran = shutil.which("nvfortran")
+        on_path = shutil.which("nvfortran")
+        roots = [pathlib.Path("/opt/nvidia/hpc_sdk/Linux_x86_64")]
+        if on_path is not None:
+            # <root>/<version>/compilers/bin/nvfortran
+            roots.insert(0, pathlib.Path(on_path).resolve().parents[3])
+        nvfortran = on_path if on_path and _sdk_version(on_path) >= MIN_HPCSDK else None
         if nvfortran is None:
-            hpcsdk_root = pathlib.Path("/opt/nvidia/hpc_sdk")
-            candidates = sorted(
-                hpcsdk_root.glob("Linux_x86_64/*/compilers/bin/nvfortran"),
-                reverse=True,
+            found = sorted(
+                (c for r in dict.fromkeys(roots) for c in r.glob("*/compilers/bin/nvfortran")
+                 if _sdk_version(c) >= MIN_HPCSDK),
+                key=_sdk_version,
             )
-            if candidates:
-                nvfortran = str(candidates[0])
+            if found:
+                nvfortran = str(found[-1])
+                if on_path is not None:
+                    warnings.warn(
+                        f"nvfortran on PATH ({on_path}) is older than HPC SDK "
+                        f"{MIN_HPCSDK[0]}.{MIN_HPCSDK[1]}; using {nvfortran}", stacklevel=3)
         if nvfortran is None:
             raise RuntimeError(
-                "NVIDIA HPC SDK not found. Install it from "
-                "https://developer.nvidia.com/hpc-sdk or add nvfortran to PATH."
+                f"NVIDIA HPC SDK {MIN_HPCSDK[0]}.{MIN_HPCSDK[1]} or newer not found"
+                + (f" (nvfortran on PATH: {on_path})" if on_path else "") + ". Install it from "
+                "https://developer.nvidia.com/hpc-sdk or add its nvfortran to PATH."
             )
         compiler_bin = pathlib.Path(nvfortran).parent
         sdk_root = compiler_bin.parent.parent
@@ -249,12 +312,20 @@ class Case:
             mpi_bin = sdk_root / mpi_subpath
             if mpi_bin.exists():
                 extra.append(str(mpi_bin))
-                env.setdefault("FC", str(mpi_bin / "mpif90"))
+                if on_path != nvfortran:
+                    env["FC"] = str(mpi_bin / "mpif90")
+                else:
+                    env.setdefault("FC", str(mpi_bin / "mpif90"))
                 break
         env["PATH"] = ":".join(extra) + ":" + env.get("PATH", "")
         return env
 
     def _run_cmd(self, cmd: list[str], cwd: pathlib.Path) -> None:
+        if self.verbose:
+            result = subprocess.run(cmd, cwd=cwd, env=self._build_env())
+            if result.returncode != 0:
+                raise RuntimeError(f"Command {cmd} failed (exit {result.returncode})")
+            return
         result = subprocess.run(
             cmd,
             cwd=cwd,

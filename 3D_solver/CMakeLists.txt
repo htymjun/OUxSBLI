@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.15)
 
+# This file is <root>/3D_solver/CMakeLists.txt; a case's CMakeLists.txt normally sets
+# OUXSBLI_ROOT before including it (see any case directory).
+if(NOT DEFINED OUXSBLI_ROOT)
+  get_filename_component(OUXSBLI_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+endif()
+
 if(NOT DEFINED CMAKE_Fortran_COMPILER)
   set(CMAKE_Fortran_COMPILER mpif90)
 endif()
@@ -9,7 +15,7 @@ if(NOT DEFINED CASE_GPU_CC)
 endif()
 
 if(NOT DEFINED CASE_MAIN_SOURCE)
-  set(CASE_MAIN_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../src/main.f90")
+  set(CASE_MAIN_SOURCE "${OUXSBLI_ROOT}/3D_solver/src/main.f90")
 endif()
 
 set(SUBROUTINES "name:calc_tau_straight,calc_tau_cross,flux4")
@@ -19,14 +25,15 @@ find_package(MPI REQUIRED Fortran)
 find_program(FYPP_EXE fypp REQUIRED)
 
 # Macro: call from each case's CMakeLists.txt after setting CASE_EXTRA_SOURCES.
-# CMAKE_CURRENT_SOURCE_DIR / BINARY_DIR resolve to the caller's case directory.
+# CMAKE_CURRENT_SOURCE_DIR / BINARY_DIR resolve to the caller's case directory, which may be
+# anywhere; the shared sources are taken from OUXSBLI_ROOT.
 macro(add_ouxsbli_case)
   if(DEFINED CASE_DIR)
     set(_CASE_DIR "${CASE_DIR}")
   else()
     set(_CASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
   endif()
-  set(FYPP_FLAGS "-I${_CASE_DIR}" "-I${CMAKE_CURRENT_SOURCE_DIR}/../src" "-I${CMAKE_CURRENT_SOURCE_DIR}/../../src" "-DDIM=3")
+  set(FYPP_FLAGS "-I${_CASE_DIR}" "-I${OUXSBLI_ROOT}/3D_solver/src" "-I${OUXSBLI_ROOT}/src" "-DDIM=3")
 
   set(_PARENT_FYPP "mod_constant" "mod_prec" "calc_weno" "calc_muscl" "print")
   set(_SHARED_FYPP
@@ -51,7 +58,7 @@ macro(add_ouxsbli_case)
   # calc_keep_kernel/calc_slau_kernel/calc_hybrid_kernel(+_internal) below, not
   # compiled as its own translation unit -- generate it via a custom target so
   # it exists before those files compile, without adding it to _GEN/add_executable.
-  set(_SCHEME_MATH_IN  "${CMAKE_CURRENT_SOURCE_DIR}/../../src/calc_scheme_math.f90.fypp")
+  set(_SCHEME_MATH_IN  "${OUXSBLI_ROOT}/src/calc_scheme_math.f90.fypp")
   set(_SCHEME_MATH_OUT "${CMAKE_CURRENT_BINARY_DIR}/calc_scheme_math.f90")
   add_custom_command(OUTPUT ${_SCHEME_MATH_OUT}
     COMMAND ${FYPP_EXE} ${FYPP_FLAGS} ${_SCHEME_MATH_IN} ${_SCHEME_MATH_OUT}
@@ -60,7 +67,7 @@ macro(add_ouxsbli_case)
 
   set(_GEN "")
   foreach(_f ${_PARENT_FYPP})
-    set(_in  "${CMAKE_CURRENT_SOURCE_DIR}/../../src/${_f}.f90.fypp")
+    set(_in  "${OUXSBLI_ROOT}/src/${_f}.f90.fypp")
     set(_out "${CMAKE_CURRENT_BINARY_DIR}/${_f}.f90")
     add_custom_command(OUTPUT ${_out}
       COMMAND ${FYPP_EXE} ${FYPP_FLAGS} ${_in} ${_out}
@@ -70,7 +77,7 @@ macro(add_ouxsbli_case)
   endforeach()
 
   foreach(_f ${_SHARED_FYPP})
-    set(_in  "${CMAKE_CURRENT_SOURCE_DIR}/../src/${_f}.f90.fypp")
+    set(_in  "${OUXSBLI_ROOT}/3D_solver/src/${_f}.f90.fypp")
     set(_out "${CMAKE_CURRENT_BINARY_DIR}/${_f}.f90")
     add_custom_command(OUTPUT ${_out}
       COMMAND ${FYPP_EXE} ${FYPP_FLAGS} ${_in} ${_out}
@@ -80,32 +87,33 @@ macro(add_ouxsbli_case)
   endforeach()
 
   if(NOT DEFINED CASE_PHYSICAL_QUANTITIES_SOURCE)
-    set(CASE_PHYSICAL_QUANTITIES_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../../src/calc_physical_quantities.f90")
+    set(CASE_PHYSICAL_QUANTITIES_SOURCE "${OUXSBLI_ROOT}/src/calc_physical_quantities.f90")
   endif()
 
   set(_BASE
       "${_CASE_DIR}/mod_globals.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/set.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../../src/cpu_gpu_mpi.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../../src/set_coordinate.f90"
+      "${_CASE_DIR}/set.f90"
+      "${OUXSBLI_ROOT}/src/cpu_gpu_mpi.f90"
+      "${OUXSBLI_ROOT}/src/set_coordinate.f90"
       "${CASE_PHYSICAL_QUANTITIES_SOURCE}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../src/load_smem_visc2.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../src/load_smem_visc_me4_base.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_div.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_les.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_hybrid.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_steps.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../src/calc_rescale.f90"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../src/set_bc_common.f90")
+      "${OUXSBLI_ROOT}/3D_solver/src/load_smem_visc2.f90"
+      "${OUXSBLI_ROOT}/3D_solver/src/load_smem_visc_me4_base.f90"
+      "${OUXSBLI_ROOT}/3D_solver/src/calc_div.f90"
+      "${OUXSBLI_ROOT}/3D_solver/src/calc_les.f90"
+      "${OUXSBLI_ROOT}/3D_solver/src/calc_hybrid.f90"
+      "${OUXSBLI_ROOT}/3D_solver/src/calc_steps.f90"
+      "${OUXSBLI_ROOT}/3D_solver/src/calc_rescale.f90"
+      "${OUXSBLI_ROOT}/3D_solver/src/set_bc_common.f90")
 
   get_filename_component(_CASE "${CMAKE_CURRENT_SOURCE_DIR}" NAME)
+  string(MAKE_C_IDENTIFIER "${_CASE}" _CASE)
   add_custom_target(${_CASE}_scheme_math DEPENDS ${_SCHEME_MATH_OUT})
   add_executable(${_CASE} ${_BASE} ${CASE_MAIN_SOURCE} ${CASE_EXTRA_SOURCES} ${_GEN})
   add_dependencies(${_CASE} ${_CASE}_scheme_math)
   # PREC (src/prec.fypp) as cpp macros for the plain .f90 sources
   file(STRINGS "${_CASE_DIR}/config.fypp" _prec REGEX "^#:set +PREC *=")
   if(_prec MATCHES "'DF'")
-    target_sources(${_CASE} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../extern/FmaX/FmaX/fltflt.f90")
+    target_sources(${_CASE} PRIVATE "${OUXSBLI_ROOT}/extern/FmaX/FmaX/fltflt.f90")
     target_compile_definitions(${_CASE} PRIVATE PREC_DF "REAL_T=type(fltflt)")
     # -O1 instead of -fast (= -O2 ... -Mflushz): nvfortran 26.5 at -O2 drops updates
     # of fltflt array elements (x(l) = f(.., x(l))); -fast -O1 still runs -O2
@@ -120,8 +128,8 @@ macro(add_ouxsbli_case)
   endif()
   target_include_directories(${_CASE} PRIVATE
       "${CMAKE_CURRENT_BINARY_DIR}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../src"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../../src")
+      "${OUXSBLI_ROOT}/3D_solver/src"
+      "${OUXSBLI_ROOT}/src")
   set_target_properties(${_CASE} PROPERTIES
       OUTPUT_NAME "a.out"
       RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")

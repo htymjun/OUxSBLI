@@ -8,7 +8,21 @@ The `ouxsbli` Python package provides a high-level interface for parametric simu
 pip install -e ".[dev]"
 ```
 
-This installs `ouxsbli` in editable mode along with `numpy`, `scipy`, `vtk`, and `pytest`.
+This installs `ouxsbli` in editable mode along with `numpy`, `scipy`, `vtk`, and `pytest`, and the
+`ouxsbli` command (see [Command line](#command-line)).
+
+### Running from any directory
+
+The solver sources (`2D_solver/`, `3D_solver/`, `3D_solver_curv/`, `src/`, `extern/`) are not copied into
+the Python environment. They are found at run time:
+
+1. the `OUXSBLI_ROOT` environment variable, if set (use it to select one of several checkouts);
+2. otherwise the checkout that contains the imported package — which is the checkout you ran
+   `pip install -e` in.
+
+With either in place, a script or the `ouxsbli` command works from any directory.
+`ouxsbli root` (or `ouxsbli.repo_root()`) prints the tree in use. The install must be editable: a plain
+`pip install .` copies only the Python files and cannot find the solver sources unless `OUXSBLI_ROOT` is set.
 
 ---
 
@@ -23,16 +37,22 @@ from ouxsbli import Case
 ### Constructor
 
 ```python
-Case(source: str, workdir: str, **params) -> Case
+Case(source: str, workdir: str, verbose: bool = False, **params) -> Case
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `source` | str | Path to the original case directory (e.g. `"3D_solver/NSTGV"`). Never modified. |
-| `workdir` | str | Path for the new working directory to be created. Existing directory is removed and recreated on `build()`. |
+| `source` | str | The original case directory. Never modified. |
+| `workdir` | str | Path for the new working directory to be created (relative paths are taken from the current directory). Existing directory is removed and recreated on `build()`. |
+| `verbose` | bool | Show the output of cmake, make and mpirun instead of capturing it. |
 | `**params` | keyword args | Parameter overrides — see tables below. |
 
-Paths are resolved relative to the repository root (the directory containing `ouxsbli/`).
+`source` is looked up in this order: an absolute path as is; a path relative to the source tree
+(`"3D_solver/NSTGV"`); a path relative to the current directory (a case directory of your own, anywhere —
+it needs `CMakeLists.txt`, `config.fypp`, `mod_globals.f90` and `set.f90`, like the cases in the tree).
+
+`Case.from_dir(path=".", verbose=False)` uses an existing case directory in place — no copy, no patching —
+for `build()` and `run()`.
 
 ### config.fypp parameters
 
@@ -115,9 +135,12 @@ Equivalent shell steps:
 ```bash
 cp -r source workdir
 # patch config.fypp and mod_globals.f90
-cmake <source> -DCASE_DIR=<workdir>   # from workdir/build/
-make
+cmake -S workdir -B workdir/build -DOUXSBLI_ROOT=<source tree>
+make -C workdir/build
 ```
+
+The working directory is a complete case: it can be rebuilt by hand with the same two commands
+(`-DOUXSBLI_ROOT` may be replaced by the `OUXSBLI_ROOT` environment variable).
 
 Raises `RuntimeError` if CMake or make fails (stdout/stderr included in the message).
 
@@ -136,6 +159,23 @@ case.run(nranks=2)
 `build()` must be called first. Raises `RuntimeError` if `build()` has not been called or if `mpirun` fails.
 
 VTK output files appear in `workdir/data/`.
+
+---
+
+## Command line
+
+The same lifecycle from a shell, in any directory:
+
+```bash
+ouxsbli root                                   # the source tree in use
+ouxsbli list                                   # template cases of that tree
+ouxsbli init 2D_solver/EVC ./evc nx=66 ny=66   # copy a template and patch it
+ouxsbli build ./evc                            # cmake + make in ./evc/build
+ouxsbli run ./evc -n 2                         # build if needed, then mpirun
+```
+
+`key=value` arguments of `init` are the keyword arguments of `Case` (numbers, `true`/`false`, or strings).
+`build` and `run` take any case directory (default: the current one), including one outside the source tree.
 
 ---
 

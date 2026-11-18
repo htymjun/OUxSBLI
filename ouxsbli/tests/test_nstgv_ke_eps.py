@@ -40,8 +40,7 @@ import pytest
 
 from ouxsbli import Case
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "analysis"))
-from tgv_ke_eps import compute  # noqa: E402
+from ouxsbli.analysis.tgv_ke_eps import compute
 
 # Physical constants shared with 3D_solver/NSTGV/mod_globals.f90's own
 # defaults (Re, L0, T, S) -- only M0 varies per scheme below.

@@ -23,8 +23,7 @@ import pathlib
 import numpy as np
 from numba import njit
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tests" / "utils"))
-from vtk_reader import getGrid, getVector, getScalar, extract_number  # noqa: E402
+from ouxsbli.tests.utils.vtk_reader import getGrid, getVector, getScalar, extract_number
 
 RGAS_DEFAULT = 287.03e0
 

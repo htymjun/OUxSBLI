@@ -55,7 +55,7 @@ cmake -B build && cmake --build build -j   # fypp preprocess + compile
 cd build && mpirun -n 1 ./a.out            # run simulation
 ```
 
-**Compiler requirement:** NVIDIA HPC SDK (`mpif90` with `-cuda -acc -fast -gpu=ptxinfo,rdc,lto`). Versions 24.* and 25.* are confirmed working.
+**Compiler requirement:** NVIDIA HPC SDK (`mpif90` with `-cuda -acc -fast -gpu=ptxinfo,rdc,lto`). Version 25.5 or newer is required. 24.x is not supported: under WSL2 its `-gpu=ccnative` does not find the GPU and silently builds for cc50, and that image with `-gpu=lto` does not run on a newer GPU (kernels are skipped or the run stops with "PTX JIT compilation failed"). `ouxsbli.Case` selects an installed 25.5+ when the `nvfortran` on `PATH` is older.
 
 **Output format:** XML VTK files, readable with ParaView.
 

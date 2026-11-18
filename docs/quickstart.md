@@ -6,7 +6,7 @@ Get OUxSBLI running in under 10 minutes. This guide assumes you already have the
 
 | Requirement | Minimum version |
 |-------------|-----------------|
-| NVIDIA HPC SDK (`mpif90`) | 24.x or 25.x |
+| NVIDIA HPC SDK (`mpif90`) | 25.5 or newer |
 | CMake | 3.18 |
 | fypp | any (`pip install fypp`) |
 | GPU | NVIDIA Ampere or newer |

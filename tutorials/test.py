@@ -26,7 +26,7 @@ case = Case(
 # Takes ~1-3 minutes depending on hardware
 print("Building...")
 case.build()
-print("Build complete. a.out:", (pathlib.Path(WORKDIR) / "a.out").exists())
+print("Build complete. a.out:", (pathlib.Path(WORKDIR) / "build" / "a.out").exists())
 
 patched_src = (pathlib.Path(WORKDIR) / "mod_globals.f90").read_text()
 
