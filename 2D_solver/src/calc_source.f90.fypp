@@ -1,0 +1,111 @@
+#:include 'prec.fypp'
+#:block fp
+!> Cell source terms of the momentum and energy equations (2D_solver, config.fypp SOURCE = True):
+!>   momentum  S_m = rho (f - fric u)
+!>   energy    S_E = u . S_m - q_cool,   q_cool = cool (<rho e> - p0 / (gamma - 1))
+!> f(x, y) is a body force tabulated per cell by the case (set_force in the case's set.f90); fric
+!> (linear friction), cool (relaxation rate of the mean internal energy) and p0 (its target pressure)
+!> come from the case's mod_globals.f90. q_cool is uniform and fixed for one time step: it is
+!> evaluated from the interior mean pressure at the first Runge-Kutta stage (calc_cooling).
+!> Sr(nx-2,ny-2,4) = dt / J * S for cell (i+1, j+1), the layout of the residual Rs; calc_steps
+!> subtracts it with the stage weight of the fluxes. Needs periodic boundaries (N = n - 2H interior
+!> cells per direction, H = ORDER / 2 ghost layers).
+module calc_source
+#:if SOURCE
+#:if PREC == 'DF'
+  use mod_prec
+#:endif
+  use cudafor
+  use libm
+  use mod_globals, only : dt, gamma, fric, cool, p0
+  implicit none
+  private
+  public calc_source_term, calc_cooling
+  integer, parameter :: H = ${ORDER // 2}$, nred = 256
+  ! block partial sums of the pressure (DF: hi + lo as real(8), exact)
+  ${'real(8)' if PREC == 'DF' else RT}$, allocatable, device, save :: part(:)
+contains
+  !> S = sources at the current stage state (primitives rho, u, v of calc_EF), Sr = dt / J * S
+  attributes(global) subroutine calc_source_term(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr)
+    integer, intent(in), value               :: nx, ny
+    ${WT}$, intent(in), device, contiguous  :: Jacobian(nx,ny)
+    ${RT}$, intent(in), device, contiguous  :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny) !< rho, u, v
+    ${RT}$, intent(in), device, contiguous  :: fx(nx,ny), fy(nx,ny)                !< body force per unit mass
+    ${WT}$, intent(in), value               :: q_cool                              !< uniform energy sink
+    ${RT}$, intent(out), device, contiguous :: Sr(nx-2,ny-2,4)                    !< dt / J * S
+    ${RT}$ rho, u, v, Smx, Smy, SE, qc, fr
+    ${WT}$ dtdV
+    integer i, j
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    j = (blockIdx%y-1)*blockDim%y + threadIdx%y
+    if (nx-2 < i .or. ny-2 < j) return
+    rho  = Q_1(i+1,j+1)
+    u    = Q_2(i+1,j+1)
+    v    = Q_3(i+1,j+1)
+    fr   = ${W('fric')}$
+    qc   = q_cool
+    dtdV = ${W('dt')}$ / Jacobian(i+1,j+1)
+    Smx  = rho * (fx(i+1,j+1) - fr * u)
+    Smy  = rho * (fy(i+1,j+1) - fr * v)
+    SE   = fma(u, Smx, fma(v, Smy, -qc))
+    Sr(i,j,1) = 0.d0
+    Sr(i,j,2) = dtdV * Smx
+    Sr(i,j,3) = dtdV * Smy
+    Sr(i,j,4) = dtdV * SE
+  end subroutine calc_source_term
+
+
+  !> block partial sums of the pressure over the interior cells (for <rho e> = <p> / (gamma - 1))
+  attributes(global) subroutine sum_interior(nx, ny, Q_4, part)
+    integer, intent(in), value              :: nx, ny
+    ${RT}$, intent(in), device, contiguous :: Q_4(nx,ny)
+    ${'real(8)' if PREC == 'DF' else RT}$, intent(out), device :: part(nred)
+    ${RT}$, shared :: s(nred)
+    ${RT}$ acc
+    integer k, ni, nn, t, w, i, j  ! 32-bit: (nx-2H)(ny-2H) < 2**31
+    t   = threadIdx%x
+    ni  = nx - 2*H
+    nn  = ni * (ny - 2*H)
+    acc = 0.d0
+    k   = (blockIdx%x-1) * blockDim%x + (t-1)
+    do while (k < nn)
+      i   = H + 1 + mod(k, ni)
+      j   = H + 1 + k / ni
+      acc = acc + Q_4(i,j)
+      k   = k + gridDim%x * blockDim%x
+    enddo
+    s(t) = acc
+    call syncthreads()
+    w = nred / 2
+    do while (w > 0)
+      if (t <= w) s(t) = s(t) + s(t+w)
+      call syncthreads()
+      w = w / 2
+    enddo
+  #:if PREC == 'DF'
+    if (t == 1) part(blockIdx%x) = dble(s(1))
+  #:else
+    if (t == 1) part(blockIdx%x) = s(1)
+  #:endif
+  end subroutine sum_interior
+
+
+  !> q_cool = cool (<rho e> - p0 / (gamma - 1)) from the interior mean of the pressure Q_4
+  !> (0 if cool = 0). The partial sums are added on the host in real(8).
+  subroutine calc_cooling(nx, ny, Q_4, q_cool)
+    integer, intent(in)                     :: nx, ny
+    ${RT}$, intent(in), device, contiguous :: Q_4(nx,ny)
+    ${WT}$, intent(out)                     :: q_cool
+    ${'real(8)' if PREC == 'DF' else RT}$ part_h(nred)
+    real(8) eint
+    q_cool = 0.d0
+    if (cool == 0.d0) return
+    if (.not. allocated(part)) allocate(part(nred))
+    call sum_interior<<<nred, nred>>>(nx, ny, Q_4, part)
+    part_h = part
+    eint   = sum(real(part_h, 8)) / (dble(nx - 2*H) * dble(ny - 2*H)) / (gamma - 1.d0)
+    q_cool = cool * (eint - p0 / (gamma - 1.d0))
+  end subroutine calc_cooling
+#:endif
+end module calc_source
+#:endblock fp

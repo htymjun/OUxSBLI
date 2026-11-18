@@ -57,6 +57,9 @@ _ALIAS = {
     "riemann":    "RIEMANN",
     "prec":       "PREC",
     "keep_prec":  "KEEP_PREC",
+    "viscosity":  "VISCOSITY",
+    "sources":    "SOURCE",     # not "source": that is the case directory
+    "output_raw": "OUTPUT_RAW",
 }
 
 # ---------------------------------------------------------------------------
@@ -74,6 +77,7 @@ _VALUE_NORMALIZE: dict[str, dict[str, str]] = {
     "PREC":         {"fp64": "FP64", "df": "DF", "fp32": "FP32"},
     "KEEP_PREC":    {"fp64": "FP64", "mixed": "MIXED"},
     "RIEMANN":      {"slau": "SLAU", "lf": "LF"},
+    "VISCOSITY":    {"sutherland": "Sutherland", "const": "Const"},
 }
 
 _CONFIG_KEYS = set(_ALIAS.values()) | set(_VALUE_NORMALIZE)

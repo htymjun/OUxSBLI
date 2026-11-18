@@ -9,6 +9,9 @@ module calc_physical_quantities
   use mod_prec
   #:endif
   use mod_globals, only : gamma, R
+  #:if VISCOSITY == 'Const'
+  use mod_globals, only : mu0  ! VISCOSITY = 'Const': mu = mu0
+  #:endif
   use mod_constant, only : gamma_1, mu0_T0_S_over_T0_2_3
   implicit none
 contains
@@ -69,7 +72,11 @@ contains
         Q_4(i,j) = p
         temp     = p / (${W('R')}$ * rho)
         T(i,j)   = temp
+  #:if VISCOSITY == 'Const'
+        mu(i,j)  = ${W('mu0')}$
+  #:else
         mu(i,j)  = mu0_T0_S_over_T0_2_3 / (temp + 110.4d0) * (temp * sqrt(temp))
+  #:endif
     enddo;enddo
   #:endif
   end subroutine calc_quantities_T_2D
@@ -96,7 +103,11 @@ contains
     p       = gamma_1 * (Jacobian(i,j) * QJ_4(i,j) - 0.5d0 * rho * (u*u + v*v))
     temp    = p / (R * rho)
     Q_1(i,j) = rho; Q_2(i,j) = u; Q_3(i,j) = v; Q_4(i,j) = p; T(i,j) = temp
+  #:if VISCOSITY == 'Const'
+    if (visc) mu(i,j) = mu0
+  #:else
     if (visc) mu(i,j) = mu0_T0_S_over_T0_2_3 / (temp + 110.4d0) * (temp * sqrt(temp))
+  #:endif
   end subroutine prim2_df
   #:endif
 end module calc_physical_quantities

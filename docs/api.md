@@ -74,6 +74,9 @@ These are patched into the copied `config.fypp`:
 | `commz` | `COMMZ` | bool | `True`, `False` |
 | `gpumpi` | `GPUMPI` | bool | `True`, `False` |
 | `output_precision` | `OUTPUT_PRECISION` | int | `4`, `8` |
+| `viscosity` | `VISCOSITY` | str | `'Sutherland'`, `'Const'` (2D only) |
+| `sources` | `SOURCE` | bool | `True`, `False` (2D only; not `source`, which names the case directory) |
+| `output_raw` | `OUTPUT_RAW` | bool | `True`, `False` (2D only) |
 
 String values for `scheme` and `visc` are case-insensitive (`'slau'` → `'SLAU'`, `'ns'` → `'NS'`).
 

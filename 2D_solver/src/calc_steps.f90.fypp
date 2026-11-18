@@ -11,7 +11,11 @@ module calc_steps
   implicit none
 contains
   !$dir inline
+#:if SOURCE
+  attributes(device) subroutine calc_R(nx, ny, i, j, dtdx, dtdy, E, F, R, Sr, cS)
+#:else
   attributes(device) subroutine calc_R(nx, ny, i, j, dtdx, dtdy, E, F, R)
+#:endif
     integer, intent(in), value              :: nx             !< number of grid points in x direction
     integer, intent(in), value              :: ny             !< number of grid points in y direction
     integer, intent(in), value              :: i, j           !< index
@@ -20,6 +24,10 @@ contains
     ${RT}$, intent(in), device, contiguous :: E(nx-1,ny-2,4) !< Flux in x direction
     ${RT}$, intent(in), device, contiguous :: F(nx-2,ny-1,4) !< Flux in y direction
     ${RT}$, intent(out), contiguous        :: R(4)
+#:if SOURCE
+    ${RT}$, intent(in), device, contiguous :: Sr(nx-2,ny-2,4) !< dt / J * cell source (calc_source)
+    ${WT}$, intent(in), value              :: cS             !< stage weight of Sr
+#:endif
     ${RT}$ v0, v1
     ! x direction
     !R(1) = dtdy * (-E(i,j,1) + E(i+1,j,1))
@@ -33,11 +41,21 @@ contains
     v0 = F(i,j,2); v1 = F(i,j+1,2); R(2) = fma(dtdx, v1 - v0, R(2))
     v0 = F(i,j,3); v1 = F(i,j+1,3); R(3) = fma(dtdx, v1 - v0, R(3))
     v0 = F(i,j,4); v1 = F(i,j+1,4); R(4) = fma(dtdx, v1 - v0, R(4))
+#:if SOURCE
+    ! cell sources with the same stage weight as the fluxes
+    R(1) = fma(-cS, Sr(i,j,1), R(1))
+    R(2) = fma(-cS, Sr(i,j,2), R(2))
+    R(3) = fma(-cS, Sr(i,j,3), R(3))
+    R(4) = fma(-cS, Sr(i,j,4), R(4))
+#:endif
   end subroutine calc_R
 
 
   !> CUDA Fortran kernel for 1st step of 3-3 TVD Runge-Kutta
   attributes(global) subroutine calc_step1(nx, ny, coef, dtdx, dtdy, E, F, &
+#:if SOURCE
+                                            Sr, &
+#:endif
                                             Q_1, Q_2, Q_3, Q_4, Q2_1, Q2_2, Q2_3, Q2_4)
     integer, intent(in), value               :: nx              !< number of grid points in x direction
     integer, intent(in), value               :: ny              !< number of grid points in y direction
@@ -46,6 +64,9 @@ contains
     ${WT}$, intent(in), device, contiguous  :: dtdy(ny-2)      !< dt * Sy, dz = 1
     ${RT}$, intent(in), device, contiguous  :: E(nx-1,ny-2,4)  !< Flux in x direction
     ${RT}$, intent(in), device, contiguous  :: F(nx-2,ny-1,4)  !< Flux in y direction
+#:if SOURCE
+    ${RT}$, intent(in), device, contiguous    :: Sr(nx-2,ny-2,4) !< dt / J * cell source (calc_source)
+#:endif
     ${RT}$, intent(in), device, contiguous  :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)    !< present Q / J
     ${RT}$, intent(out), device, contiguous :: Q2_1(nx,ny), Q2_2(nx,ny), Q2_3(nx,ny), Q2_4(nx,ny) !< next    Q / J
     ${RT}$ R(4)
@@ -58,7 +79,11 @@ contains
     ! Q^(1) = Q^n - (coef) * dt/vol * (Flux_divergence)
     coef_dtdx = coef * dtdx(i)
     coef_dtdy = coef * dtdy(j)
+#:if SOURCE
+    call calc_R(nx, ny, i, j, coef_dtdx, coef_dtdy, E, F, R, Sr, coef)
+#:else
     call calc_R(nx, ny, i, j, coef_dtdx, coef_dtdy, E, F, R)
+#:endif
     ! Q2 is write-once here and only consumed by the next kernel launch: __stcs
     call ${STCS}$(Q2_1(i+1,j+1), Q_1(i+1,j+1) - R(1))
     call ${STCS}$(Q2_2(i+1,j+1), Q_2(i+1,j+1) - R(2))
@@ -69,6 +94,9 @@ contains
 
   !> CUDA Fortran kernel for 1st~3rd step of 4-4 Runge-Kutta
   attributes(global) subroutine calc_step(nx, ny, coef1, coef2, dtdx, dtdy, E, F, &
+#:if SOURCE
+                                            Sr, &
+#:endif
                                            Q_1, Q_2, Q_3, Q_4, Q2_1, Q2_2, Q2_3, Q2_4, Rs)
     integer, intent(in), value                 :: nx              !< number of grid points in x direction
     integer, intent(in), value                 :: ny              !< number of grid points in y direction
@@ -78,6 +106,9 @@ contains
     ${WT}$, intent(in), device, contiguous    :: dtdy(ny-2)      !< dt * Sy, dz = 1
     ${RT}$, intent(in), device, contiguous    :: E(nx-1,ny-2,4)  !< Flux in x direction
     ${RT}$, intent(in), device, contiguous    :: F(nx-2,ny-1,4)  !< Flux in y direction
+#:if SOURCE
+    ${RT}$, intent(in), device, contiguous    :: Sr(nx-2,ny-2,4) !< dt / J * cell source (calc_source)
+#:endif
     ${RT}$, intent(in), device, contiguous    :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny)    !< present Q / J
     ${RT}$, intent(out), device, contiguous   :: Q2_1(nx,ny), Q2_2(nx,ny), Q2_3(nx,ny), Q2_4(nx,ny) !< next    Q / J
     ${RT}$, intent(inout), device, contiguous :: Rs(nx-2,ny-2,4) !< accumulation for 4-4 Runge-Kutta
@@ -92,7 +123,11 @@ contains
     ! coef2 applies weighting to residual for final 4th stage assembly
     dtdx_tmp = dtdx(i)
     dtdy_tmp = dtdy(j)
+#:if SOURCE
+    call calc_R(nx, ny, i, j, dtdx_tmp, dtdy_tmp, E, F, R, Sr, 1.d0)
+#:else
     call calc_R(nx, ny, i, j, dtdx_tmp, dtdy_tmp, E, F, R)
+#:endif
     ! Q2 is write-once here, not re-read until the next kernel launch: __stcs
     call ${STCS}$(Q2_1(i+1,j+1), fma(-coef1, R(1), Q_1(i+1,j+1)))
     Rs(i,j,1) = fma(coef2, R(1), Rs(i,j,1))     ! Accumulate weighted residual
@@ -111,6 +146,9 @@ contains
   !> stage, not Q itself (a uniform state stays exactly uniform in FP32). β = 1/coef4_inv - α
   !> is implied; coef2 stays in the signature.
   attributes(global) subroutine calc_step2_3(nx, ny, coef1, coef2, coef3, coef4_inv, dtdx, dtdy, E, F, &
+#:if SOURCE
+                                            Sr, &
+#:endif
                                               Qin_1, Qin_2, Qin_3, Qin_4, Qout_1, Qout_2, Qout_3, Qout_4)
     integer, intent(in), value                 :: nx              !< number of grid points in x direction
     integer, intent(in), value                 :: ny              !< number of grid points in y direction
@@ -122,6 +160,9 @@ contains
     ${WT}$, intent(in), device, contiguous    :: dtdy(ny-2)      !< dt * Sy, dz = 1
     ${RT}$, intent(in), device, contiguous    :: E(nx-1,ny-2,4)  !< Flux in x direction
     ${RT}$, intent(in), device, contiguous    :: F(nx-2,ny-1,4)  !< Flux in y direction
+#:if SOURCE
+    ${RT}$, intent(in), device, contiguous    :: Sr(nx-2,ny-2,4) !< dt / J * cell source (calc_source)
+#:endif
     ${RT}$, intent(in), device, contiguous    :: Qin_1(nx,ny), Qin_2(nx,ny), Qin_3(nx,ny), Qin_4(nx,ny)     !< Q^n
     ${RT}$, intent(inout), device, contiguous :: Qout_1(nx,ny), Qout_2(nx,ny), Qout_3(nx,ny), Qout_4(nx,ny) !< in / out
     ${RT}$ R(4)
@@ -136,7 +177,11 @@ contains
     ! Stage 3: α=2, β=1, γ=2 (from Q^n and Q^(2)), coef4_inv = 1/3
     coef3_dtdx = coef3 * dtdx(i)
     coef3_dtdy = coef3 * dtdy(j)
+#:if SOURCE
+    call calc_R(nx, ny, i, j, coef3_dtdx, coef3_dtdy, E, F, R, Sr, coef3)
+#:else
     call calc_R(nx, ny, i, j, coef3_dtdx, coef3_dtdy, E, F, R)
+#:endif
     ! Increment form of the convex combination (same as ~2d/cns calc_step2_3)
     ! Qout is write-once here, not re-read until the next kernel launch: __stcs
     block
@@ -163,13 +208,20 @@ contains
 
   !> CUDA Fortran kernel for 4th step of 4-4 Runge-Kutta
   !> Final RK4 Stage: Q^n+1 = Q^n - (1/6)·∑(R_ᵢ) where R_ᵢ indexed over 4 stages
+#:if SOURCE
+  attributes(global) subroutine calc_step4(nx, ny, dtdx, dtdy, E, F, Sr, Rs, Q_1, Q_2, Q_3, Q_4)
+#:else
   attributes(global) subroutine calc_step4(nx, ny, dtdx, dtdy, E, F, Rs, Q_1, Q_2, Q_3, Q_4)
+#:endif
     integer, intent(in), value                 :: nx              !< number of grid points in x direction
     integer, intent(in), value                 :: ny              !< number of grid points in y direction
     ${WT}$, intent(in), device, contiguous    :: dtdx(nx-2)      !< dt * Sxy
     ${WT}$, intent(in), device, contiguous    :: dtdy(ny-2)      !< dt * Syz
     ${RT}$, intent(in), device, contiguous    :: E(nx-1,ny-2,4)  !< Flux in x direction
     ${RT}$, intent(in), device, contiguous    :: F(nx-2,ny-1,4)  !< Flux in y direction
+#:if SOURCE
+    ${RT}$, intent(in), device, contiguous    :: Sr(nx-2,ny-2,4) !< dt / J * cell source (calc_source)
+#:endif
     ${RT}$, intent(inout), device, contiguous :: Rs(nx-2,ny-2,4) !< accumulated residuals from stages 1-3
     ${RT}$, intent(inout), device, contiguous :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny), Q_4(nx,ny) !< Q^n in, Q^n+1 out
     ${RT}$ R(4)
@@ -184,7 +236,11 @@ contains
     ! one_sixth ≈ 1/6 is the standard RK4 weight
     dtdx_tmp = dtdx(i)
     dtdy_tmp = dtdy(j)
+#:if SOURCE
+    call calc_R(nx, ny, i, j, dtdx_tmp, dtdy_tmp, E, F, R, Sr, 1.d0)
+#:else
     call calc_R(nx, ny, i, j, dtdx_tmp, dtdy_tmp, E, F, R)
+#:endif
     ! Accumulate 4th stage residual (not multiplied by coefficient yet)
     R(1) = Rs(i,j,1) + R(1)
     ! Q is write-once here, not re-read until the next kernel launch: __stcs

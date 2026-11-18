@@ -48,6 +48,15 @@
 #:if RIEMANN not in ('SLAU', 'LF')
   #:stop "RIEMANN must be 'SLAU' or 'LF'"
 #:endif
+#:if VISCOSITY not in ('Sutherland', 'Const')
+  #:stop "VISCOSITY must be 'Sutherland' or 'Const'"
+#:endif
+#:if (VISCOSITY != 'Sutherland' or SOURCE or OUTPUT_RAW) and getvar('DIM', 3) != 2
+  #:stop 'VISCOSITY, SOURCE and OUTPUT_RAW are implemented in 2D_solver only'
+#:endif
+#:if SOURCE and (VISC != 'NS' or BC_X or BC_Y)
+  #:stop "SOURCE=True needs VISC='NS' and periodic boundaries (BC_X = BC_Y = False)"
+#:endif
 #:if RECON == 'WENO' and ORDER != 6
   #:stop 'RECON=WENO (WENO5-Z, 6-point window) needs ORDER=6'
 #:endif

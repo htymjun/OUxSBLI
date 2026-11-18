@@ -1,0 +1,93 @@
+#:include 'prec.fypp'
+!> Raw state files of periodic 2D runs (config.fypp OUTPUT_RAW = True writes them at every output).
+!>   <name>.dat      float64 Q(N1,N2,4) of the interior cells, conservative (rho, rho u, rho v, rho E),
+!>                   Fortran order (x fastest), no ghost layers, no record markers
+!>   <name>.dat.txt  "t=<time> step=<step> N=<N1>" (one line; read_raw rejects another N1)
+!> N1 = nx - 2H, N2 = ny - 2H with H = ORDER / 2 ghost layers. Without the ghost layers a state can be
+!> restarted with another ORDER. read_raw is for a case's set_init: it fills the ghost layers
+!> periodically.
+module io_raw
+  implicit none
+  private
+  public write_raw, read_raw
+  integer, parameter :: H = ${ORDER // 2}$
+contains
+  !> Write the state Q / J (host copy QJ) as data/Q<index>.dat; t and step go into the .txt file.
+  subroutine write_raw(index, t, step, nx, ny, Jacobian, QJ)
+    integer, intent(in) :: index, step, nx, ny
+    real(8), intent(in) :: t, Jacobian(nx,ny), QJ(nx,ny,4)
+    real(8), allocatable :: q(:,:,:)
+    character(len=40) filename
+    character(len=24) tstr
+    integer i, j, m, u
+    logical, save :: first = .true.
+    if (first) then
+      call execute_command_line('mkdir -p data', wait=.true.)
+      first = .false.
+    endif
+    allocate(q(nx-2*H, ny-2*H, 4))
+    do m = 1, 4
+      do j = 1, ny-2*H
+        do i = 1, nx-2*H
+          q(i,j,m) = Jacobian(i+H,j+H) * QJ(i+H,j+H,m)
+    enddo;enddo;enddo
+    write(filename, "(a, i5.5, a)") "data/Q", index, ".dat"
+    open(newunit=u, file=filename, status="replace", action="write", form="unformatted", access="stream")
+    write(u) q
+    close(u)
+    open(newunit=u, file=trim(filename)//".txt", status="replace", action="write", form="formatted")
+    write(tstr, "(es24.17)") t
+    write(u, "(a, a, a, i0, a, i0)") "t=", trim(adjustl(tstr)), " step=", step, " N=", nx-2*H
+    close(u)
+    deallocate(q)
+  end subroutine write_raw
+
+
+  !> Read a raw state into the conservative variables Q(nx,ny,4) (ghost layers filled periodically).
+  !> t and step are taken from <filename>.txt when it exists (0 otherwise).
+  subroutine read_raw(filename, nx, ny, Q, t, step, ok)
+    character(len=*), intent(in) :: filename
+    integer, intent(in)          :: nx, ny
+    real(8), intent(out)         :: Q(nx,ny,4)
+    real(8), intent(out)         :: t
+    integer, intent(out)         :: step
+    logical, intent(out)         :: ok
+    real(8), allocatable :: q0(:,:,:)
+    character(len=200) line
+    integer i, j, m, n1, n2, u, ios, ka, kb, kc
+    n1 = nx - 2*H
+    n2 = ny - 2*H
+    t = 0.d0
+    step = 0
+    allocate(q0(n1, n2, 4))
+    open(newunit=u, file=filename, status="old", action="read", form="unformatted", access="stream", iostat=ios)
+    ok = ios == 0
+    if (ok) then
+      read(u, iostat=ios) q0
+      ok = ios == 0
+      close(u)
+    endif
+    if (ok) then
+      do m = 1, 4
+        do j = 1, ny
+          do i = 1, nx
+            Q(i,j,m) = q0(modulo(i-H-1, n1) + 1, modulo(j-H-1, n2) + 1, m)
+      enddo;enddo;enddo
+      open(newunit=u, file=filename//".txt", status="old", action="read", form="formatted", iostat=ios)
+      if (ios == 0) then
+        read(u, "(a)", iostat=ios) line
+        close(u)
+        ka = index(line, "t=")
+        kb = index(line, " step=")
+        kc = index(line, " N=")
+        if (ios == 0 .and. ka > 0 .and. kb > ka .and. kc > kb) then
+          read(line(ka+2:kb-1), *) t
+          read(line(kb+6:kc-1), *) step
+          read(line(kc+3:), *, iostat=ios) i
+          if (ios == 0 .and. i /= n1) ok = .false.  ! another grid
+        endif
+      endif
+    endif
+    deallocate(q0)
+  end subroutine read_raw
+end module io_raw

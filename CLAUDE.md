@@ -129,6 +129,9 @@ All compile-time scheme/method choices live in `<CASE>/config.fypp`. The fypp pr
 | `PREC` | `'FP64'`, `'DF'`, `'FP32'` | Whole-solver precision: `'DF'` keeps the state, RK stages, primitives and fluxes in FmaX double-float (`type(fltflt)`, submodule `extern/FmaX`); FP64 conversion only at upload/output. `3D_solver` and `2D_solver` (not curv); DF builds use `-O1 -Mflushz` instead of `-fast`. `'FP32'` (`2D_solver` only) makes state, metrics, coefficients and constants real(4), with no FP64 instruction in any kernel. See "Precision modes" in `3D_solver/CLAUDE.md` and `2D_solver/CLAUDE.md` |
 | `KEEP_PREC` | `'FP64'`, `'MIXED'` | KEEP with FP64 state, difference-first FP32 arithmetic (face form: FP64 point flux of the left cell + FP32 deviation; conservative, every KEEP kernel). diffFP32's cell form was tried and dropped (same accuracy floor, 5x larger velocity error, not conservative) |
 | `RIEMANN` | `'SLAU'`, `'LF'` | Face flux of the SLAU-family kernels: SLAU (`SLAU_VARIANT`, default) or local Lax-Friedrichs/Rusanov (`LFflux` in `src/calc_scheme_math.f90.fypp`; `id_slau` becomes `integer(8)`). Not wired into `3D_solver_curv` |
+| `VISCOSITY` | `'Sutherland'`, `'Const'` | `2D_solver` only: Sutherland's law (default) or a constant viscosity `mu = mu0` (`mu0` from the case's `mod_globals.f90`) |
+| `SOURCE` | `True`, `False` | `2D_solver` only, NS with periodic x and y: cell sources S_m = rho (f - fric u), S_E = u.S_m - q_cool (`src/calc_source.f90.fypp`; the case supplies `set_force` in `set.f90` and `fric`, `cool`, `p0` in `mod_globals.f90`). Default `False` |
+| `OUTPUT_RAW` | `True`, `False` | `2D_solver` only: every output writes the interior conservative state as raw float64 `data/Q#####.dat` + `.dat.txt` (`t= step= N=`) instead of VTK; `read_raw` (`src/io_raw.f90.fypp`) reads such a file in a case's `set_init`. Default `False` |
 
 ### mod_globals.f90 (grid, physical parameters, thread blocks)
 

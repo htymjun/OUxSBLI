@@ -8,6 +8,16 @@
 #:if not defined('KEEP_PREC')
   #:set KEEP_PREC = 'FP64'
 #:endif
+#! 2D_solver physics switches (checked in mod_constant): viscosity law, cell sources, raw output
+#:if not defined('VISCOSITY')
+  #:set VISCOSITY = 'Sutherland'
+#:endif
+#:if not defined('SOURCE')
+  #:set SOURCE = False
+#:endif
+#:if not defined('OUTPUT_RAW')
+  #:set OUTPUT_RAW = False
+#:endif
 #! WT: working real kind of metrics, coefficients and constants; RT: state/flux type.
 #!   PREC   FP64     DF            FP32 (2D_solver only)
 #!   WT     real(8)  real(8)       real(4)

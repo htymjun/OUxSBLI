@@ -156,6 +156,31 @@ Accuracy against FP64 (40 steps, `prec2d` runs; `ouxsbli/tests/test_prec_2d.py`)
 `docs/precision_modes.md`. HR-SLAU2 configurations differ at 1e-9..1e-3 under DF and FP32 for the
 same reason as in 3D (the 0/1 wiggle switch); compare them with `SLAU_VARIANT = 'SLAU'`.
 
+## Constant viscosity, cell sources, raw state files
+
+Three `config.fypp` switches for periodic runs (all off by default; the generated code of every
+existing case is unchanged with them off):
+
+* `VISCOSITY = 'Const'`: `calc_quantities_T_2D` sets `mu = mu0` instead of Sutherland's law. The
+  case's `mod_globals.f90` defines `real(8), parameter :: mu0`.
+* `SOURCE = True` (needs `VISC = 'NS'`, `BC_X = BC_Y = False`): `src/calc_source.f90.fypp`.
+  S_m = rho (f - fric u), S_E = u.S_m - q_cool with q_cool = cool (<rho e> - p0 / (gamma - 1)).
+  `calc_source_term` runs after every `calc_EF` (it uses the primitives of that stage) and stores
+  `Sr = dt / J * S` in the layout of `Rs`; `calc_R` subtracts it with the stage weight of the fluxes
+  (`coef` / 1 / `coef3`). q_cool is uniform and is evaluated once per step, at the first stage, from
+  the interior mean pressure (block partial sums on the device, final sum on the host in real(8)).
+  The case provides `set_force(nx, ny, x, y, fx, fy)` in module `set` (body force per unit mass,
+  real(8), all cells) and `fric`, `cool`, `p0` in `mod_globals.f90`.
+* `OUTPUT_RAW = True`: at step 0 and every output, the even rank writes `data/Q#####.dat` (float64
+  `Q(N1,N2,4)` of the interior cells, conservative, x fastest, no ghost layers) and
+  `data/Q#####.dat.txt` (`t=... step=... N=N1`); no VTK is written. `read_raw` in
+  `src/io_raw.f90.fypp` reads such a file into `Q(nx,ny,4)` and fills the ghost layers periodically,
+  so a case's `set_init` can restart from it with another `ORDER`.
+
+Checked (64^2, 40 steps): friction decay and cooling relaxation of uniform states match the exact
+RK solution to 6e-15 in FP64 and DF; a forced NS run agrees between DF and FP64 to 3e-14 (rho) and
+2e-14 relative (rho E); the FP32 SASS has no FP64 instruction.
+
 ## Adding a New Test Case
 
 1. `cp -r 2D_solver/OS 2D_solver/MYCASE`
