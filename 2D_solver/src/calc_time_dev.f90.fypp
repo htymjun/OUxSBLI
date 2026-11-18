@@ -28,6 +28,14 @@ module calc_time_dev
 #:if SOURCE
   use calc_source
 #:endif
+#:if FLUCT
+  use mod_rng
+  use calc_fluct
+  use mod_globals, only : dt, kB, seed, mu0, gamma, R, Pr
+  #:if SOURCE
+  use mod_globals, only : fric
+  #:endif
+#:endif
   implicit none
 contains
 #:if RK == 3
@@ -57,6 +65,11 @@ contains
     ${RT}$, allocatable, device :: E(:,:,:), F(:,:,:)
     ${RT}$, allocatable, device :: T(:,:), mu(:,:), ux(:,:), vy(:,:)
     ${WT}$, allocatable, device :: xix(:), etay(:), Jacobian(:,:), dtdx(:), dtdy(:)
+#:if FLUCT
+    integer(8) keyA, keyB
+    real(4) beta_s, s_mu, s_kap, s_fric
+    real(8) dV
+#:endif
 #:if SOURCE
     ${RT}$, allocatable, device :: Sr(:,:,:), fx(:,:), fy(:,:) ! cell sources (calc_source)
     real(8), allocatable :: fx_cpu(:,:), fy_cpu(:,:)
@@ -91,6 +104,15 @@ contains
       q_cool = 0.d0
       deallocate(fx_cpu, fy_cpu)
 #:endif
+#:if FLUCT
+      ! FP32 noise amplitudes (calc_fluct, calc_source); uniform cell volume dV
+      dV     = 1.d0 / Jacobian_cpu(${ORDER // 2 + 1}$, ${ORDER // 2 + 1}$)
+      s_mu   = real(2.d0 * kB * mu0 / (dV * dt), 4)
+      s_kap  = real(sqrt(2.d0 * kB * mu0 * gamma * R / ((gamma - 1.d0) * Pr) / (dV * dt)), 4)
+  #:if SOURCE
+      s_fric = real(2.d0 * fric * kB / (dV * dt), 4)
+  #:endif
+#:endif
       QJ2_1 = QJ_1; QJ2_2 = QJ_2; QJ2_3 = QJ_3; QJ2_4 = QJ_4 ! initialize QJ2
     else
       call MPI_RECV(ke0,      1, MPI_REAL4, myrank-1, 3*myrank+1, MPI_COMM_WORLD, istat, ierr)
@@ -110,9 +132,20 @@ contains
         do t1 = 1, nt
           ! Step 1: Compute fluxes E, F from current state QJ
           call calc_EF(nx, ny, xix, etay, Jacobian, QJ_1, QJ_2, QJ_3, QJ_4, Q_1, Q_2, Q_3, Q_4, T, mu, ux, vy, E, F)
+#:if FLUCT
+          ! stochastic fluxes of stage 1 (stage noise W = xi_A + beta xi_B, mod_rng)
+          call stage_keys(int(seed, 8), rng_step0 + int(t2-1, 8) * nt + (t1-1), 1, keyA, keyB, beta_s)
+          call calc_Efluct<<<blocksE,threadsE>>>(nx, ny, Q_2, Q_3, T, E, s_mu, s_kap, keyA, keyB, beta_s)
+          call calc_Ffluct<<<blocksF,threadsF>>>(nx, ny, Q_2, Q_3, T, F, s_mu, s_kap, keyA, keyB, beta_s)
+#:endif
 #:if SOURCE
           call calc_cooling(nx, ny, Q_4, q_cool)
+#:if FLUCT
+          call calc_source_term<<<blocks,threads>>>(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr, &
+                                                    T, s_fric, keyA, keyB, beta_s)
+#:else
           call calc_source_term<<<blocks,threads>>>(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr)
+#:endif
 #:endif
           ! Step 2a: TVD RK3 Stage 1 - compute Q(1), store in QJ2
 #:if SOURCE
@@ -126,8 +159,19 @@ contains
 
           ! Step 2b: TVD RK3 Stage 2 - blend Q(1) with Q^n, store in QJ2
           call calc_EF(nx, ny, xix, etay, Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4, Q_1, Q_2, Q_3, Q_4, T, mu, ux, vy, E, F)
+#:if FLUCT
+          ! stochastic fluxes of stage 2 (stage noise W = xi_A + beta xi_B, mod_rng)
+          call stage_keys(int(seed, 8), rng_step0 + int(t2-1, 8) * nt + (t1-1), 2, keyA, keyB, beta_s)
+          call calc_Efluct<<<blocksE,threadsE>>>(nx, ny, Q_2, Q_3, T, E, s_mu, s_kap, keyA, keyB, beta_s)
+          call calc_Ffluct<<<blocksF,threadsF>>>(nx, ny, Q_2, Q_3, T, F, s_mu, s_kap, keyA, keyB, beta_s)
+#:endif
 #:if SOURCE
+#:if FLUCT
+          call calc_source_term<<<blocks,threads>>>(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr, &
+                                                    T, s_fric, keyA, keyB, beta_s)
+#:else
           call calc_source_term<<<blocks,threads>>>(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr)
+#:endif
 #:endif
 #:if SOURCE
           call calc_step2_3<<<blocks,threads>>>(nx, ny, 0.75d0, 0.25d0, 0.25d0, 1.d0, dtdx, dtdy, E, F, Sr, &
@@ -140,8 +184,19 @@ contains
 
           ! Step 2c: TVD RK3 Stage 3 - final solution Q^(n+1), store in QJ (swap arrays)
           call calc_EF(nx, ny, xix, etay, Jacobian, QJ2_1, QJ2_2, QJ2_3, QJ2_4, Q_1, Q_2, Q_3, Q_4, T, mu, ux, vy, E, F)
+#:if FLUCT
+          ! stochastic fluxes of stage 3 (stage noise W = xi_A + beta xi_B, mod_rng)
+          call stage_keys(int(seed, 8), rng_step0 + int(t2-1, 8) * nt + (t1-1), 3, keyA, keyB, beta_s)
+          call calc_Efluct<<<blocksE,threadsE>>>(nx, ny, Q_2, Q_3, T, E, s_mu, s_kap, keyA, keyB, beta_s)
+          call calc_Ffluct<<<blocksF,threadsF>>>(nx, ny, Q_2, Q_3, T, F, s_mu, s_kap, keyA, keyB, beta_s)
+#:endif
 #:if SOURCE
+#:if FLUCT
+          call calc_source_term<<<blocks,threads>>>(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr, &
+                                                    T, s_fric, keyA, keyB, beta_s)
+#:else
           call calc_source_term<<<blocks,threads>>>(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr)
+#:endif
 #:endif
 #:if SOURCE
           call calc_step2_3<<<blocks,threads>>>(nx, ny, 2.d0, 1.d0, 2.d0, one_third, dtdx, dtdy, E, F, Sr, &

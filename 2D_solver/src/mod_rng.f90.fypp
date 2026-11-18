@@ -1,0 +1,102 @@
+!> Counter-based normal samples in FP32 for the thermal fluctuations (config.fypp FLUCT = True); the
+!> samples are the same for every working precision PREC.
+!>
+!> A sample is addressed by (stream key, field, periodic index). splitmix64's finaliser (mix64) hashes
+!> the address into two 64-bit words, Box-Muller turns their top 24 bits into one normal sample.
+!> The stochastic TVD-RK3 uses two independent streams per time step, A and B, and the stage noise
+!>   W_s = xi_A + beta_s xi_B,  beta = ((2 sqrt2 + sqrt3)/5, (-4 sqrt2 + 3 sqrt3)/5, (sqrt2 - 2 sqrt3)/10)
+!> (Delong, Griffith, Vanden-Eijnden and Donev, Phys. Rev. E 87, 033302, 2013), which keeps the
+!> static covariance third-order accurate. Integer arithmetic is modulo 2**64 (two's complement
+!> wrap-around of integer(8)); shifts are logical.
+module mod_rng
+  use cudafor
+  use libm
+  implicit none
+  private
+  public :: mix64, stage_keys, stage_gauss, gauss, periodic_index
+  integer(8), parameter :: C_MIX1 = int(z'BF58476D1CE4E5B9', 8)
+  integer(8), parameter :: C_MIX2 = int(z'94D049BB133111EB', 8)
+  integer(8), parameter :: C_GOLD = int(z'9E3779B97F4A7C15', 8)
+  integer(8), parameter :: C_SEED = int(z'5DEECE66D', 8)
+  !> global index of the first time step of this run (0-based); a case that restarts a state written
+  !> at step n sets it to n in set_init, so the restarted run draws the samples a continuous one would
+  integer(8), public :: rng_step0 = 0
+  ! noise fields
+  integer, parameter, public :: NF_XFACE_U = 1  ! x-face, u-momentum (Sxx, narrow part)
+  integer, parameter, public :: NF_XFACE_V = 2  ! x-face, v-momentum (Sxy)
+  integer, parameter, public :: NF_XFACE_Q = 3  ! x-face, heat flux
+  integer, parameter, public :: NF_YFACE_U = 4  ! y-face, u-momentum (Syx)
+  integer, parameter, public :: NF_YFACE_V = 5  ! y-face, v-momentum (Syy, narrow part)
+  integer, parameter, public :: NF_YFACE_Q = 6  ! y-face, heat flux
+  integer, parameter, public :: NF_CELL_PSI  = 7   ! cell, shared by Sxx and Syy (centred-divergence part)
+  integer, parameter, public :: NF_CELL_CHIX = 8   ! cell, Sxx remainder
+  integer, parameter, public :: NF_CELL_CHIY = 9   ! cell, Syy remainder
+  integer, parameter, public :: NF_CELL_FX   = 10  ! cell, friction noise in x
+  integer, parameter, public :: NF_CELL_FY   = 11  ! cell, friction noise in y
+  ! The noise of one RK stage (keyA, keyB, beta) reaches the kernels as three scalar arguments:
+  ! nvfortran 25.5 cannot compile a kernel with a derived-type value argument ("Unexpected load
+  ! datatype").
+contains
+  attributes(host, device) pure function mix64(z0) result(z)
+    integer(8), intent(in) :: z0
+    integer(8) z
+    z = ieor(z0, shiftr(z0, 30)) * C_MIX1
+    z = ieor(z,  shiftr(z,  27)) * C_MIX2
+    z = ieor(z,  shiftr(z,  31))
+  end function mix64
+
+
+  !> keys and stage weight of RK3 stage s (1..3) of global time step stepg (0-based) for a run seed
+  subroutine stage_keys(seed, stepg, s, keyA, keyB, beta_s)
+    integer(8), intent(in)  :: seed, stepg
+    integer, intent(in)     :: s
+    integer(8), intent(out) :: keyA, keyB
+    real(4), intent(out)    :: beta_s
+    real(8), parameter :: s2 = sqrt(2.d0), s3 = sqrt(3.d0)
+    real(4), parameter :: beta(3) = [real((2.d0*s2 + s3)/5.d0, 4), real((-4.d0*s2 + 3.d0*s3)/5.d0, 4), &
+                                     real((s2 - 2.d0*s3)/10.d0, 4)]
+    integer(8) key
+    key     = mix64(C_SEED + seed)
+    keyA   = mix64(ieor(key, mix64(2_8 * stepg)))
+    keyB   = mix64(ieor(key, mix64(2_8 * stepg + 1_8)))
+    beta_s = beta(s)
+  end subroutine stage_keys
+
+
+  !> one standard normal sample (FP32) of (key, field, id)
+  !> gauss and stage_gauss take their arguments by reference: with `value` dummies, nvfortran 25.5
+  !> at -O2 / -fast returned the same sample for every id when stage_gauss called gauss.
+  attributes(device) function gauss(key, field, id) result(g)
+    integer(8), intent(in) :: key, id
+    integer, intent(in)    :: field
+    real(4) g, u1, u2
+    integer(8) b1, b2
+    integer(4) k1, k2
+    b1 = mix64(ieor(key, mix64(shiftl(int(field, 8), 40) + id + 1_8)))
+    b2 = mix64(b1 + C_GOLD)
+    ! top 24 bits through integer(4) variables: a direct real(int(.., 4)) became a 64-bit integer
+    ! conversion (I2F.S64) in the SASS
+    k1 = int(shiftr(b1, 40), 4)
+    k2 = int(shiftr(b2, 40), 4)
+    u1 = (real(k1, 4) + 0.5e0) * 5.9604645e-8  ! (0, 1)
+    u2 = real(k2, 4) * 5.9604645e-8             ! [0, 1)
+    g  = sqrt(-2.0e0 * log(u1)) * cospif(2.0e0 * u2)
+  end function gauss
+
+
+  !> stage noise of one field at the periodic index id
+  attributes(device) function stage_gauss(keyA, keyB, beta, field, id) result(g)
+    integer(8), intent(in) :: keyA, keyB, id
+    real(4), intent(in)    :: beta
+    integer, intent(in)    :: field
+    real(4) g
+    g = gauss(keyA, field, id) + beta * gauss(keyB, field, id)
+  end function stage_gauss
+
+
+  !> 0..N-1 of cell i (1-based) with H ghost cells
+  attributes(host, device) pure integer function periodic_index(i, H, N)
+    integer, intent(in) :: i, H, N
+    periodic_index = modulo(i - H - 1, N)
+  end function periodic_index
+end module mod_rng

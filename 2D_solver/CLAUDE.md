@@ -181,6 +181,31 @@ Checked (64^2, 40 steps): friction decay and cooling relaxation of uniform state
 RK solution to 6e-15 in FP64 and DF; a forced NS run agrees between DF and FP64 to 3e-14 (rho) and
 2e-14 relative (rho E); the FP32 SASS has no FP64 instruction.
 
+## Thermal fluctuations (`FLUCT`)
+
+`FLUCT = True` (needs `VISC = 'NS'`, `VISCOSITY = 'Const'`, `VISC_ORDER = 2`, `RK = 3`, periodic x and y)
+adds the Landau-Lifshitz stochastic stress and heat flux on the faces (`src/calc_fluct.f90.fypp`,
+after `calc_EF`, before the source term) and, with `SOURCE = True`, the friction noise in
+`calc_source_term`. The case defines `kB` (real(8), Boltzmann constant in code units) and `seed`
+in `mod_globals.f90`. The noise covariance is that of the linearised 2nd-order viscous operator
+(discrete fluctuation-dissipation); see the header of `calc_fluct.f90.fypp`.
+
+`src/mod_rng.f90.fypp`: splitmix64-hashed counters (stream key, field, periodic cell/face index),
+Box-Muller in FP32, two streams per step combined as `xi_A + beta_s xi_B` for the three RK3 stages
+(Delong et al. 2013). Samples and amplitudes are FP32 in every `PREC`, so FP64, DF and FP32 runs
+draw identical noise. `rng_step0` is the global index of the run's first step (set it in
+`set_init` when restarting). Compiler notes (nvfortran 25.5): a kernel cannot take a derived-type
+`value` argument (the stage noise goes as `keyA, keyB, beta`); `gauss` / `stage_gauss` take their
+arguments by reference (with `value` dummies the inlined `stage_gauss` returned one sample for every
+index at -O2); the 24-bit integers go through `integer(4)` variables before `real()` (otherwise
+`I2F.S64` in the SASS).
+
+Checked: the 64-bit integer sequence equals an independent numpy implementation bit for bit and the
+samples agree to FP32 rounding (7e-7) with the right moments; a gas at rest (64^2, 4e4 steps) reaches
+equipartition, mode-averaged (k >= 5) |u|^2, |v|^2, |T|^2, |rho|^2 at 0.997-1.007 of
+kB T / (rho dV), kB T^2 / (rho cv dV), rho^2 kB T / (p dV) in FP64, DF and FP32; DF with noise
+agrees with FP64 to 3e-14 after 40 steps; the FP32 SASS has no FP64 instruction.
+
 ## Adding a New Test Case
 
 1. `cp -r 2D_solver/OS 2D_solver/MYCASE`

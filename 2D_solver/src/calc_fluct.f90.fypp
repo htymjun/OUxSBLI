@@ -1,0 +1,104 @@
+#:include 'prec.fypp'
+#:block fp
+!> Stochastic (Landau-Lifshitz) momentum and heat fluxes on the cell faces (config.fypp FLUCT = True),
+!> subtracted from E and F after the viscous fluxes, in the same way as calc_visc2 adds those
+!> (E = E - S for the momentum, E = E - work - Q for the energy).
+!>
+!> Linearised about rest, the 2nd-order viscous operator of calc_visc2 (constant mu, 2/3 rule) has the
+!> Fourier symbol, with sx = 2 sin(kx dx/2)/dx, centred derivative cx = sin(kx dx)/dx and
+!> rx = (1 - cos(kx dx))/dx,
+!>   -L/mu = (sx^2 + sy^2) I + (1/3) c c^T + (1/3) diag(rx^2, ry^2).
+!> The noise below has this covariance (times 2 kB T / (dV dt)), so the linearised system satisfies the
+!> discrete fluctuation-dissipation relation:
+!>   x-face:  Sxx = s [ W_u + (psi_i + psi_i+1)/(2 sqrt3) - (chix_i+1 - chix_i)/(2 sqrt3) ],  Sxy = s W_v
+!>   y-face:  Syx = s W_u,  Syy = s [ W_v + (psi_j + psi_j+1)/(2 sqrt3) - (chiy_j+1 - chiy_j)/(2 sqrt3) ]
+!> W, psi, chi are independent standard normals per face or cell (stage combination of mod_rng),
+!> s = sqrt(s_mu T_f), s_mu = 2 kB mu0 / (dV dt), with the face temperature T_f; the heat flux noise
+!> is s_kap T_f W_q, s_kap = sqrt(2 kB kappa / (dV dt)), kappa = mu0 Cp / Pr. Amplitudes and samples
+!> are FP32 in every precision. Noise indices are periodic, so a face and its periodic image draw the
+!> same sample. Needs VISC = 'NS', VISCOSITY = 'Const', VISC_ORDER = 2, RK = 3, periodic x and y.
+module calc_fluct
+#:if FLUCT
+#:if PREC == 'DF'
+  use mod_prec
+#:endif
+  use cudafor
+  use libm
+  use mod_rng
+  implicit none
+  private
+  public calc_Efluct, calc_Ffluct
+  integer, parameter :: H = ${ORDER // 2}$
+  real(4), parameter :: c3 = 0.57735026919e0  ! 1/sqrt(3)
+contains
+  !> x faces i+1/2 (i = 1..nx-1) of the rows j = 2..ny-1
+  attributes(global) subroutine calc_Efluct(nx, ny, Q_2, Q_3, T, E, s_mu, s_kap, keyA, keyB, beta)
+    integer, intent(in), value                 :: nx, ny
+    ${RT}$, intent(in), device, contiguous    :: Q_2(nx,ny), Q_3(nx,ny), T(nx,ny) !< u, v, T
+    ${RT}$, intent(inout), device, contiguous :: E(nx-1,ny-2,4)
+    real(4), intent(in), value                 :: s_mu, s_kap, beta
+    integer(8), intent(in), value              :: keyA, keyB
+    integer(8) row, fi, ci2
+    integer i, j, Nx, Ny
+    real(4) Tf, s, psi, chi
+    ${RT}$ Sxx, Sxy, Qx, au, av, work
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    j = (blockIdx%y-1)*blockDim%y + threadIdx%y + 1
+    if (nx-1 < i .or. ny-1 < j) return
+    Nx  = nx - 2*H
+    Ny  = ny - 2*H
+    row = int(periodic_index(j, H, Ny), 8) * Nx
+    fi  = row + periodic_index(i, H, Nx)     ! this face (= the cell on its left)
+    ci2 = row + periodic_index(i+1, H, Nx)
+    Tf  = 0.5e0 * (${TOF('T(i,j)')}$ + ${TOF('T(i+1,j)')}$)
+    s   = sqrt(s_mu * Tf)
+    psi = 0.5e0 * (stage_gauss(keyA, keyB, beta, NF_CELL_PSI, fi) + stage_gauss(keyA, keyB, beta, NF_CELL_PSI, ci2))
+    chi = 0.5e0 * (stage_gauss(keyA, keyB, beta, NF_CELL_CHIX, ci2) - stage_gauss(keyA, keyB, beta, NF_CELL_CHIX, fi))
+    Sxx = ${LIFT('s * (stage_gauss(keyA, keyB, beta, NF_XFACE_U, fi) + c3 * (psi - chi))')}$
+    Sxy = ${LIFT('s * stage_gauss(keyA, keyB, beta, NF_XFACE_V, fi)')}$
+    Qx  = ${LIFT('s_kap * Tf * stage_gauss(keyA, keyB, beta, NF_XFACE_Q, fi)')}$
+    au  = Q_2(i,j) + Q_2(i+1,j)
+    av  = Q_3(i,j) + Q_3(i+1,j)
+    work = fma(0.5d0, fma(au, Sxx, av * Sxy), Qx)
+    E(i,j-1,2) = E(i,j-1,2) - Sxx
+    E(i,j-1,3) = E(i,j-1,3) - Sxy
+    E(i,j-1,4) = E(i,j-1,4) - work
+  end subroutine calc_Efluct
+
+
+  !> y faces j+1/2 (j = 1..ny-1) of the columns i = 2..nx-1
+  attributes(global) subroutine calc_Ffluct(nx, ny, Q_2, Q_3, T, F, s_mu, s_kap, keyA, keyB, beta)
+    integer, intent(in), value                 :: nx, ny
+    ${RT}$, intent(in), device, contiguous    :: Q_2(nx,ny), Q_3(nx,ny), T(nx,ny) !< u, v, T
+    ${RT}$, intent(inout), device, contiguous :: F(nx-2,ny-1,4)
+    real(4), intent(in), value                 :: s_mu, s_kap, beta
+    integer(8), intent(in), value              :: keyA, keyB
+    integer(8) col, fj, cj2
+    integer i, j, Nx, Ny
+    real(4) Tf, s, psi, chi
+    ${RT}$ Syx, Syy, Qy, au, av, work
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x + 1
+    j = (blockIdx%y-1)*blockDim%y + threadIdx%y
+    if (nx-1 < i .or. ny-1 < j) return
+    Nx  = nx - 2*H
+    Ny  = ny - 2*H
+    col = periodic_index(i, H, Nx)
+    fj  = int(periodic_index(j, H, Ny), 8) * Nx + col    ! this face (= the cell below it)
+    cj2 = int(periodic_index(j+1, H, Ny), 8) * Nx + col
+    Tf  = 0.5e0 * (${TOF('T(i,j)')}$ + ${TOF('T(i,j+1)')}$)
+    s   = sqrt(s_mu * Tf)
+    psi = 0.5e0 * (stage_gauss(keyA, keyB, beta, NF_CELL_PSI, fj) + stage_gauss(keyA, keyB, beta, NF_CELL_PSI, cj2))
+    chi = 0.5e0 * (stage_gauss(keyA, keyB, beta, NF_CELL_CHIY, cj2) - stage_gauss(keyA, keyB, beta, NF_CELL_CHIY, fj))
+    Syx = ${LIFT('s * stage_gauss(keyA, keyB, beta, NF_YFACE_U, fj)')}$
+    Syy = ${LIFT('s * (stage_gauss(keyA, keyB, beta, NF_YFACE_V, fj) + c3 * (psi - chi))')}$
+    Qy  = ${LIFT('s_kap * Tf * stage_gauss(keyA, keyB, beta, NF_YFACE_Q, fj)')}$
+    au  = Q_2(i,j) + Q_2(i,j+1)
+    av  = Q_3(i,j) + Q_3(i,j+1)
+    work = fma(0.5d0, fma(au, Syx, av * Syy), Qy)
+    F(i-1,j,2) = F(i-1,j,2) - Syx
+    F(i-1,j,3) = F(i-1,j,3) - Syy
+    F(i-1,j,4) = F(i-1,j,4) - work
+  end subroutine calc_Ffluct
+#:endif
+end module calc_fluct
+#:endblock fp

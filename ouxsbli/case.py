@@ -60,6 +60,7 @@ _ALIAS = {
     "viscosity":  "VISCOSITY",
     "sources":    "SOURCE",     # not "source": that is the case directory
     "output_raw": "OUTPUT_RAW",
+    "fluct":      "FLUCT",
 }
 
 # ---------------------------------------------------------------------------

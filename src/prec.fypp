@@ -8,7 +8,8 @@
 #:if not defined('KEEP_PREC')
   #:set KEEP_PREC = 'FP64'
 #:endif
-#! 2D_solver physics switches (checked in mod_constant): viscosity law, cell sources, raw output
+#! 2D_solver physics switches (checked in mod_constant): viscosity law, cell sources, raw output,
+#! thermal fluctuations
 #:if not defined('VISCOSITY')
   #:set VISCOSITY = 'Sutherland'
 #:endif
@@ -17,6 +18,9 @@
 #:endif
 #:if not defined('OUTPUT_RAW')
   #:set OUTPUT_RAW = False
+#:endif
+#:if not defined('FLUCT')
+  #:set FLUCT = False
 #:endif
 #! WT: working real kind of metrics, coefficients and constants; RT: state/flux type.
 #!   PREC   FP64     DF            FP32 (2D_solver only)
@@ -32,6 +36,17 @@
 #:set LDCS = 'ld' if PREC == 'DF' else '__ldcs'
 #:set LDLU = 'ld' if PREC == 'DF' else '__ldlu'
 #:set STCS = 'store' if PREC == 'DF' else '__stcs'
+#! TOF(x): leading FP32 part of a state value; LIFT(x): an FP32 value (noise sample) as RT, exactly
+#:if PREC == 'DF'
+  #:set TOF = lambda x: '%s%%hi' % x
+  #:set LIFT = lambda x: 'fltflt(%s, 0.e0)' % x
+#:elif PREC == 'FP32'
+  #:set TOF = lambda x: x
+  #:set LIFT = lambda x: x
+#:else
+  #:set TOF = lambda x: 'real(%s, 4)' % x
+  #:set LIFT = lambda x: 'real(%s, 8)' % x
+#:endif
 #! W(name): a real(8) named constant (mod_globals' gamma, R, ...) in the working kind
 #:set W = lambda n: n if PREC != 'FP32' else 'real(%s, 4)' % n
 #! fp: block filter around device code. PREC = 'FP32' turns every double literal (1.d0, 2.5d-3)

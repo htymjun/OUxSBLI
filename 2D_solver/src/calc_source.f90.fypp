@@ -18,6 +18,9 @@ module calc_source
   use cudafor
   use libm
   use mod_globals, only : dt, gamma, fric, cool, p0
+#:if FLUCT
+  use mod_rng
+#:endif
   implicit none
   private
   public calc_source_term, calc_cooling
@@ -26,13 +29,27 @@ module calc_source
   ${'real(8)' if PREC == 'DF' else RT}$, allocatable, device, save :: part(:)
 contains
   !> S = sources at the current stage state (primitives rho, u, v of calc_EF), Sr = dt / J * S
+#:if FLUCT
+  !> FLUCT = True adds the friction noise: rho (f - fric u) + eta, <eta eta> = 2 fric rho kB T / (dV dt)
+  !> per component (s_fric = 2 fric kB / (dV dt); amplitude and sample in FP32, stage noise of mod_rng).
+  attributes(global) subroutine calc_source_term(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr, &
+                                                 T, s_fric, keyA, keyB, beta)
+#:else
   attributes(global) subroutine calc_source_term(nx, ny, Jacobian, Q_1, Q_2, Q_3, fx, fy, q_cool, Sr)
+#:endif
     integer, intent(in), value               :: nx, ny
     ${WT}$, intent(in), device, contiguous  :: Jacobian(nx,ny)
     ${RT}$, intent(in), device, contiguous  :: Q_1(nx,ny), Q_2(nx,ny), Q_3(nx,ny) !< rho, u, v
     ${RT}$, intent(in), device, contiguous  :: fx(nx,ny), fy(nx,ny)                !< body force per unit mass
     ${WT}$, intent(in), value               :: q_cool                              !< uniform energy sink
     ${RT}$, intent(out), device, contiguous :: Sr(nx-2,ny-2,4)                    !< dt / J * S
+#:if FLUCT
+    ${RT}$, intent(in), device, contiguous  :: T(nx,ny)
+    real(4), intent(in), value               :: s_fric, beta
+    integer(8), intent(in), value            :: keyA, keyB
+    integer(8) id
+    real(4) sg
+#:endif
     ${RT}$ rho, u, v, Smx, Smy, SE, qc, fr
     ${WT}$ dtdV
     integer i, j
@@ -45,8 +62,15 @@ contains
     fr   = ${W('fric')}$
     qc   = q_cool
     dtdV = ${W('dt')}$ / Jacobian(i+1,j+1)
+#:if FLUCT
+    id   = int(periodic_index(j+1, H, ny - 2*H), 8) * (nx - 2*H) + periodic_index(i+1, H, nx - 2*H)
+    sg   = sqrt(s_fric * ${TOF('rho')}$ * ${TOF('T(i+1,j+1)')}$)
+    Smx  = fma(rho, fx(i+1,j+1) - fr * u, ${LIFT('sg * stage_gauss(keyA, keyB, beta, NF_CELL_FX, id)')}$)
+    Smy  = fma(rho, fy(i+1,j+1) - fr * v, ${LIFT('sg * stage_gauss(keyA, keyB, beta, NF_CELL_FY, id)')}$)
+#:else
     Smx  = rho * (fx(i+1,j+1) - fr * u)
     Smy  = rho * (fy(i+1,j+1) - fr * v)
+#:endif
     SE   = fma(u, Smx, fma(v, Smy, -qc))
     Sr(i,j,1) = 0.d0
     Sr(i,j,2) = dtdV * Smx

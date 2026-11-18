@@ -38,6 +38,8 @@ macro(add_ouxsbli_2d_case)
   set(_SHARED_FYPP
       "calc_physical_quantities"
       "calc_steps"
+      "mod_rng"
+      "calc_fluct"
       "calc_source"
       "io_raw"
       "calc_hybrid"

@@ -77,6 +77,7 @@ These are patched into the copied `config.fypp`:
 | `viscosity` | `VISCOSITY` | str | `'Sutherland'`, `'Const'` (2D only) |
 | `sources` | `SOURCE` | bool | `True`, `False` (2D only; not `source`, which names the case directory) |
 | `output_raw` | `OUTPUT_RAW` | bool | `True`, `False` (2D only) |
+| `fluct` | `FLUCT` | bool | `True`, `False` (2D only) |
 
 String values for `scheme` and `visc` are case-insensitive (`'slau'` → `'SLAU'`, `'ns'` → `'NS'`).
 

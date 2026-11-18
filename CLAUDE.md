@@ -132,6 +132,7 @@ All compile-time scheme/method choices live in `<CASE>/config.fypp`. The fypp pr
 | `VISCOSITY` | `'Sutherland'`, `'Const'` | `2D_solver` only: Sutherland's law (default) or a constant viscosity `mu = mu0` (`mu0` from the case's `mod_globals.f90`) |
 | `SOURCE` | `True`, `False` | `2D_solver` only, NS with periodic x and y: cell sources S_m = rho (f - fric u), S_E = u.S_m - q_cool (`src/calc_source.f90.fypp`; the case supplies `set_force` in `set.f90` and `fric`, `cool`, `p0` in `mod_globals.f90`). Default `False` |
 | `OUTPUT_RAW` | `True`, `False` | `2D_solver` only: every output writes the interior conservative state as raw float64 `data/Q#####.dat` + `.dat.txt` (`t= step= N=`) instead of VTK; `read_raw` (`src/io_raw.f90.fypp`) reads such a file in a case's `set_init`. Default `False` |
+| `FLUCT` | `True`, `False` | `2D_solver` only: thermal fluctuations (Landau-Lifshitz stochastic stress and heat flux, `src/calc_fluct.f90.fypp`; friction noise in `calc_source` when `SOURCE=True`); counter-based FP32 normal samples (`src/mod_rng.f90.fypp`) with the stochastic RK3 stage weights. Needs `VISC='NS'`, `VISCOSITY='Const'`, `VISC_ORDER=2`, `RK=3`, periodic x and y; `kB` and `seed` in `mod_globals.f90`. Default `False` |
 
 ### mod_globals.f90 (grid, physical parameters, thread blocks)
 
