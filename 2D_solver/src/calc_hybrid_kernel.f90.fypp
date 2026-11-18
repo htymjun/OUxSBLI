@@ -81,10 +81,8 @@ contains
         block
           real(8) :: tmp(6)
           tmp = T(i-2:i+3,j)
-          associate(uu => u)
-            E(i,j-1,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3), v(idx-2:idx+3), &
-                              uu(idx-2:idx+3), p(idx-2:idx+3), tmp, Normal_x)
-          end associate
+          E(i,j-1,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3), v(idx-2:idx+3), &
+                            u(idx-2:idx+3), p(idx-2:idx+3), tmp, Normal_x)
         end block
       else
         call delta6(fdx, rho(idx-2:idx+3), rhol, rho_r)
@@ -98,10 +96,8 @@ contains
         block
           real(8) :: tmp(4)
           tmp = T(i-1:i+2,j)
-          associate(uu => u)
-            E(i,j-1,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
-                              uu(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_x)
-          end associate
+          E(i,j-1,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
+                            u(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_x)
         end block
       else
         call delta4(fdx, rho(idx-1:idx+2), rhol, rho_r)
@@ -115,10 +111,8 @@ contains
         block
           real(8) :: tmp(2)
           tmp = T(i:i+1,j)
-          associate(uu => u)
-            E(i,j-1,:) = KEEP(id_acc2,       rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
-                              uu(idx:idx+1), p(idx:idx+1), tmp, Normal_x)
-          end associate
+          E(i,j-1,:) = KEEP(id_acc2,       rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+                            u(idx:idx+1), p(idx:idx+1), tmp, Normal_x)
         end block
       else
         rhol = rho(idx); rho_r = rho(idx+1)
@@ -134,10 +128,8 @@ contains
         block
           real(8) :: tmp(4)
           tmp = T(i-1:i+2,j)
-          associate(uu => u)
-            E(i,j-1,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
-                              uu(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_x)
-          end associate
+          E(i,j-1,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
+                            u(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_x)
         end block
       else
         call delta4(fdx, rho(idx-1:idx+2), rhol, rho_r)
@@ -151,10 +143,8 @@ contains
         block
           real(8) :: tmp(2)
           tmp = T(i:i+1,j)
-          associate(uu => u)
-            E(i,j-1,:) = KEEP(id_acc2,       rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
-                              uu(idx:idx+1), p(idx:idx+1), tmp, Normal_x)
-          end associate
+          E(i,j-1,:) = KEEP(id_acc2,       rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+                            u(idx:idx+1), p(idx:idx+1), tmp, Normal_x)
         end block
       else
         rhol = rho(idx); rho_r = rho(idx+1)
@@ -169,10 +159,8 @@ contains
       block
         real(8) :: tmp(2)
         tmp = T(i:i+1,j)
-        associate(uu => u)
-          E(i,j-1,:) = KEEP(id_acc,         rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
-                            uu(idx:idx+1), p(idx:idx+1), tmp, Normal_x)
-        end associate
+        E(i,j-1,:) = KEEP(id_acc,         rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+                          u(idx:idx+1), p(idx:idx+1), tmp, Normal_x)
       end block
     else
       rhol = rho(idx); rho_r = rho(idx+1)
@@ -236,10 +224,8 @@ contains
         block
           real(8) :: tmp(6)
           tmp = T(i,j-2:j+3)
-          associate(vv => v)
-            F(i-1,j,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3), v(idx-2:idx+3), &
-                              vv(idx-2:idx+3), p(idx-2:idx+3), tmp, Normal_y)
-          end associate
+          F(i-1,j,:) = KEEP(id_acc,        rho(idx-2:idx+3), u(idx-2:idx+3), v(idx-2:idx+3), &
+                            v(idx-2:idx+3), p(idx-2:idx+3), tmp, Normal_y)
         end block
       else
         call delta6(fdy, rho(idx-2:idx+3), rhol, rho_r)
@@ -253,10 +239,8 @@ contains
         block
           real(8) :: tmp(4)
           tmp = T(i,j-1:j+2)
-          associate(vv => v)
-            F(i-1,j,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
-                              vv(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_y)
-          end associate
+          F(i-1,j,:) = KEEP(id_acc4,       rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
+                            v(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_y)
         end block
       else
         call delta4(fdy, rho(idx-1:idx+2), rhol, rho_r)
@@ -270,10 +254,8 @@ contains
         block
           real(8) :: tmp(2)
           tmp = T(i,j:j+1)
-          associate(vv => v)
-            F(i-1,j,:) = KEEP(id_acc2,       rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
-                              vv(idx:idx+1), p(idx:idx+1), tmp, Normal_y)
-          end associate
+          F(i-1,j,:) = KEEP(id_acc2,       rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+                            v(idx:idx+1), p(idx:idx+1), tmp, Normal_y)
         end block
       else
         rhol = rho(idx); rho_r = rho(idx+1)
@@ -289,10 +271,8 @@ contains
         block
           real(8) :: tmp(4)
           tmp = T(i,j-1:j+2)
-          associate(vv => v)
-            F(i-1,j,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
-                              vv(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_y)
-          end associate
+          F(i-1,j,:) = KEEP(id_acc,        rho(idx-1:idx+2), u(idx-1:idx+2), v(idx-1:idx+2), &
+                            v(idx-1:idx+2), p(idx-1:idx+2), tmp, Normal_y)
         end block
       else
         call delta4(fdy, rho(idx-1:idx+2), rhol, rho_r)
@@ -306,10 +286,8 @@ contains
         block
           real(8) :: tmp(2)
           tmp = T(i,j:j+1)
-          associate(vv => v)
-            F(i-1,j,:) = KEEP(id_acc2,       rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
-                              vv(idx:idx+1), p(idx:idx+1), tmp, Normal_y)
-          end associate
+          F(i-1,j,:) = KEEP(id_acc2,       rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+                            v(idx:idx+1), p(idx:idx+1), tmp, Normal_y)
         end block
       else
         rhol = rho(idx); rho_r = rho(idx+1)
@@ -324,10 +302,8 @@ contains
       block
         real(8) :: tmp(2)
         tmp = T(i,j:j+1)
-        associate(vv => v)
-          F(i-1,j,:) = KEEP(id_acc,         rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
-                            vv(idx:idx+1), p(idx:idx+1), tmp, Normal_y)
-        end associate
+        F(i-1,j,:) = KEEP(id_acc,         rho(idx:idx+1), u(idx:idx+1), v(idx:idx+1), &
+                          v(idx:idx+1), p(idx:idx+1), tmp, Normal_y)
       end block
     else
       rhol = rho(idx); rho_r = rho(idx+1)

@@ -54,14 +54,12 @@ contains
     call syncthreads()
     i = (blockIdx%x-1)*blockDim%x + it
     if (io+1 <= i .and. i <= nx-(io+1) .and. j <= ny-1) then
-      associate(uu => u)
       idx = it + offset_y
       E(i,j-1,:) = KEEP(id_acc, &
                         rho(idx-io:idx+io+1), u(idx-io:idx+io+1), &
                           v(idx-io:idx+io+1), &
-                         uu(idx-io:idx+io+1), p(idx-io:idx+io+1), &
+                         u(idx-io:idx+io+1), p(idx-io:idx+io+1), &
                         tmp(idx-io:idx+io+1), Normal_x)
-      end associate
     endif
   end subroutine calc_keep_x_in
 
@@ -92,14 +90,12 @@ contains
     call syncthreads()
     j = (blockIdx%y-1)*blockDim%y + jt
     if (io+1 <= j .and. j <= ny-(io+1) .and. i <= nx-1) then
-      associate(vv => v)
       idx = jt + offset_x
       F(i-1,j,:) = KEEP(id_acc, &
                         rho(idx-io:idx+io+1), u(idx-io:idx+io+1), &
                           v(idx-io:idx+io+1), &
-                         vv(idx-io:idx+io+1), p(idx-io:idx+io+1), &
+                         v(idx-io:idx+io+1), p(idx-io:idx+io+1), &
                         tmp(idx-io:idx+io+1), Normal_y)
-      end associate
     endif
   end subroutine calc_keep_y_in
 end module calc_keep_kernel_internal

@@ -98,11 +98,9 @@ contains
         block
           real(8) tmp(2*io+2)
           tmp = T(i-io:i+io+1, j)
-          associate(uu => u)
-            E(i,j-1,:) = KEEP(id_acc, &
-                              rho(it-io:it+io+1,jt), u(it-io:it+io+1,jt), v(it-io:it+io+1,jt), &
-                               uu(it-io:it+io+1,jt), p(it-io:it+io+1,jt), tmp, Normal_x)
-          end associate
+          E(i,j-1,:) = KEEP(id_acc, &
+                            rho(it-io:it+io+1,jt), u(it-io:it+io+1,jt), v(it-io:it+io+1,jt), &
+                             u(it-io:it+io+1,jt), p(it-io:it+io+1,jt), tmp, Normal_x)
         end block
       else
         call delta_r(id_acc, fdx, rho(it-io:it+io+1,jt), rhol, rhor(it,jt))
@@ -154,11 +152,9 @@ contains
         block
           real(8) tmp(2*io+2)
           tmp = T(i, j-io:j+io+1)
-          associate(vv => v)
-            F(i-1,j,:) = KEEP(id_acc, &
-                              rho(jt-io:jt+io+1,it), u(jt-io:jt+io+1,it), v(jt-io:jt+io+1,it), &
-                               vv(jt-io:jt+io+1,it), p(jt-io:jt+io+1,it), tmp, Normal_y)
-          end associate
+          F(i-1,j,:) = KEEP(id_acc, &
+                            rho(jt-io:jt+io+1,it), u(jt-io:jt+io+1,it), v(jt-io:jt+io+1,it), &
+                             v(jt-io:jt+io+1,it), p(jt-io:jt+io+1,it), tmp, Normal_y)
         end block
       else
         call delta_r(id_acc, fdy, rho(jt-io:jt+io+1,it), rhol, rhor(jt,it))

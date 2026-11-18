@@ -58,19 +58,6 @@ contains
   end subroutine calc_Ducros
 
 
-  pure attributes(device) function Albada(e, rho) result(phi)
-    real(8), intent(in), dimension(4), device :: e, rho
-    real(8) :: d1, d2, d3, phim, phip, phi
-    real(8), parameter :: eps = 1.d-16
-    d1   = -e(1) / rho(1) + e(2) / rho(2)
-    d2   = -e(2) / rho(2) + e(3) / rho(3)
-    d3   = -e(3) / rho(3) + e(4) / rho(4)
-    phip = (d2 * d1 + d1**2) / (d2**2 + d1**2 + eps)
-    phim = (d2 * d3 + d3**2) / (d2**2 + d3**2 + eps)
-    phi  = max(min(1.d0 - min(phim, phip), 1.d0), 0.d0)
-  end function Albada
-
-
   pure attributes(device) function wiggle_detector(phi) result(ans)
     real(8), intent(in) :: phi(4)
     real(8) ans, phi1, phi2
