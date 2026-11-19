@@ -39,7 +39,7 @@ program convert_2d_to_3d_2
     ! --- 全保存量に丸め誤差程度のランダム擾乱を追加 ---
     ! スパン方向の一様性を崩すため、複製後に全領域で点ごとに独立な乱数を与える
     call random_number(noise)
-    Q3d = Q3d + eps * noise
+    Q3d = Q3d + eps * (2.d0 * noise - 1.d0)
 
     ! --- このランク用のリスタートファイルとして保存 ---
     write(filename, "(a, i5.5, a)") "recal/Q_3d", irank+1, ".dat"
